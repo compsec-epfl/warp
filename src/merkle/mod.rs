@@ -1,1 +1,1 @@
-mod poseidon;
+pub mod poseidon;
