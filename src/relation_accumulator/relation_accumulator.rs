@@ -1,4 +1,4 @@
-use ark_crypto_primitives::Error; // TODO, specify out of range, empty etc
+use ark_crypto_primitives::Error;
 use ark_ff::Field;
 
 pub trait RelationAccumulator<F: Field> {
@@ -6,6 +6,7 @@ pub trait RelationAccumulator<F: Field> {
     type Commitment;
     type Instance;
     type Proof;
+    type Relation;
     fn commit(config: Self::Config, instances: &[Self::Instance]) -> Self;
     fn commitment(&self) -> Self::Commitment;
     fn open(&self, index: usize) -> Result<Self::Proof, Error>;

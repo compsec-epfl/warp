@@ -1,12 +1,21 @@
 use ark_crypto_primitives::{
     crh::{
-        poseidon::{TwoToOneCRH as PoseidonTwoToOneCRH, CRH as PoseidonCRH},
-        CRHScheme, TwoToOneCRHScheme,
+        poseidon::{
+            constraints::{
+                CRHGadget as PoseidonCRHGadget, TwoToOneCRHGadget as PoseidonTwoToOneCRHGadget,
+            },
+            TwoToOneCRH as PoseidonTwoToOneCRH, CRH as PoseidonCRH,
+        },
+        CRHScheme, CRHSchemeGadget, TwoToOneCRHScheme, TwoToOneCRHSchemeGadget,
     },
-    merkle_tree::{Config as MerkleConfig, IdentityDigestConverter},
+    merkle_tree::{
+        constraints::ConfigGadget as MerkleConfigGadget, Config as MerkleConfig,
+        IdentityDigestConverter,
+    },
     sponge::Absorb,
 };
 use ark_ff::PrimeField;
+use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
 #[cfg(test)]
@@ -28,6 +37,24 @@ impl<F: PrimeField + Absorb> MerkleConfig for PoseidonMerkleConfig<F> {
     type InnerDigest = <Self::TwoToOneHash as TwoToOneCRHScheme>::Output;
     type LeafHash = PoseidonCRH<F>;
     type TwoToOneHash = PoseidonTwoToOneCRH<F>;
+}
+
+pub struct PoseidonMerkleConfigGadget<F: PrimeField> {
+    _field: PhantomData<F>,
+}
+
+impl<F: PrimeField + Absorb> MerkleConfigGadget<PoseidonMerkleConfig<F>, F>
+    for PoseidonMerkleConfigGadget<F>
+{
+    type Leaf = [FpVar<F>];
+    type LeafDigest = <PoseidonCRHGadget<F> as CRHSchemeGadget<PoseidonCRH<F>, F>>::OutputVar;
+    type LeafHash = PoseidonCRHGadget<F>;
+    type LeafInnerConverter = IdentityDigestConverter<Self::LeafDigest>;
+    type InnerDigest = <PoseidonTwoToOneCRHGadget<F> as TwoToOneCRHSchemeGadget<
+        PoseidonTwoToOneCRH<F>,
+        F,
+    >>::OutputVar;
+    type TwoToOneHash = PoseidonTwoToOneCRHGadget<F>;
 }
 
 #[cfg(test)]
@@ -58,7 +85,7 @@ mod tests {
         let proof0 = mt.generate_proof(0).unwrap();
         let proof1 = mt.generate_proof(1).unwrap();
 
-        // verify proofs
+        // verify proofs for valid leaves
         assert!(proof0
             .verify(
                 &leaf_hash_param,
@@ -76,7 +103,7 @@ mod tests {
             )
             .unwrap());
 
-        // verify that the proofs are not valid for other leaves
+        // verify proofs are not valid for other leaves
         assert!(!proof0
             .verify(&leaf_hash_param, &one_two_hash_param, &mt.root(), leaf1)
             .unwrap());
