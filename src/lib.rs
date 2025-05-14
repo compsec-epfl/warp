@@ -1,3 +1,3 @@
 mod merkle;
+pub mod relation;
 pub mod relation_accumulator;
-pub mod relations;

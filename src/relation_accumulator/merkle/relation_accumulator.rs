@@ -1,12 +1,15 @@
 use ark_crypto_primitives::{
-    merkle_tree::{Config as MerkleConfig, LeafParam, MerkleTree, Path, TwoToOneParam},
+    merkle_tree::{
+        constraints::ConfigGadget, Config as MerkleConfig, LeafParam, MerkleTree, Path,
+        TwoToOneParam,
+    },
     Error,
 };
-use ark_ff::Field;
-use ark_relations::r1cs::ConstraintSynthesizer;
+use ark_ff::{Field, PrimeField};
+use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
-use crate::relation_accumulator::relation_accumulator::RelationAccumulator;
+use crate::{relation::Relation, relation_accumulator::relation_accumulator::RelationAccumulator};
 
 #[derive(Clone)]
 pub struct MerkleTreeRelationAccumulatorConfig<M: MerkleConfig> {
@@ -15,18 +18,25 @@ pub struct MerkleTreeRelationAccumulatorConfig<M: MerkleConfig> {
     _merkle_config: PhantomData<M>,
 }
 
-pub struct MerkleTreeRelationAccumulator<F: Field, M: MerkleConfig, R: ConstraintSynthesizer<F>> {
+pub struct MerkleTreeRelationAccumulator<
+    F: Field + PrimeField,
+    M: MerkleConfig,
+    MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
+    R: Relation<F>,
+> {
     merkle_tree: MerkleTree<M>,
     _field: PhantomData<F>,
     _merkle_config: PhantomData<M>,
+    _merkle_config_gadget: PhantomData<MG>,
     _relation: PhantomData<R>,
 }
 
-impl<F, M, R> RelationAccumulator<F> for MerkleTreeRelationAccumulator<F, M, R>
+impl<F, M, MG, R> RelationAccumulator<F> for MerkleTreeRelationAccumulator<F, M, MG, R>
 where
-    F: Field,
+    F: Field + PrimeField,
     M: MerkleConfig<Leaf = [F]>,
-    R: ConstraintSynthesizer<F>,
+    MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
+    R: Relation<F>,
 {
     type Config = MerkleTreeRelationAccumulatorConfig<M>;
     type Commitment = M::InnerDigest;
@@ -44,6 +54,7 @@ where
             .unwrap(),
             _field: PhantomData,
             _merkle_config: PhantomData,
+            _merkle_config_gadget: PhantomData,
             _relation: PhantomData,
         }
     }
@@ -82,19 +93,20 @@ mod tests {
         merkle::poseidon::{
             poseidon_test_params, PoseidonMerkleConfig, PoseidonMerkleConfigGadget,
         },
+        relation::MerkleInclusionRelation,
         relation_accumulator::{
             merkle::relation_accumulator::{
                 MerkleTreeRelationAccumulator, MerkleTreeRelationAccumulatorConfig,
             },
             RelationAccumulator,
         },
-        relations::MerkleInclusionCircuit,
     };
 
     type ExampleRelationAccumulator = MerkleTreeRelationAccumulator<
         BLS12_381,
         PoseidonMerkleConfig<BLS12_381>,
-        MerkleInclusionCircuit<
+        PoseidonMerkleConfigGadget<BLS12_381>,
+        MerkleInclusionRelation<
             BLS12_381,
             PoseidonMerkleConfig<BLS12_381>,
             PoseidonMerkleConfigGadget<BLS12_381>,
@@ -102,7 +114,7 @@ mod tests {
     >;
 
     #[test]
-    fn sanity_instantiation() {
+    fn example_usage() {
         // create some leaves
         let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
         let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];

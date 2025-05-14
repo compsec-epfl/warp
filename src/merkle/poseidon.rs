@@ -18,13 +18,6 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
-#[cfg(test)]
-use ark_bls12_381::Fr as BLS12_381;
-#[cfg(test)]
-use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
-#[cfg(test)]
-use ark_std::{str::FromStr, One, Zero};
-
 #[derive(Clone)]
 pub struct PoseidonMerkleConfig<F: PrimeField> {
     _field: PhantomData<F>,
@@ -59,10 +52,9 @@ impl<F: PrimeField + Absorb> MerkleConfigGadget<PoseidonMerkleConfig<F>, F>
 
 #[cfg(test)]
 mod tests {
+    use crate::merkle::poseidon::{poseidon_test_params, PoseidonMerkleConfig};
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
-
-    use crate::merkle::poseidon::{poseidon_test_params, PoseidonMerkleConfig};
 
     #[test]
     fn example_usage() {
@@ -112,6 +104,13 @@ mod tests {
             .unwrap());
     }
 }
+
+#[cfg(test)]
+use ark_bls12_381::Fr as BLS12_381;
+#[cfg(test)]
+use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+#[cfg(test)]
+use ark_std::{str::FromStr, One, Zero};
 
 #[cfg(test)]
 // TODO get some real configs CRH, TwoToOneCRH
