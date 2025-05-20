@@ -15,7 +15,7 @@ use ark_std::marker::PhantomData;
 use crate::relation::Relation;
 
 #[derive(Clone)]
-pub struct MerkleInclusionWitness<F, M, MG>
+pub struct MerkleInclusionInstance<F, M, MG>
 where
     F: Field + PrimeField,
     M: MerkleConfig<Leaf = [F]>,
@@ -25,11 +25,32 @@ where
     two_to_one_hash_param: TwoToOneParam<M>,
     root: M::InnerDigest,
     leaf: Vec<F>,
+    _config_gadget: PhantomData<MG>,
+}
+
+#[derive(Clone)]
+pub struct MerkleInclusionWitness<F, M, MG>
+where
+    F: Field + PrimeField,
+    M: MerkleConfig<Leaf = [F]>,
+    MG: ConfigGadget<M, F>,
+{
     proof: Path<M>,
     _config_gadget: PhantomData<MG>,
 }
 
-impl<F, M, MG> ConstraintSynthesizer<F> for MerkleInclusionWitness<F, M, MG>
+#[derive(Clone)]
+pub struct MerkleInclusionConstraintSynthesizer<F, M, MG>
+where
+    F: Field + PrimeField,
+    M: MerkleConfig<Leaf = [F]>,
+    MG: ConfigGadget<M, F>,
+{
+    instance: MerkleInclusionInstance<F, M, MG>,
+    witness: MerkleInclusionWitness<F, M, MG>,
+}
+
+impl<F, M, MG> ConstraintSynthesizer<F> for MerkleInclusionConstraintSynthesizer<F, M, MG>
 where
     F: Field + PrimeField,
     M: MerkleConfig<Leaf = [F]>,
@@ -38,7 +59,8 @@ where
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         // public
         let root_var: <MG as ConfigGadget<M, F>>::InnerDigest =
-            MG::InnerDigest::new_input(ark_relations::ns!(cs, "root"), || Ok(self.root)).unwrap();
+            MG::InnerDigest::new_input(ark_relations::ns!(cs, "root"), || Ok(self.instance.root))
+                .unwrap();
 
         // constants
         let leaf_hash_var = <<MG as ConfigGadget<M, F>>::LeafHash as CRHSchemeGadget<
@@ -46,7 +68,7 @@ where
             F,
         >>::ParametersVar::new_constant(
             ark_relations::ns!(cs, "leaf_hash_param"),
-            &self.leaf_hash_param,
+            &self.instance.leaf_hash_param,
         )
         .unwrap();
         let two_one_hash_var =
@@ -55,15 +77,18 @@ where
                 F,
             >>::ParametersVar::new_constant(
                 ark_relations::ns!(cs, "two_to_one_hash_param"),
-                &self.two_to_one_hash_param,
+                &self.instance.two_to_one_hash_param,
             )
             .unwrap();
 
         // private
         let path_var: PathVar<M, F, MG> =
-            PathVar::new_witness(ark_relations::ns!(cs, "new_witness"), || Ok(&self.proof))
-                .unwrap();
+            PathVar::new_witness(ark_relations::ns!(cs, "new_witness"), || {
+                Ok(&self.witness.proof)
+            })
+            .unwrap();
         let leaf_var: Vec<FpVar<F>> = self
+            .instance
             .leaf
             .iter()
             .map(|x| FpVar::new_witness(cs.clone(), || Ok(*x)).unwrap())
@@ -96,10 +121,13 @@ where
     M: MerkleConfig<Leaf = [F]>,
     MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
 {
+    type Instance = MerkleInclusionInstance<F, M, MG>;
     type Witness = MerkleInclusionWitness<F, M, MG>;
-    fn assign_witness(witness: Self::Witness) -> Self {
+    fn new(instance: Self::Instance, witness: Self::Witness) -> Self {
+        let constraint_synthesizer =
+            MerkleInclusionConstraintSynthesizer::<F, M, MG> { instance, witness };
         let constraint_system = ConstraintSystem::<F>::new_ref();
-        witness
+        constraint_synthesizer
             .generate_constraints(constraint_system.clone())
             .unwrap();
         Self {
@@ -122,6 +150,8 @@ mod tests {
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::marker::PhantomData;
 
+    use crate::relation::merkle_inclusion::MerkleInclusionConstraintSynthesizer;
+    use crate::relation::merkle_inclusion::MerkleInclusionInstance;
     use crate::relation::merkle_inclusion::MerkleInclusionRelation;
     use crate::relation::Relation;
     use crate::{
@@ -132,7 +162,7 @@ mod tests {
     };
 
     #[test]
-    fn sanity_merkle_inclusion_witness() {
+    fn witness_sanity() {
         // create some leaves
         let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
         let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
@@ -152,28 +182,42 @@ mod tests {
         let root = mt.root();
         let proof0 = mt.generate_proof(0).unwrap();
 
-        let circuit = MerkleInclusionWitness::<
+        //
+        let constraint_synthesizer = MerkleInclusionConstraintSynthesizer::<
             BLS12_381,
             PoseidonMerkleConfig<BLS12_381>,
             PoseidonMerkleConfigGadget<BLS12_381>,
         > {
-            leaf_hash_param,
-            two_to_one_hash_param,
-            root,
-            leaf: leaf0,
-            proof: proof0,
-            _config_gadget: PhantomData,
+            instance: MerkleInclusionInstance::<
+                BLS12_381,
+                PoseidonMerkleConfig<BLS12_381>,
+                PoseidonMerkleConfigGadget<BLS12_381>,
+            > {
+                leaf_hash_param,
+                two_to_one_hash_param,
+                root,
+                leaf: leaf0,
+                _config_gadget: PhantomData,
+            },
+            witness: MerkleInclusionWitness::<
+                BLS12_381,
+                PoseidonMerkleConfig<BLS12_381>,
+                PoseidonMerkleConfigGadget<BLS12_381>,
+            > {
+                proof: proof0,
+                _config_gadget: PhantomData,
+            },
         };
 
         let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
-        circuit
+        constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
             .unwrap(); // now it has both constraints and witness
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
 
     #[test]
-    fn sanity_merkle_inclusion_relation() {
+    fn relation_sanity() {
         // Create some leaves
         let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
         let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
@@ -194,8 +238,8 @@ mod tests {
         let root = mt.root();
         let proof0 = mt.generate_proof(0).unwrap();
 
-        // Construct the witness
-        let witness = MerkleInclusionWitness::<
+        // Construct the instance and witness
+        let instance = MerkleInclusionInstance::<
             BLS12_381,
             PoseidonMerkleConfig<BLS12_381>,
             PoseidonMerkleConfigGadget<BLS12_381>,
@@ -204,6 +248,13 @@ mod tests {
             two_to_one_hash_param,
             root,
             leaf: leaf0,
+            _config_gadget: PhantomData,
+        };
+        let witness = MerkleInclusionWitness::<
+            BLS12_381,
+            PoseidonMerkleConfig<BLS12_381>,
+            PoseidonMerkleConfigGadget<BLS12_381>,
+        > {
             proof: proof0,
             _config_gadget: PhantomData,
         };
@@ -213,7 +264,7 @@ mod tests {
             BLS12_381,
             PoseidonMerkleConfig<BLS12_381>,
             PoseidonMerkleConfigGadget<BLS12_381>,
-        >::assign_witness(witness);
+        >::new(instance, witness);
 
         assert!(relation.verify());
     }

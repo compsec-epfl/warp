@@ -42,7 +42,6 @@ where
     type Commitment = M::InnerDigest;
     type Instance = Vec<F>;
     type Proof = Path<M>;
-    type Relation = R;
 
     fn commit(config: Self::Config, instances: &[Self::Instance]) -> Self {
         Self {

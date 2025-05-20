@@ -6,7 +6,6 @@ pub trait RelationAccumulator<F: Field> {
     type Commitment;
     type Instance;
     type Proof;
-    type Relation;
     fn commit(config: Self::Config, instances: &[Self::Instance]) -> Self;
     fn commitment(&self) -> Self::Commitment;
     fn open(&self, index: usize) -> Result<Self::Proof, Error>;
