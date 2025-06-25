@@ -1,6 +1,6 @@
-use ark_ff::fields::{Fp64, MontBackend, MontConfig};
 use ark_bls12_381::Fr as BLS12_381;
 use ark_bn254::Fr as BN254;
+use ark_ff::fields::{Fp64, MontBackend, MontConfig};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};

@@ -3,8 +3,10 @@ use ark_ff::Field;
 
 pub trait RelationAccumulator<F: Field> {
     type Config;
+    type Relation;
     type Commitment;
     type Instance;
+    type Witness;
     type Proof;
     fn commit(config: Self::Config, instances: &[Self::Instance]) -> Self;
     fn commitment(&self) -> Self::Commitment;

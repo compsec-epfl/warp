@@ -9,7 +9,10 @@ use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
-use crate::{relation::Relation, relation_accumulator::relation_accumulator::RelationAccumulator};
+use crate::{
+    relation::{MerkleInclusionRelation, Relation},
+    relation_accumulator::relation_accumulator::RelationAccumulator,
+};
 
 #[derive(Clone)]
 pub struct MerkleTreeRelationAccumulatorConfig<M: MerkleConfig> {
@@ -39,8 +42,10 @@ where
     R: Relation<F>,
 {
     type Config = MerkleTreeRelationAccumulatorConfig<M>;
+    type Relation = MerkleInclusionRelation<F, M, MG>;
     type Commitment = M::InnerDigest;
     type Instance = Vec<F>;
+    type Witness = Path<M>;
     type Proof = Path<M>;
 
     fn commit(config: Self::Config, instances: &[Self::Instance]) -> Self {
@@ -94,9 +99,7 @@ mod tests {
         },
         relation::MerkleInclusionRelation,
         relation_accumulator::{
-            merkle::relation_accumulator::{
-                MerkleTreeRelationAccumulator, MerkleTreeRelationAccumulatorConfig,
-            },
+            merkle::basic::{MerkleTreeRelationAccumulator, MerkleTreeRelationAccumulatorConfig},
             RelationAccumulator,
         },
     };

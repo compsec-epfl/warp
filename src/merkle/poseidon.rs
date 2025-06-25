@@ -105,14 +105,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
 use ark_bls12_381::Fr as BLS12_381;
-#[cfg(test)]
 use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
-#[cfg(test)]
 use ark_std::{str::FromStr, One, Zero};
 
-#[cfg(test)]
 // TODO get some real configs CRH, TwoToOneCRH
 pub fn poseidon_test_params() -> PoseidonConfig<BLS12_381> {
     let full_rounds = 8;

@@ -1,10 +1,25 @@
 use ark_ff::{Field, PrimeField};
-use ark_r1cs_std::{convert::ToBitsGadget, fields::FieldVar,{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::Boolean}};
+use ark_r1cs_std::{
+    alloc::AllocVar,
+    convert::ToBitsGadget,
+    eq::EqGadget,
+    fields::{fp::FpVar, FieldVar},
+    prelude::Boolean,
+    uint64::UInt64,
+};
 use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
 };
 
 use crate::relation::Relation;
+
+#[derive(Clone)]
+pub struct PrattCertificate<F: Field + PrimeField> {
+    pub prime: F,
+    pub generator: F,
+    pub prime_factors_p_minus_one: Vec<F>,
+    pub prime_factors_p_minus_one_exponents: Vec<usize>,
+}
 
 #[derive(Clone)]
 pub struct IsPrimeInstance<F: Field + PrimeField> {
@@ -13,9 +28,7 @@ pub struct IsPrimeInstance<F: Field + PrimeField> {
 
 #[derive(Clone)]
 pub struct IsPrimeWitness<F: Field + PrimeField> {
-    // btw this is a Pratt Certificate
-    generator: F,
-    q_factors: Vec<F>, // factors of p - 1
+    pratt_certificates: Vec<PrattCertificate<F>>,
 }
 
 #[derive(Clone)]
@@ -24,41 +37,84 @@ pub struct IsPrimeConstraintSynthesizer<F: Field + PrimeField> {
     witness: IsPrimeWitness<F>,
 }
 
-impl<F: Field + PrimeField> ConstraintSynthesizer<F> for IsPrimeConstraintSynthesizer<F>
-{
+// NOTE: no hash, map, nor .contains() so we have to search in vector like this
+fn is_verified_prime<F: Field + PrimeField>(
+    candidate: &FpVar<F>,
+    verified_primes: &Vec<FpVar<F>>,
+) -> Boolean<F> {
+    let mut comparisons = Vec::with_capacity(verified_primes.len());
+    for verified_prime in verified_primes {
+        comparisons.push(verified_prime.is_eq(&candidate).unwrap());
+    }
+    Boolean::kary_or(&comparisons).unwrap()
+}
+
+impl<F: Field + PrimeField> ConstraintSynthesizer<F> for IsPrimeConstraintSynthesizer<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        // public
-        let prime_var = FpVar::<F>::new_input(cs.clone(), || Ok(self.instance.prime))?;
+        // there should be more than zero certificates
+        // certificates must be in increasing order
+        // the last certificate should be for the instance
+        let len_zero: Boolean<F> = Boolean::Constant(self.witness.pratt_certificates.len() < 1);
+        len_zero.enforce_equal(&Boolean::FALSE).unwrap();
 
-        // private
-        let generator_var = FpVar::<F>::new_witness(cs.clone(), || Ok(self.witness.generator))?;
+        let mut verified_primes: Vec<FpVar<F>> =
+            vec![FpVar::<F>::new_witness(cs.clone(), || Ok(F::from(2))).unwrap()];
 
-        // === Compute (p - 1) ===
-        let one = FpVar::<F>::Constant(F::one());
-        let prime_minus_1 = &prime_var - &one;
+        // for all the certificates
+        for certificate in self.witness.pratt_certificates.iter() {
+            let prime_var = FpVar::<F>::new_witness(cs.clone(), || Ok(certificate.prime)).unwrap();
+            let prime_minus_one_var =
+                FpVar::<F>::new_witness(cs.clone(), || Ok(certificate.prime - F::one())).unwrap();
+            let generator_var =
+                FpVar::<F>::new_witness(cs.clone(), || Ok(certificate.generator)).unwrap();
 
-        // === Check g^{p-1} ≡ 1 mod p ===
-        let g_pow_pm1 = generator_var.pow_le(&prime_minus_1.to_bits_le().unwrap())?;
-        g_pow_pm1.enforce_equal(&one)?; // constraint: g^{p-1} == 1
+            // for all the factors of p-1
+            let mut product = FpVar::<F>::new_witness(cs.clone(), || Ok(F::one())).unwrap();
+            for i in 0..certificate.prime_factors_p_minus_one.len() {
+                let factor = certificate.prime_factors_p_minus_one[i];
+                let exponent = certificate.prime_factors_p_minus_one_exponents[i];
+                let exponent_var = UInt64::new_witness(cs.clone(), || Ok(exponent as u64)).unwrap();
+                let factor_var = FpVar::<F>::new_witness(cs.clone(), || Ok(factor)).unwrap();
+                let factor_inv_var = FpVar::<F>::new_witness(cs.clone(), || {
+                    let inverse = factor
+                        .inverse()
+                        .ok_or(SynthesisError::AssignmentMissing)
+                        .unwrap();
+                    Ok(inverse)
+                })
+                .unwrap();
 
-        // === For each q_i ∣ (p−1), check g^{(p−1)/q_i} ≠ 1 ===
-        for q_opt in self.witness.q_factors.iter() {
-            // Allocate q_i as witness
-            let q_var = FpVar::<F>::new_witness(cs.clone(), || Ok(q_opt))?;
+                let is_verified = is_verified_prime(&factor_var, &verified_primes);
+                is_verified.enforce_equal(&Boolean::constant(true)).unwrap();
 
-            // Compute (p−1)/q_i
-            let divisor = q_var.inverse().unwrap_or(FpVar::<F>::Constant(F::zero()));
-            // let divisor = FpVar::Constant(q_inv); // if q not invertible, constraint will fail
+                // ensure g ^ ((p-1)/ qi) != 1 mod p for each factor qi of p-1
+                // this proves that g is a primitive root, which can only occur if p is prime
+                generator_var
+                    .pow_le(
+                        &(prime_minus_one_var.clone() * factor_inv_var)
+                            .to_bits_le()
+                            .unwrap(),
+                    )
+                    .unwrap()
+                    .enforce_not_equal(&FpVar::<F>::Constant(F::one()))
+                    .unwrap();
 
-            let exp_var = &prime_minus_1 * divisor;
+                // ensure product of all factors qi^ei = p-1
+                product *= factor_var
+                    .pow_le(&exponent_var.to_bits_le().unwrap())
+                    .unwrap();
+            }
+            product.enforce_equal(&prime_minus_one_var).unwrap();
 
-            // g^{(p−1)/q_i}
-            let pow = generator_var.pow_le(&exp_var.to_bits_le().unwrap())?;
-
-            // Enforce that g^{(p−1)/q_i} ≠ 1
-            let is_eq = pow.is_eq(&one)?; // boolean
-            is_eq.enforce_equal(&Boolean::FALSE)?; // constraint: g^{(p−1)/q_i} != 1
+            verified_primes.push(prime_var.clone());
         }
+
+        let instance_prime_var =
+            FpVar::<F>::new_input(cs.clone(), || Ok(self.instance.prime)).unwrap();
+        let last_cert_prime_var = verified_primes.last().unwrap();
+        last_cert_prime_var
+            .enforce_equal(&instance_prime_var)
+            .unwrap();
 
         Ok(())
     }
@@ -68,20 +124,16 @@ pub struct IsPrimeRelation<F: Field + PrimeField> {
     constraint_system: ConstraintSystemRef<F>,
 }
 
-impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F>
-{
+impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
     type Instance = IsPrimeInstance<F>;
     type Witness = IsPrimeWitness<F>;
     fn new(instance: Self::Instance, witness: Self::Witness) -> Self {
-        let constraint_synthesizer =
-            IsPrimeConstraintSynthesizer::<F> { instance, witness };
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<F> { instance, witness };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
             .generate_constraints(constraint_system.clone())
             .unwrap();
-        Self {
-            constraint_system,
-        }
+        Self { constraint_system }
     }
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()
@@ -93,56 +145,177 @@ mod tests {
     use ark_bls12_381::Fr as BLS12_381;
     use ark_relations::r1cs::ConstraintSynthesizer;
     use ark_relations::r1cs::ConstraintSystem;
-    use ark_std::marker::PhantomData;
 
-    use crate::relation::is_prime::{IsPrimeConstraintSynthesizer, IsPrimeInstance, IsPrimeRelation, IsPrimeWitness};
+    use crate::relation::is_prime::PrattCertificate;
+    use crate::relation::is_prime::{
+        IsPrimeConstraintSynthesizer, IsPrimeInstance, IsPrimeRelation, IsPrimeWitness,
+    };
     use crate::relation::Relation;
 
+    // fn compute_generator<F: Field + PrimeField>(p: F, prime_factors: Vec<F>) -> Option<F> {
+    //     // NOTE: this is incomplete sanity it doesn't check if the factors are prime
+    //     let mut product = F::one();
+    //     for factor in &prime_factors {
+    //         product *= factor;
+    //     }
+    //     assert_eq!(p, product);
+
+    //     // special case
+    //     let two = F::from(2u64);
+    //     if p == two {
+    //         return Some(F::one());
+    //     }
+
+    //     // compute generator if exists
+    //     let p_minus_1 = p - F::one();
+    //     let mut candidate_g = two;
+    //     while candidate_g <= p_minus_1 {
+    //         let mut is_generator = true;
+    //         for factor in &prime_factors {
+    //             let exp = p_minus_1 / factor;
+    //             let exp_big_int = exp.into_bigint();
+    //             if candidate_g.pow(exp_big_int) == F::one() {
+    //                 is_generator = false;
+    //                 break;
+    //             }
+    //         }
+    //         if is_generator {
+    //             return Some(candidate_g);
+    //         }
+    //         candidate_g += F::one();
+    //     }
+
+    //     None
+    // }
+    // p = 13, then pc = [{13, 2, [2, 3], [2, 1]}]
+    // p = 17, then pc = [{17, 3, [2], [4]}]
     #[test]
-    fn witness_sanity() {
-        // create some leaves
-        let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
-        let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
-        let leaves: Vec<&[BLS12_381]> = vec![&leaf0, &leaf1];
-
-        // commit to the tree
-        let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let mt = MerkleTree::<PoseidonMerkleConfig<BLS12_381>>::new(
-            &leaf_hash_param,
-            &two_to_one_hash_param,
-            &leaves,
-        )
-        .unwrap();
-
-        // get root and proof
-        let root = mt.root();
-        let proof0 = mt.generate_proof(0).unwrap();
-
-        //
-        let constraint_synthesizer = MerkleInclusionConstraintSynthesizer::<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        > {
-            instance: MerkleInclusionInstance::<
-                BLS12_381,
-                PoseidonMerkleConfig<BLS12_381>,
-                PoseidonMerkleConfigGadget<BLS12_381>,
-            > {
-                leaf_hash_param,
-                two_to_one_hash_param,
-                root,
-                leaf: leaf0,
-                _config_gadget: PhantomData,
+    fn witness_sanity_0() {
+        // Example:
+        // p = 0, then pc = [{0, 0, [], []}] --> THIS SHOULD FAIL
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(0u64),
             },
-            witness: MerkleInclusionWitness::<
-                BLS12_381,
-                PoseidonMerkleConfig<BLS12_381>,
-                PoseidonMerkleConfigGadget<BLS12_381>,
-            > {
-                proof: proof0,
-                _config_gadget: PhantomData,
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![PrattCertificate {
+                    prime: BLS12_381::from(0u64),
+                    generator: BLS12_381::from(0u64),
+                    prime_factors_p_minus_one: vec![],
+                    prime_factors_p_minus_one_exponents: vec![],
+                }],
+            },
+        };
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        constraint_synthesizer
+            .generate_constraints(sanity_constraint_system.clone())
+            .unwrap(); // now it has both constraints and witness
+        assert!(!sanity_constraint_system.is_satisfied().unwrap());
+    }
+    #[test]
+    fn witness_sanity_1() {
+        // Example:
+        // p = 1, then pc = [{1, 1, [], []}] --> THIS SHOULD FAIL
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(1u64),
+            },
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![PrattCertificate {
+                    prime: BLS12_381::from(1u64),
+                    generator: BLS12_381::from(1u64),
+                    prime_factors_p_minus_one: vec![],
+                    prime_factors_p_minus_one_exponents: vec![],
+                }],
+            },
+        };
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        constraint_synthesizer
+            .generate_constraints(sanity_constraint_system.clone())
+            .unwrap(); // now it has both constraints and witness
+        assert!(!sanity_constraint_system.is_satisfied().unwrap());
+    }
+    #[test]
+    fn witness_sanity_2() {
+        // Example:
+        // p = 1, then pc = [{2, 1, [], []}]
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(2u64),
+            },
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![PrattCertificate {
+                    prime: BLS12_381::from(2u64),
+                    generator: BLS12_381::from(1u64),
+                    prime_factors_p_minus_one: vec![],
+                    prime_factors_p_minus_one_exponents: vec![],
+                }],
+            },
+        };
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        constraint_synthesizer
+            .generate_constraints(sanity_constraint_system.clone())
+            .unwrap(); // now it has both constraints and witness
+        assert!(sanity_constraint_system.is_satisfied().unwrap());
+    }
+    #[test]
+    fn witness_sanity_3() {
+        // Example:
+        // p = 3, then pc = [{3, 2, [2], [1]}]
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(3u64),
+            },
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![PrattCertificate {
+                    prime: BLS12_381::from(3u64),
+                    generator: BLS12_381::from(2u64),
+                    prime_factors_p_minus_one: vec![BLS12_381::from(2u64)],
+                    prime_factors_p_minus_one_exponents: vec![1],
+                }],
+            },
+        };
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        constraint_synthesizer
+            .generate_constraints(sanity_constraint_system.clone())
+            .unwrap(); // now it has both constraints and witness
+        assert!(sanity_constraint_system.is_satisfied().unwrap());
+    }
+    #[test]
+    fn witness_sanity_293() {
+        // Example:
+        // p = 293, then pc = [{3, 2, [2], [1]}, {73, 5, [2, 3], [3, 2]}, {293, 2, [2, 73], [2, 1]}]
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(293u64),
+            },
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![
+                    PrattCertificate {
+                        prime: BLS12_381::from(3u64),
+                        generator: BLS12_381::from(2u64),
+                        prime_factors_p_minus_one: vec![BLS12_381::from(2u64)],
+                        prime_factors_p_minus_one_exponents: vec![1],
+                    },
+                    PrattCertificate {
+                        prime: BLS12_381::from(73u64),
+                        generator: BLS12_381::from(5u64),
+                        prime_factors_p_minus_one: vec![
+                            BLS12_381::from(2u64),
+                            BLS12_381::from(3u64),
+                        ],
+                        prime_factors_p_minus_one_exponents: vec![3, 2],
+                    },
+                    PrattCertificate {
+                        prime: BLS12_381::from(293u64),
+                        generator: BLS12_381::from(2u64),
+                        prime_factors_p_minus_one: vec![
+                            BLS12_381::from(2u64),
+                            BLS12_381::from(73u64),
+                        ],
+                        prime_factors_p_minus_one_exponents: vec![2, 1],
+                    },
+                ],
             },
         };
 
@@ -152,57 +325,85 @@ mod tests {
             .unwrap(); // now it has both constraints and witness
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
+    #[test]
+    fn witness_sanity_292() {
+        // Example:
+        // p = 292, then pc = [{3, 2, [2], [1]}, {73, 5, [2, 3], [3, 2]}, {293, 2, [2, 73], [2, 1]}] --> THIS SHOULD FAIL
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
+            instance: IsPrimeInstance::<BLS12_381> {
+                prime: BLS12_381::from(292u64),
+            },
+            witness: IsPrimeWitness::<BLS12_381> {
+                pratt_certificates: vec![
+                    PrattCertificate {
+                        prime: BLS12_381::from(3u64),
+                        generator: BLS12_381::from(2u64),
+                        prime_factors_p_minus_one: vec![BLS12_381::from(2u64)],
+                        prime_factors_p_minus_one_exponents: vec![1],
+                    },
+                    PrattCertificate {
+                        prime: BLS12_381::from(73u64),
+                        generator: BLS12_381::from(5u64),
+                        prime_factors_p_minus_one: vec![
+                            BLS12_381::from(2u64),
+                            BLS12_381::from(3u64),
+                        ],
+                        prime_factors_p_minus_one_exponents: vec![3, 2],
+                    },
+                    PrattCertificate {
+                        prime: BLS12_381::from(293u64),
+                        generator: BLS12_381::from(2u64),
+                        prime_factors_p_minus_one: vec![
+                            BLS12_381::from(2u64),
+                            BLS12_381::from(73u64),
+                        ],
+                        prime_factors_p_minus_one_exponents: vec![2, 1],
+                    },
+                ],
+            },
+        };
+
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        constraint_synthesizer
+            .generate_constraints(sanity_constraint_system.clone())
+            .unwrap(); // now it has both constraints and witness
+        assert!(!sanity_constraint_system.is_satisfied().unwrap());
+    }
 
     #[test]
     fn relation_sanity() {
-        // Create some leaves
-        let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
-        let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
-        let leaves: Vec<&[BLS12_381]> = vec![&leaf0, &leaf1];
+        // Example:
+        // p = 293, then pc = [{3, 2, [2], [1]}, {73, 5, [2, 3], [3, 2]}, {293, 2, [2, 73], [2, 1]}]
 
-        // Commit to the Merkle tree
-        let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-
-        let mt = MerkleTree::<PoseidonMerkleConfig<BLS12_381>>::new(
-            &leaf_hash_param,
-            &two_to_one_hash_param,
-            &leaves,
-        )
-        .unwrap();
-
-        // Get root and proof
-        let root = mt.root();
-        let proof0 = mt.generate_proof(0).unwrap();
-
-        // Construct the instance and witness
-        let instance = MerkleInclusionInstance::<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        > {
-            leaf_hash_param,
-            two_to_one_hash_param,
-            root,
-            leaf: leaf0,
-            _config_gadget: PhantomData,
+        let instance = IsPrimeInstance::<BLS12_381> {
+            prime: BLS12_381::from(293u64),
         };
-        let witness = MerkleInclusionWitness::<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        > {
-            proof: proof0,
-            _config_gadget: PhantomData,
+
+        let witness = IsPrimeWitness::<BLS12_381> {
+            pratt_certificates: vec![
+                PrattCertificate {
+                    prime: BLS12_381::from(3u64),
+                    generator: BLS12_381::from(2u64),
+                    prime_factors_p_minus_one: vec![BLS12_381::from(2u64)],
+                    prime_factors_p_minus_one_exponents: vec![1],
+                },
+                PrattCertificate {
+                    prime: BLS12_381::from(73u64),
+                    generator: BLS12_381::from(5u64),
+                    prime_factors_p_minus_one: vec![BLS12_381::from(2u64), BLS12_381::from(3u64)],
+                    prime_factors_p_minus_one_exponents: vec![3, 2],
+                },
+                PrattCertificate {
+                    prime: BLS12_381::from(293u64),
+                    generator: BLS12_381::from(2u64),
+                    prime_factors_p_minus_one: vec![BLS12_381::from(2u64), BLS12_381::from(73u64)],
+                    prime_factors_p_minus_one_exponents: vec![2, 1],
+                },
+            ],
         };
 
         // Create and verify the relation
-        let relation = MerkleInclusionRelation::<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        >::new(instance, witness);
-
+        let relation = IsPrimeRelation::<BLS12_381>::new(instance, witness);
         assert!(relation.verify());
     }
 }
