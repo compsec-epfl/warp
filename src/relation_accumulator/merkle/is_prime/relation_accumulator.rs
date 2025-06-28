@@ -10,18 +10,18 @@ use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
 use crate::{
-    relation::{MerkleInclusionRelation, Relation},
-    relation_accumulator::relation_accumulator::RelationAccumulator,
+    relation::{IsPrimeRelation, Relation},
+    relation_accumulator::RelationAccumulator,
 };
 
 #[derive(Clone)]
-pub struct BasicRelationAccumulatorConfig<M: MerkleConfig> {
+pub struct IsPrimeRelationAccumulatorConfig<M: MerkleConfig> {
     leaf_hash_param: LeafParam<M>,
     one_two_hash_param: TwoToOneParam<M>,
     _merkle_config: PhantomData<M>,
 }
 
-pub struct BasicRelationAccumulator<
+pub struct IsPrimeRelationAccumulator<
     F: Field + PrimeField,
     M: MerkleConfig,
     MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
@@ -34,15 +34,15 @@ pub struct BasicRelationAccumulator<
     _relation: PhantomData<R>,
 }
 
-impl<F, M, MG, R> RelationAccumulator<F> for BasicRelationAccumulator<F, M, MG, R>
+impl<F, M, MG, R> RelationAccumulator<F> for IsPrimeRelationAccumulator<F, M, MG, R>
 where
     F: Field + PrimeField,
     M: MerkleConfig<Leaf = [F]>,
     MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
     R: Relation<F>,
 {
-    type Config = BasicRelationAccumulatorConfig<M>;
-    type Relation = MerkleInclusionRelation<F, M, MG>;
+    type Config = IsPrimeRelationAccumulatorConfig<M>;
+    type Relation = IsPrimeRelation<F>;
     type Commitment = M::InnerDigest;
     type Instance = Vec<F>;
     type Witness = Path<M>;
@@ -99,12 +99,12 @@ mod tests {
         },
         relation::MerkleInclusionRelation,
         relation_accumulator::{
-            merkle::basic::{BasicRelationAccumulator, BasicRelationAccumulatorConfig},
+            merkle::is_prime::{IsPrimeRelationAccumulator, IsPrimeRelationAccumulatorConfig},
             RelationAccumulator,
         },
     };
 
-    type ExampleRelationAccumulator = BasicRelationAccumulator<
+    type ExampleRelationAccumulator = IsPrimeRelationAccumulator<
         BLS12_381,
         PoseidonMerkleConfig<BLS12_381>,
         PoseidonMerkleConfigGadget<BLS12_381>,
@@ -123,7 +123,7 @@ mod tests {
         let leaves: Vec<Vec<BLS12_381>> = vec![leaf0.clone(), leaf1.clone()];
 
         // make config
-        let config = BasicRelationAccumulatorConfig::<PoseidonMerkleConfig<BLS12_381>> {
+        let config = IsPrimeRelationAccumulatorConfig::<PoseidonMerkleConfig<BLS12_381>> {
             leaf_hash_param: poseidon_test_params(),
             one_two_hash_param: poseidon_test_params(),
             _merkle_config: PhantomData,

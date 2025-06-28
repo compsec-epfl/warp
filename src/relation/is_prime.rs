@@ -37,7 +37,7 @@ pub struct IsPrimeConstraintSynthesizer<F: Field + PrimeField> {
     witness: IsPrimeWitness<F>,
 }
 
-// NOTE: no hash, map, nor .contains() so we have to search in vector like this
+// NOTE: no hash, map, nor .contains() in r1cs so we have to search in vector like this
 fn is_verified_prime<F: Field + PrimeField>(
     candidate: &FpVar<F>,
     verified_primes: &Vec<FpVar<F>>,

@@ -1,2 +1,5 @@
 mod basic;
-pub use basic::{MerkleTreeRelationAccumulator, MerkleTreeRelationAccumulatorConfig};
+mod is_prime;
+
+pub use basic::{BasicRelationAccumulator, BasicRelationAccumulatorConfig};
+pub use is_prime::{IsPrimeRelationAccumulator, IsPrimeRelationAccumulatorConfig};
