@@ -6,16 +6,15 @@ use ark_relations::r1cs::{
 };
 use ark_std::marker::PhantomData;
 
+use crate::relation::constraint_matrices::SerializableConstraintMatrices;
 use crate::relation::Relation;
 
 #[derive(Clone)]
-pub struct PreimageInstance<F, H>
+pub struct PreimageInstance<F>
 where
     F: Field + PrimeField,
-    H: CRHScheme<Input = [F]>,
 {
     digest: F,
-    parameters: H::Parameters,
 }
 
 #[derive(Clone)]
@@ -35,8 +34,9 @@ where
     H: CRHScheme<Input = [F]>,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>]>,
 {
-    instance: PreimageInstance<F, H>,
+    instance: PreimageInstance<F>,
     witness: PreimageWitness<F, H>,
+    config: H::Parameters,
     _crhs_scheme_gadget: PhantomData<HG>,
 }
 
@@ -55,7 +55,7 @@ where
             .collect::<Result<_, _>>()
             .unwrap();
         let digest_var = FpVar::new_input(cs.clone(), || Ok(self.instance.digest))?;
-        let params_var = HG::ParametersVar::new_constant(cs.clone(), &self.instance.parameters)?;
+        let params_var = HG::ParametersVar::new_constant(cs.clone(), &self.config)?;
 
         let computed_hash = HG::evaluate(&params_var, &preimage_var)?;
         computed_hash.enforce_equal(&digest_var)?;
@@ -71,6 +71,7 @@ where
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
 {
     constraint_system: ConstraintSystemRef<F>,
+    config: H::Parameters,
     _crhs_scheme: PhantomData<H>,
     _crhs_scheme_gadget: PhantomData<HG>,
 }
@@ -81,12 +82,28 @@ where
     H: CRHScheme<Input = [F], Output = F>,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
 {
-    type Instance = PreimageInstance<F, H>;
+    type Instance = PreimageInstance<F>;
     type Witness = PreimageWitness<F, H>;
-    fn new(instance: Self::Instance, witness: Self::Witness) -> Self {
+    type Config = H::Parameters;
+    fn description(config: &Self::Config) -> Vec<u8> {
+        let zero_instance = PreimageInstance::<F> { digest: F::zero() };
+        let zero_witness = PreimageWitness::<F, H> {
+            preimage: vec![F::zero()],
+            _crhs_scheme: PhantomData,
+        };
+        let constraint_synthesizer = PreimageConstraintSynthesizer::<F, H, HG> {
+            instance: zero_instance,
+            witness: zero_witness,
+            config: config.clone(),
+            _crhs_scheme_gadget: PhantomData,
+        };
+        SerializableConstraintMatrices::generate_description(constraint_synthesizer)
+    }
+    fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self {
         let constraint_synthesizer = PreimageConstraintSynthesizer::<F, H, HG> {
             instance,
             witness,
+            config: config.clone(),
             _crhs_scheme_gadget: PhantomData,
         };
         let constraint_system = ConstraintSystem::<F>::new_ref();
@@ -95,6 +112,7 @@ where
             .unwrap();
         Self {
             constraint_system,
+            config: config.clone(),
             _crhs_scheme: PhantomData,
             _crhs_scheme_gadget: PhantomData,
         }
@@ -131,11 +149,12 @@ mod tests {
         let digest = TestCRHScheme::evaluate(&parameters, preimage.clone()).unwrap();
 
         let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
-            PreimageInstance { digest, parameters },
+            PreimageInstance { digest },
             PreimageWitness {
                 preimage,
                 _crhs_scheme: PhantomData,
             },
+            parameters.clone(),
         );
         assert!(relation.verify());
     }
@@ -150,11 +169,12 @@ mod tests {
         let digest = TestCRHScheme::evaluate(&parameters, preimage_0.clone()).unwrap();
 
         let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
-            PreimageInstance { digest, parameters },
+            PreimageInstance { digest },
             PreimageWitness {
                 preimage: preimage_1,
                 _crhs_scheme: PhantomData,
             },
+            parameters.clone(),
         );
         assert!(!relation.verify());
     }

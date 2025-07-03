@@ -11,7 +11,7 @@ use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
 };
 
-use crate::relation::Relation;
+use crate::relation::{constraint_matrices::SerializableConstraintMatrices, Relation};
 
 #[derive(Clone)]
 pub struct PrattCertificate<F: Field + PrimeField> {
@@ -127,7 +127,22 @@ pub struct IsPrimeRelation<F: Field + PrimeField> {
 impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
     type Instance = IsPrimeInstance<F>;
     type Witness = IsPrimeWitness<F>;
-    fn new(instance: Self::Instance, witness: Self::Witness) -> Self {
+    type Config = ();
+    fn description(_config: &Self::Config) -> Vec<u8> {
+        let constraint_synthesizer = IsPrimeConstraintSynthesizer::<F> {
+            instance: Self::Instance { prime: F::zero() },
+            witness: Self::Witness {
+                pratt_certificates: vec![PrattCertificate {
+                    prime: F::zero(),
+                    generator: F::zero(),
+                    prime_factors_p_minus_one: vec![],
+                    prime_factors_p_minus_one_exponents: vec![],
+                }],
+            },
+        };
+        SerializableConstraintMatrices::generate_description(constraint_synthesizer)
+    }
+    fn new(instance: Self::Instance, witness: Self::Witness, _config: Self::Config) -> Self {
         let constraint_synthesizer = IsPrimeConstraintSynthesizer::<F> { instance, witness };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
@@ -206,10 +221,10 @@ mod tests {
                 }],
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(!sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -229,10 +244,10 @@ mod tests {
                 }],
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(!sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -252,10 +267,10 @@ mod tests {
                 }],
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -275,10 +290,10 @@ mod tests {
                 }],
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -319,15 +334,14 @@ mod tests {
             },
         };
 
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
     fn witness_sanity_292() {
-        // Example:
         // p = 292, then pc = [{3, 2, [2], [1]}, {73, 5, [2, 3], [3, 2]}, {293, 2, [2, 73], [2, 1]}] --> THIS SHOULD FAIL
         let constraint_synthesizer = IsPrimeConstraintSynthesizer::<BLS12_381> {
             instance: IsPrimeInstance::<BLS12_381> {
@@ -363,18 +377,16 @@ mod tests {
             },
         };
 
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(!sanity_constraint_system.is_satisfied().unwrap());
     }
 
     #[test]
     fn relation_sanity() {
-        // Example:
         // p = 293, then pc = [{3, 2, [2], [1]}, {73, 5, [2, 3], [3, 2]}, {293, 2, [2, 73], [2, 1]}]
-
         let instance = IsPrimeInstance::<BLS12_381> {
             prime: BLS12_381::from(293u64),
         };
@@ -403,7 +415,7 @@ mod tests {
         };
 
         // Create and verify the relation
-        let relation = IsPrimeRelation::<BLS12_381>::new(instance, witness);
+        let relation = IsPrimeRelation::<BLS12_381>::new(instance, witness, ());
         assert!(relation.verify());
     }
 }

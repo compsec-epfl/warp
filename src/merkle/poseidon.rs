@@ -32,6 +32,7 @@ impl<F: PrimeField + Absorb> MerkleConfig for PoseidonMerkleConfig<F> {
     type TwoToOneHash = PoseidonTwoToOneCRH<F>;
 }
 
+#[derive(Clone)]
 pub struct PoseidonMerkleConfigGadget<F: PrimeField> {
     _field: PhantomData<F>,
 }

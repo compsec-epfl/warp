@@ -4,7 +4,7 @@ use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
 };
 
-use crate::relation::Relation;
+use crate::relation::{constraint_matrices::SerializableConstraintMatrices, Relation};
 
 #[derive(Clone)]
 pub struct IdentityInstance<F: Field + PrimeField> {
@@ -40,7 +40,15 @@ pub struct IdentityRelation<F: Field + PrimeField> {
 impl<F: Field + PrimeField> Relation<F> for IdentityRelation<F> {
     type Instance = IdentityInstance<F>;
     type Witness = IdentityWitness<F>;
-    fn new(instance: Self::Instance, witness: Self::Witness) -> Self {
+    type Config = ();
+    fn description(_config: &Self::Config) -> Vec<u8> {
+        let constraint_synthesizer = IdentityConstraintSynthesizer::<F> {
+            instance: Self::Instance { x: F::zero() },
+            witness: Self::Witness { w: F::zero() },
+        };
+        SerializableConstraintMatrices::generate_description(constraint_synthesizer)
+    }
+    fn new(instance: Self::Instance, witness: Self::Witness, _config: Self::Config) -> Self {
         let constraint_synthesizer = IdentityConstraintSynthesizer::<F> { instance, witness };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
@@ -75,10 +83,10 @@ mod tests {
                 w: BLS12_381::from(1u64),
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -91,10 +99,10 @@ mod tests {
                 w: BLS12_381::from(0u64),
             },
         };
-        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref(); // this is empty when instantiated
+        let sanity_constraint_system = ConstraintSystem::<BLS12_381>::new_ref();
         constraint_synthesizer
             .generate_constraints(sanity_constraint_system.clone())
-            .unwrap(); // now it has both constraints and witness
+            .unwrap();
         assert!(!sanity_constraint_system.is_satisfied().unwrap());
     }
     #[test]
@@ -108,7 +116,7 @@ mod tests {
         };
 
         // Create and verify the relation
-        let relation = IdentityRelation::<BLS12_381>::new(instance, witness);
+        let relation = IdentityRelation::<BLS12_381>::new(instance, witness, ());
         assert!(relation.verify());
     }
 }
