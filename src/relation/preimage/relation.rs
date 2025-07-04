@@ -1,67 +1,13 @@
 use ark_crypto_primitives::crh::{CRHScheme, CRHSchemeGadget};
 use ark_ff::{Field, PrimeField};
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
-use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
-};
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
 use ark_std::marker::PhantomData;
 
 use crate::relation::constraint_matrices::SerializableConstraintMatrices;
-use crate::relation::Relation;
-
-#[derive(Clone)]
-pub struct PreimageInstance<F>
-where
-    F: Field + PrimeField,
-{
-    digest: F,
-}
-
-#[derive(Clone)]
-pub struct PreimageWitness<F, H>
-where
-    F: Field + PrimeField,
-    H: CRHScheme<Input = [F]>,
-{
-    preimage: Vec<F>,
-    _crhs_scheme: PhantomData<H>,
-}
-
-#[derive(Clone)]
-pub struct PreimageConstraintSynthesizer<F, H, HG>
-where
-    F: Field + PrimeField,
-    H: CRHScheme<Input = [F]>,
-    HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>]>,
-{
-    instance: PreimageInstance<F>,
-    witness: PreimageWitness<F, H>,
-    config: H::Parameters,
-    _crhs_scheme_gadget: PhantomData<HG>,
-}
-
-impl<F, H, HG> ConstraintSynthesizer<F> for PreimageConstraintSynthesizer<F, H, HG>
-where
-    F: Field + PrimeField,
-    H: CRHScheme<Input = [F], Output = F>,
-    HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
-{
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let preimage_var: Vec<FpVar<F>> = self
-            .witness
-            .preimage
-            .iter()
-            .map(|val| FpVar::new_witness(cs.clone(), || Ok(*val)))
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let digest_var = FpVar::new_input(cs.clone(), || Ok(self.instance.digest))?;
-        let params_var = HG::ParametersVar::new_constant(cs.clone(), &self.config)?;
-
-        let computed_hash = HG::evaluate(&params_var, &preimage_var)?;
-        computed_hash.enforce_equal(&digest_var)?;
-        Ok(())
-    }
-}
+use crate::relation::preimage::synthesizer::PreimageSynthesizer;
+use crate::relation::preimage::PreimageInstance;
+use crate::relation::{PreimageWitness, Relation};
 
 #[derive(Clone)]
 pub struct PreimageRelation<F, H, HG>
@@ -71,7 +17,6 @@ where
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
 {
     constraint_system: ConstraintSystemRef<F>,
-    config: H::Parameters,
     _crhs_scheme: PhantomData<H>,
     _crhs_scheme_gadget: PhantomData<HG>,
 }
@@ -91,7 +36,7 @@ where
             preimage: vec![F::zero()],
             _crhs_scheme: PhantomData,
         };
-        let constraint_synthesizer = PreimageConstraintSynthesizer::<F, H, HG> {
+        let constraint_synthesizer = PreimageSynthesizer::<F, H, HG> {
             instance: zero_instance,
             witness: zero_witness,
             config: config.clone(),
@@ -100,7 +45,7 @@ where
         SerializableConstraintMatrices::generate_description(constraint_synthesizer)
     }
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self {
-        let constraint_synthesizer = PreimageConstraintSynthesizer::<F, H, HG> {
+        let constraint_synthesizer = PreimageSynthesizer::<F, H, HG> {
             instance,
             witness,
             config: config.clone(),
@@ -112,7 +57,6 @@ where
             .unwrap();
         Self {
             constraint_system,
-            config: config.clone(),
             _crhs_scheme: PhantomData,
             _crhs_scheme_gadget: PhantomData,
         }
@@ -141,7 +85,7 @@ mod tests {
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
 
     #[test]
-    fn relation_sanity_0() {
+    fn sanity_0() {
         let mut rng = test_rng();
         let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
 
@@ -160,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_sanity_1() {
+    fn sanity_1() {
         let mut rng = test_rng();
         let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
 
