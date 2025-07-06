@@ -1,4 +1,4 @@
-mod constraint_matrices;
+mod description;
 mod identity;
 mod is_prime;
 mod merkle_inclusion;

@@ -2,7 +2,7 @@ use ark_ff::{Field, PrimeField};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
 
 use crate::relation::{
-    constraint_matrices::SerializableConstraintMatrices,
+    description::SerializableConstraintMatrices,
     is_prime::{synthesizer::IsPrimeSynthesizer, PrattCertificate},
     IsPrimeInstance, IsPrimeWitness, Relation,
 };
@@ -15,6 +15,11 @@ impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
     type Instance = IsPrimeInstance<F>;
     type Witness = IsPrimeWitness<F>;
     type Config = ();
+
+    fn constraints(&self) -> usize {
+        self.constraint_system.num_constraints()
+    }
+
     fn description(_config: &Self::Config) -> Vec<u8> {
         let constraint_synthesizer = IsPrimeSynthesizer::<F> {
             instance: Self::Instance { prime: F::zero() },

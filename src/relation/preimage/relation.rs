@@ -4,7 +4,7 @@ use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
 use ark_std::marker::PhantomData;
 
-use crate::relation::constraint_matrices::SerializableConstraintMatrices;
+use crate::relation::description::SerializableConstraintMatrices;
 use crate::relation::preimage::synthesizer::PreimageSynthesizer;
 use crate::relation::preimage::PreimageInstance;
 use crate::relation::{PreimageWitness, Relation};
@@ -30,6 +30,11 @@ where
     type Instance = PreimageInstance<F>;
     type Witness = PreimageWitness<F, H>;
     type Config = H::Parameters;
+
+    fn constraints(&self) -> usize {
+        self.constraint_system.num_constraints()
+    }
+
     fn description(config: &Self::Config) -> Vec<u8> {
         let zero_instance = PreimageInstance::<F> { digest: F::zero() };
         let zero_witness = PreimageWitness::<F, H> {

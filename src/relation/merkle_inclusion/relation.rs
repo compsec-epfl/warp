@@ -5,7 +5,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSys
 use ark_std::marker::PhantomData;
 
 use crate::relation::{
-    constraint_matrices::SerializableConstraintMatrices,
+    description::SerializableConstraintMatrices,
     merkle_inclusion::{
         synthesizer::MerkleInclusionSynthesizer, MerkleInclusionConfig, MerkleInclusionInstance,
     },
@@ -36,6 +36,11 @@ where
     type Instance = MerkleInclusionInstance<F, M, MG>;
     type Witness = MerkleInclusionWitness<F, M, MG>;
     type Config = MerkleInclusionConfig<F, M, MG>;
+
+    fn constraints(&self) -> usize {
+        self.constraint_system.num_constraints()
+    }
+
     fn description(config: &Self::Config) -> Vec<u8> {
         let zero_instance = MerkleInclusionInstance::<F, M, MG> {
             root: M::InnerDigest::default(),

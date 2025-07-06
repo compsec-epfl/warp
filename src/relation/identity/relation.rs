@@ -2,8 +2,8 @@ use ark_ff::{Field, PrimeField};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
 
 use crate::relation::{
-    constraint_matrices::SerializableConstraintMatrices,
-    identity::synthesizer::IdentitySynthesizer, IdentityInstance, IdentityWitness, Relation,
+    description::SerializableConstraintMatrices, identity::synthesizer::IdentitySynthesizer,
+    IdentityInstance, IdentityWitness, Relation,
 };
 
 #[derive(Clone)]
@@ -15,6 +15,10 @@ impl<F: Field + PrimeField> Relation<F> for IdentityRelation<F> {
     type Instance = IdentityInstance<F>;
     type Witness = IdentityWitness<F>;
     type Config = ();
+
+    fn constraints(&self) -> usize {
+        self.constraint_system.num_constraints()
+    }
 
     fn description(_config: &Self::Config) -> Vec<u8> {
         let constraint_synthesizer = IdentitySynthesizer::<F> {
