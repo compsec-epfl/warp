@@ -36,10 +36,12 @@ where
     }
 
     fn description(config: &Self::Config) -> Vec<u8> {
-        let zero_instance = PreimageInstance::<F> { digest: F::zero() };
         let zero_witness = PreimageWitness::<F, H> {
             preimage: vec![F::zero()],
             _crhs_scheme: PhantomData,
+        };
+        let zero_instance = PreimageInstance::<F> {
+            digest: H::evaluate(&config, zero_witness.preimage.clone()).unwrap(),
         };
         let constraint_synthesizer = PreimageSynthesizer::<F, H, HG> {
             instance: zero_instance,
@@ -79,7 +81,7 @@ mod tests {
         CRHScheme,
     };
     use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
-    use ark_ff::UniformRand;
+    use ark_ff::{UniformRand, Zero};
     use ark_std::{marker::PhantomData, test_rng};
 
     use crate::merkle::poseidon_test_params;
@@ -126,5 +128,32 @@ mod tests {
             parameters.clone(),
         );
         assert!(!relation.verify());
+    }
+
+    #[test]
+    fn description() {
+        let zero_witness = PreimageWitness::<BLS12_381, TestCRHScheme> {
+            preimage: vec![BLS12_381::zero()],
+            _crhs_scheme: PhantomData,
+        };
+        let zero_instance = PreimageInstance::<BLS12_381> {
+            digest: TestCRHScheme::evaluate(&poseidon_test_params(), zero_witness.preimage.clone())
+                .unwrap(),
+        };
+        let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
+            zero_instance,
+            zero_witness,
+            poseidon_test_params(),
+        );
+        assert!(relation.verify());
+        let description: Vec<u8> =
+            PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::description(
+                &poseidon_test_params(),
+            );
+        let description_hash = blake3::hash(&description).to_hex();
+        assert_eq!(
+            description_hash,
+            *"354223328d1f52c726b1e8e23fb5537d8df968b18e57f8f8169563dbf3dbe54d"
+        );
     }
 }

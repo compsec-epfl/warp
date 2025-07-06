@@ -4,13 +4,30 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
+use ark_std::io::Cursor;
 use ark_std::marker::PhantomData;
-use spongefish::DuplexSpongeInterface;
+use spongefish::{DuplexSpongeInterface, Unit as SpongefishUnit};
 
 use crate::{
     relation::{PreimageRelation, Relation},
     relation_accumulator::relation_accumulator::RelationAccumulator,
 };
+
+fn vec_field_elements_from_bytes<F: Field>(bytes: &[u8]) -> Vec<F> {
+    let mut buf = Vec::new();
+    F::zero().serialize_uncompressed(&mut buf).unwrap();
+    let chunk_size = buf.len();
+    bytes
+        .chunks(chunk_size)
+        .map(|chunk| {
+            let mut padded = Vec::with_capacity(chunk_size);
+            padded.extend_from_slice(chunk);
+            padded.resize(chunk_size, 0); // pad with zero bytes if necessary
+            let mut reader = Cursor::new(padded);
+            F::deserialize_uncompressed(&mut reader).unwrap()
+        })
+        .collect()
+}
 
 #[derive(Clone)]
 pub struct PreimageRelationAccumulatorConfig<F, H>
@@ -26,11 +43,11 @@ where
 
 pub struct PreimageRelationAccumulator<F, H, HG, R, S>
 where
-    F: Field + PrimeField,
+    F: Field + PrimeField + SpongefishUnit,
     H: CRHScheme<Input = [F], Output = F>,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
     R: Relation<F>,
-    S: DuplexSpongeInterface,
+    S: DuplexSpongeInterface<F>,
 {
     codeword_len: usize,
     witness_len: usize,
@@ -45,11 +62,11 @@ where
 
 impl<F, H, HG, R, S> RelationAccumulator<F> for PreimageRelationAccumulator<F, H, HG, R, S>
 where
-    F: Field + PrimeField,
+    F: Field + PrimeField + SpongefishUnit,
     H: CRHScheme<Input = [F], Output = F>,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
     R: Relation<F>,
-    S: DuplexSpongeInterface,
+    S: DuplexSpongeInterface<F>,
 {
     type Config = PreimageRelationAccumulatorConfig<F, H>;
     type Relation = PreimageRelation<F, H, HG>;
@@ -71,10 +88,12 @@ where
         // fs_state from i = (p, M, N, k) (TODO: hash parameters?)
         let circuit_description = Self::Relation::description(&config.hash_parameters);
         let mut spongefish = S::new(config.initialization_vector);
-        spongefish.absorb_unchecked(&circuit_description);
-        spongefish.absorb_unchecked(&max_num_constraints.to_le_bytes());
-        spongefish.absorb_unchecked(&config.codeword_len.to_le_bytes());
-        spongefish.absorb_unchecked(&config.witness_len.to_le_bytes());
+        spongefish.absorb_unchecked(&vec_field_elements_from_bytes(&circuit_description));
+        spongefish.absorb_unchecked(&vec_field_elements_from_bytes(
+            &max_num_constraints.to_le_bytes(),
+        ));
+        spongefish.absorb_unchecked(&[F::from(config.codeword_len as u64)]);
+        spongefish.absorb_unchecked(&[F::from(config.witness_len as u64)]);
 
         Self {
             codeword_len: config.codeword_len,
@@ -109,29 +128,26 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::marker::PhantomData;
+
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
+    use ark_crypto_primitives::crh::CRHScheme;
     use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
-    use ark_ff::{Field, PrimeField};
-    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-    use ark_std::io::Cursor;
-    use ark_std::test_rng;
-    use spongefish::duplex_sponge::{DuplexSponge, Permutation};
-    use spongefish::DuplexSpongeInterface;
-    use spongefish_poseidon::PoseidonHash;
+    use ark_ff::UniformRand;
+    use ark_std::{rand::Rng, test_rng};
+    use spongefish::duplex_sponge::DuplexSponge;
     use spongefish_poseidon::PoseidonPermutation;
-    use zeroize::{DefaultIsZeroes, Zeroize, ZeroizeOnDrop};
 
     use super::{PreimageRelationAccumulator, PreimageRelationAccumulatorConfig};
     use crate::merkle::poseidon_test_params;
-    use crate::relation::PreimageRelation;
+    use crate::relation::{PreimageInstance, PreimageRelation, PreimageWitness, Relation};
     use crate::relation_accumulator::RelationAccumulator;
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
     type TestRelation = PreimageRelation<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>;
-    // type TestSponge = DuplexSponge<PoseidonPermutation<255, BLS12_381, 2, 3>>;
-    type TestSponge = PoseidonHash<255, BLS12_381, 2, 3>;
+    type TestSponge = DuplexSponge<PoseidonPermutation<255, BLS12_381, 2, 3>>;
     type TestAccumulator = PreimageRelationAccumulator<
         BLS12_381,
         TestCRHScheme,
@@ -140,96 +156,37 @@ mod tests {
         TestSponge,
     >;
 
-    #[derive(Zeroize, ZeroizeOnDrop, Clone, Default)]
-    pub struct FieldSpongeAdapter<S, F>
-    where
-        S: DuplexSpongeInterface<u8>,
-        F: PrimeField + CanonicalSerialize + CanonicalDeserialize,
-    {
-        inner: S,
-        _marker: std::marker::PhantomData<F>,
-    }
-
-    impl<S, F> FieldSpongeAdapter<S, F>
-    where
-        S: DuplexSpongeInterface<u8>,
-        F: PrimeField + CanonicalSerialize + CanonicalDeserialize,
-    {
-        pub fn new(iv: [u8; 32]) -> Self {
-            Self {
-                inner: S::new(iv),
-                _marker: Default::default(),
-            }
-        }
-    }
-
-    impl<S, F> DuplexSpongeInterface<F> for FieldSpongeAdapter<S, F>
-    where
-        S: DuplexSpongeInterface<u8>,
-        F: PrimeField + CanonicalSerialize + CanonicalDeserialize + spongefish::Unit,
-    {
-        fn new(iv: [u8; 32]) -> Self {
-            Self::new(iv)
-        }
-
-        fn absorb_unchecked(&mut self, elems: &[F]) -> &mut Self {
-            let mut serialized_elems: Vec<u8> = vec![];
-            for elem in elems {
-                let mut buf = Vec::new();
-                elem.serialize_uncompressed(&mut buf).unwrap();
-                serialized_elems.append(&mut buf);
-            }
-            self.inner.absorb_unchecked(&serialized_elems);
-            self
-        }
-
-        fn squeeze_unchecked(&mut self, out: &mut [F]) -> &mut Self {
-            // squeeze bytes
-            let mut squeezed = Vec::new();
-            self.inner.squeeze_unchecked(&mut squeezed);
-
-            // figure out how many bytes we fit in one field element
-            let mut buf = Vec::new();
-            F::zero().serialize_uncompressed(&mut buf).unwrap();
-            let size = buf.len();
-            // TODO(z-tech): would squeezed ever have length gt what fits into one field element?
-            // Shouldn't this interface return F and not [F]?
-            assert!(squeezed.len() <= size);
-
-            // deserialize back into field elements
-            let mut reader = Cursor::new(squeezed);
-            assert!(out.len() > 0);
-            out[0] = F::deserialize_uncompressed(&mut reader).unwrap();
-            self
-        }
-
-        fn ratchet_unchecked(&mut self) -> &mut Self {
-            self.inner.ratchet_unchecked();
-            self
-        }
-    }
-
     #[test]
     fn test_commit_function() {
-        let mut rng = test_rng();
-
-        // Poseidon parameters for CRH
-        let params: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        // config
         let config = PreimageRelationAccumulatorConfig {
             codeword_len: 64,
             witness_len: 32,
-            hash_parameters: params.clone(),
-            initialization_vector: [0u8; 32],
+            hash_parameters: poseidon_test_params(),
+            initialization_vector: test_rng().gen(),
         };
 
-        // For now, create an empty list of relations (you can add real ones later)
-        let relations: Vec<TestRelation> = vec![];
+        // some relations
+        let mut rng = test_rng();
+        let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
+        let digest = TestCRHScheme::evaluate(&parameters, preimage_0.clone()).unwrap();
+        let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
+            PreimageInstance { digest },
+            PreimageWitness {
+                preimage: preimage_0,
+                _crhs_scheme: PhantomData,
+            },
+            parameters.clone(),
+        );
+        let relations: Vec<TestRelation> = vec![relation];
 
+        // commit
         let accumulator: TestAccumulator = RelationAccumulator::commit(config, &relations);
 
         assert_eq!(accumulator.codeword_len, 64);
         assert_eq!(accumulator.witness_len, 32);
-        assert_eq!(accumulator.max_num_constraints, 0);
+        assert_eq!(accumulator.max_num_constraints, 261);
         assert!(!accumulator.circuit_description.is_empty());
     }
 }

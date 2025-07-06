@@ -78,6 +78,7 @@ where
             .unwrap();
         is_satisfied.enforce_equal(&Boolean::constant(true))?;
 
+        cs.finalize();
         Ok(())
     }
 }

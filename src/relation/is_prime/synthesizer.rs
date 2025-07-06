@@ -83,6 +83,7 @@ impl<F: Field + PrimeField> ConstraintSynthesizer<F> for IsPrimeSynthesizer<F> {
             .enforce_equal(&instance_prime_var)
             .unwrap();
 
+        cs.finalize();
         Ok(())
     }
 }

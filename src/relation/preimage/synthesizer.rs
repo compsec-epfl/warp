@@ -32,13 +32,13 @@ where
             .preimage
             .iter()
             .map(|val| FpVar::new_witness(cs.clone(), || Ok(*val)))
-            .collect::<Result<_, _>>()
-            .unwrap();
+            .collect::<Result<_, _>>()?;
         let digest_var = FpVar::new_input(cs.clone(), || Ok(self.instance.digest))?;
         let params_var = HG::ParametersVar::new_constant(cs.clone(), &self.config)?;
 
         let computed_hash = HG::evaluate(&params_var, &preimage_var)?;
         computed_hash.enforce_equal(&digest_var)?;
+        cs.finalize();
         Ok(())
     }
 }

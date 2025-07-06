@@ -16,6 +16,7 @@ impl<F: Field + PrimeField> ConstraintSynthesizer<F> for IdentitySynthesizer<F> 
         let w_var = FpVar::new_witness(cs.clone(), || Ok(self.witness.w))?;
 
         x_var.enforce_equal(&w_var)?;
+        cs.finalize();
         Ok(())
     }
 }

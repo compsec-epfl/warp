@@ -25,6 +25,7 @@ zeroize = { version = "1.5", features = ["derive"] }
 
 [dev-dependencies]
 criterion = "0.4"
+blake3 = "1.3"
 
 [[bench]]
 name = "poseidon_hash"
