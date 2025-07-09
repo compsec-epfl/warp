@@ -7,5 +7,6 @@ pub trait Relation<F: Field> {
     fn constraints(&self) -> usize;
     fn description(config: &Self::Config) -> Vec<u8>;
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self;
+    fn public_inputs(&self) -> Vec<u8>;
     fn verify(&self) -> bool;
 }

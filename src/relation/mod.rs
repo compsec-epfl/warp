@@ -1,4 +1,4 @@
-mod description;
+pub mod description;
 mod identity;
 mod is_prime;
 mod merkle_inclusion;

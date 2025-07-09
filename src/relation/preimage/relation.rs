@@ -17,6 +17,7 @@ where
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
 {
     constraint_system: ConstraintSystemRef<F>,
+    instance: PreimageInstance<F>,
     _crhs_scheme: PhantomData<H>,
     _crhs_scheme_gadget: PhantomData<HG>,
 }
@@ -53,9 +54,9 @@ where
     }
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self {
         let constraint_synthesizer = PreimageSynthesizer::<F, H, HG> {
-            instance,
+            instance: instance.clone(),
             witness,
-            config: config.clone(),
+            config,
             _crhs_scheme_gadget: PhantomData,
         };
         let constraint_system = ConstraintSystem::<F>::new_ref();
@@ -64,9 +65,18 @@ where
             .unwrap();
         Self {
             constraint_system,
+            instance,
             _crhs_scheme: PhantomData,
             _crhs_scheme_gadget: PhantomData,
         }
+    }
+    fn public_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.instance
+            .digest
+            .serialize_uncompressed(&mut inputs)
+            .unwrap();
+        inputs
     }
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()

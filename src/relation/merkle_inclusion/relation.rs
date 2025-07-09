@@ -2,6 +2,7 @@ use ark_crypto_primitives::merkle_tree::{constraints::ConfigGadget, Config as Me
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
+use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 
 use crate::relation::{
@@ -21,6 +22,7 @@ where
     MG: Clone,
 {
     constraint_system: ConstraintSystemRef<F>,
+    instance: MerkleInclusionInstance<F, M, MG>,
     _merkle_config: PhantomData<M>,
     _merkle_config_gadget: PhantomData<MG>,
 }
@@ -30,6 +32,7 @@ where
     F: Field + PrimeField,
     M: MerkleConfig<Leaf = [F]>,
     M: Clone,
+    M::InnerDigest: CanonicalSerialize,
     MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
     MG: Clone,
 {
@@ -66,8 +69,8 @@ where
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self {
         let constraint_synthesizer = MerkleInclusionSynthesizer::<F, M, MG> {
             instance: instance.clone(),
-            witness: witness.clone(),
-            config: config.clone(),
+            witness,
+            config,
         };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
@@ -75,9 +78,21 @@ where
             .unwrap();
         Self {
             constraint_system,
+            instance,
             _merkle_config: PhantomData,
             _merkle_config_gadget: PhantomData,
         }
+    }
+    fn public_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        for leaf_chunk in &self.instance.leaf {
+            leaf_chunk.serialize_uncompressed(&mut inputs).unwrap();
+        }
+        self.instance
+            .root
+            .serialize_uncompressed(&mut inputs)
+            .unwrap();
+        inputs
     }
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()

@@ -9,6 +9,7 @@ use crate::relation::{
 
 pub struct IsPrimeRelation<F: Field + PrimeField> {
     constraint_system: ConstraintSystemRef<F>,
+    instance: IsPrimeInstance<F>,
 }
 
 impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
@@ -35,12 +36,26 @@ impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
         SerializableConstraintMatrices::generate_description(constraint_synthesizer)
     }
     fn new(instance: Self::Instance, witness: Self::Witness, _config: Self::Config) -> Self {
-        let constraint_synthesizer = IsPrimeSynthesizer::<F> { instance, witness };
+        let constraint_synthesizer = IsPrimeSynthesizer::<F> {
+            instance: instance.clone(),
+            witness: witness.clone(),
+        };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
             .generate_constraints(constraint_system.clone())
             .unwrap();
-        Self { constraint_system }
+        Self {
+            constraint_system,
+            instance,
+        }
+    }
+    fn public_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.instance
+            .prime
+            .serialize_uncompressed(&mut inputs)
+            .unwrap();
+        inputs
     }
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()

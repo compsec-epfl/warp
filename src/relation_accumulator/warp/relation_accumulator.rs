@@ -4,30 +4,13 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_std::io::Cursor;
 use ark_std::marker::PhantomData;
 use spongefish::{DuplexSpongeInterface, Unit as SpongefishUnit};
 
 use crate::{
-    relation::{PreimageRelation, Relation},
+    relation::{description::vec_field_elements_from_bytes, PreimageRelation, Relation},
     relation_accumulator::relation_accumulator::RelationAccumulator,
 };
-
-fn vec_field_elements_from_bytes<F: Field>(bytes: &[u8]) -> Vec<F> {
-    let mut buf = Vec::new();
-    F::zero().serialize_uncompressed(&mut buf).unwrap();
-    let chunk_size = buf.len();
-    bytes
-        .chunks(chunk_size)
-        .map(|chunk| {
-            let mut padded = Vec::with_capacity(chunk_size);
-            padded.extend_from_slice(chunk);
-            padded.resize(chunk_size, 0); // pad with zero bytes if necessary
-            let mut reader = Cursor::new(padded);
-            F::deserialize_uncompressed(&mut reader).unwrap()
-        })
-        .collect()
-}
 
 #[derive(Clone)]
 pub struct PreimageRelationAccumulatorConfig<F, H>
@@ -35,10 +18,11 @@ where
     F: Field + PrimeField,
     H: CRHScheme<Input = [F], Output = F>,
 {
-    codeword_len: usize,
-    witness_len: usize,
+    codeword_len: u64,
+    witness_len: u64,
     hash_parameters: H::Parameters,
     initialization_vector: [u8; 32],
+    max_num_constraints: u64,
 }
 
 pub struct PreimageRelationAccumulator<F, H, HG, R, S>
@@ -49,10 +33,10 @@ where
     R: Relation<F>,
     S: DuplexSpongeInterface<F>,
 {
-    codeword_len: usize,
-    witness_len: usize,
+    codeword_len: u64,
+    witness_len: u64,
     circuit_description: Vec<u8>,
-    max_num_constraints: usize,
+    max_num_constraints: u64,
     spongefish: S,
     _crhs_scheme: PhantomData<H>,
     _crhs_scheme_gadget: PhantomData<HG>,
@@ -75,41 +59,37 @@ where
     type Witness = Vec<F>;
     type Proof = Vec<F>;
 
-    fn commit(config: Self::Config, relations: &[Self::Relation]) -> Self {
-        // num constraints may be different per assignment (TODO: check if this is true?)
-        let mut max_num_constraints = 0_usize;
+    fn commit(&mut self, relations: &[Self::Relation]) {
+        // for new relations
         for relation in relations {
-            let num_constraints = relation.constraints();
-            if num_constraints > max_num_constraints {
-                max_num_constraints = num_constraints;
-            }
+            self.spongefish
+                .absorb_unchecked(&vec_field_elements_from_bytes(&relation.public_inputs()));
         }
+    }
 
-        // fs_state from i = (p, M, N, k) (TODO: hash parameters?)
+    fn commitment(&self) -> Self::Commitment {
+        F::zero()
+    }
+
+    fn new(config: Self::Config) -> Self {
+        // fs_state from i = (p, M, N, k)
         let circuit_description = Self::Relation::description(&config.hash_parameters);
         let mut spongefish = S::new(config.initialization_vector);
         spongefish.absorb_unchecked(&vec_field_elements_from_bytes(&circuit_description));
-        spongefish.absorb_unchecked(&vec_field_elements_from_bytes(
-            &max_num_constraints.to_le_bytes(),
-        ));
-        spongefish.absorb_unchecked(&[F::from(config.codeword_len as u64)]);
-        spongefish.absorb_unchecked(&[F::from(config.witness_len as u64)]);
-
+        spongefish.absorb_unchecked(&[F::from(config.max_num_constraints)]);
+        spongefish.absorb_unchecked(&[F::from(config.codeword_len)]);
+        spongefish.absorb_unchecked(&[F::from(config.witness_len)]);
         Self {
             codeword_len: config.codeword_len,
             witness_len: config.witness_len,
             circuit_description,
-            max_num_constraints,
+            max_num_constraints: config.max_num_constraints,
             spongefish,
             _crhs_scheme: PhantomData,
             _crhs_scheme_gadget: PhantomData,
             _relation: PhantomData,
             _sponge: PhantomData,
         }
-    }
-
-    fn commitment(&self) -> Self::Commitment {
-        F::zero()
     }
 
     fn open(&self, index: usize) -> Result<Self::Proof, Error> {
@@ -128,7 +108,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::marker::PhantomData;
+    use ark_std::marker::PhantomData;
 
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
@@ -156,17 +136,18 @@ mod tests {
         TestSponge,
     >;
 
-    #[test]
-    fn test_commit_function() {
-        // config
-        let config = PreimageRelationAccumulatorConfig {
-            codeword_len: 64,
-            witness_len: 32,
-            hash_parameters: poseidon_test_params(),
-            initialization_vector: test_rng().gen(),
-        };
+    fn next_power_of_two(n: usize) -> usize {
+        if n == 0 {
+            return 1;
+        }
+        let num_leading_zeros = n.leading_zeros();
+        let index_of_most_significant_bit = usize::BITS - num_leading_zeros;
+        1 << index_of_most_significant_bit
+    }
 
-        // some relations
+    #[test]
+    fn new() {
+        // relation
         let mut rng = test_rng();
         let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
         let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
@@ -179,14 +160,24 @@ mod tests {
             },
             parameters.clone(),
         );
-        let relations: Vec<TestRelation> = vec![relation];
+        let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
+
+        // config
+        let config = PreimageRelationAccumulatorConfig {
+            codeword_len: 64,
+            witness_len: 32,
+            hash_parameters: poseidon_test_params(),
+            initialization_vector: test_rng().gen(),
+            max_num_constraints,
+        };
 
         // commit
-        let accumulator: TestAccumulator = RelationAccumulator::commit(config, &relations);
+        let accumulator: TestAccumulator = RelationAccumulator::new(config);
 
+        // sanity
         assert_eq!(accumulator.codeword_len, 64);
         assert_eq!(accumulator.witness_len, 32);
-        assert_eq!(accumulator.max_num_constraints, 261);
+        assert_eq!(accumulator.max_num_constraints, 512);
         assert!(!accumulator.circuit_description.is_empty());
     }
 }

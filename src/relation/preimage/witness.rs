@@ -2,7 +2,6 @@ use ark_crypto_primitives::crh::CRHScheme;
 use ark_ff::{Field, PrimeField};
 use ark_std::marker::PhantomData;
 
-#[derive(Clone)]
 pub struct PreimageWitness<F, H>
 where
     F: Field + PrimeField,
@@ -10,4 +9,17 @@ where
 {
     pub preimage: Vec<F>,
     pub _crhs_scheme: PhantomData<H>,
+}
+
+impl<F, H> Clone for PreimageWitness<F, H>
+where
+    F: Field + PrimeField + Clone,
+    H: CRHScheme<Input = [F]>,
+{
+    fn clone(&self) -> Self {
+        PreimageWitness {
+            preimage: self.preimage.clone(),
+            _crhs_scheme: PhantomData,
+        }
+    }
 }

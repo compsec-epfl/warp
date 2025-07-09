@@ -9,6 +9,7 @@ use crate::relation::{
 #[derive(Clone)]
 pub struct IdentityRelation<F: Field + PrimeField> {
     constraint_system: ConstraintSystemRef<F>,
+    instance: IdentityInstance<F>,
 }
 
 impl<F: Field + PrimeField> Relation<F> for IdentityRelation<F> {
@@ -29,12 +30,24 @@ impl<F: Field + PrimeField> Relation<F> for IdentityRelation<F> {
     }
 
     fn new(instance: Self::Instance, witness: Self::Witness, _config: Self::Config) -> Self {
-        let constraint_synthesizer = IdentitySynthesizer::<F> { instance, witness };
+        let constraint_synthesizer = IdentitySynthesizer::<F> {
+            instance: instance.clone(),
+            witness,
+        };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
             .generate_constraints(constraint_system.clone())
             .unwrap();
-        Self { constraint_system }
+        Self {
+            constraint_system,
+            instance,
+        }
+    }
+
+    fn public_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.instance.x.serialize_uncompressed(&mut inputs).unwrap();
+        inputs
     }
 
     fn verify(&self) -> bool {
