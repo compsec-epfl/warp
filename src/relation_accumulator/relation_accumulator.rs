@@ -8,9 +8,8 @@ pub trait RelationAccumulator<F: Field> {
     type Instance;
     type Witness;
     type Proof;
-    fn commit(&mut self, relations: &[Self::Relation]);
+    fn commit(config: &Self::Config, relations: &[Self::Relation]) -> Self;
     fn commitment(&self) -> Self::Commitment;
-    fn new(config: Self::Config) -> Self;
     fn open(&self, index: usize) -> Result<Self::Proof, Error>;
     fn verify(
         config: &Self::Config,

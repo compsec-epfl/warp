@@ -110,7 +110,7 @@ use ark_bls12_381::Fr as BLS12_381;
 use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use ark_std::{str::FromStr, One, Zero};
 
-// TODO get some real configs CRH, TwoToOneCRH
+// TODO: source an appropriate config
 pub fn poseidon_test_params() -> PoseidonConfig<BLS12_381> {
     let full_rounds = 8;
     let partial_rounds = 29;

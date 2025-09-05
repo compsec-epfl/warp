@@ -1,6 +1,7 @@
 use ark_ff::{Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize)]
 pub struct PrattCertificate<F: Field + PrimeField> {
     pub prime: F,
     pub generator: F,

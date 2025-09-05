@@ -1,15 +1,17 @@
-use ark_ff::{Field, PrimeField};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
-
 use crate::relation::{
     description::SerializableConstraintMatrices,
     is_prime::{synthesizer::IsPrimeSynthesizer, PrattCertificate},
     IsPrimeInstance, IsPrimeWitness, Relation,
 };
+use ark_ff::{Field, PrimeField};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
+use ark_serialize::CanonicalSerialize;
 
+#[derive(Clone)]
 pub struct IsPrimeRelation<F: Field + PrimeField> {
     constraint_system: ConstraintSystemRef<F>,
     instance: IsPrimeInstance<F>,
+    witness: IsPrimeWitness<F>,
 }
 
 impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
@@ -35,6 +37,11 @@ impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
         };
         SerializableConstraintMatrices::generate_description(constraint_synthesizer)
     }
+
+    fn instance(&self) -> Self::Instance {
+        self.instance.clone()
+    }
+
     fn new(instance: Self::Instance, witness: Self::Witness, _config: Self::Config) -> Self {
         let constraint_synthesizer = IsPrimeSynthesizer::<F> {
             instance: instance.clone(),
@@ -47,8 +54,15 @@ impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
         Self {
             constraint_system,
             instance,
+            witness,
         }
     }
+
+    fn public_config(&self) -> Vec<u8> {
+        // there is no public config for this relation
+        vec![]
+    }
+
     fn public_inputs(&self) -> Vec<u8> {
         let mut inputs: Vec<u8> = Vec::new();
         self.instance
@@ -57,8 +71,22 @@ impl<F: Field + PrimeField> Relation<F> for IsPrimeRelation<F> {
             .unwrap();
         inputs
     }
+
+    fn private_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.witness
+            .pratt_certificates
+            .serialize_uncompressed(&mut inputs)
+            .unwrap();
+        inputs
+    }
+
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()
+    }
+
+    fn witness(&self) -> Self::Witness {
+        self.witness.clone()
     }
 }
 

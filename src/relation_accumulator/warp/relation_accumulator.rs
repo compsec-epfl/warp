@@ -4,37 +4,41 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
+use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 use spongefish::{DuplexSpongeInterface, Unit as SpongefishUnit};
 
 use crate::{
+    linear_code::LinearCode,
     relation::{description::vec_field_elements_from_bytes, PreimageRelation, Relation},
     relation_accumulator::relation_accumulator::RelationAccumulator,
 };
 
-#[derive(Clone)]
-pub struct PreimageRelationAccumulatorConfig<F, H>
+#[derive(Clone, CanonicalSerialize)]
+pub struct PreimageRelationAccumulatorConfig<F, H, C>
 where
     F: Field + PrimeField,
     H: CRHScheme<Input = [F], Output = F>,
+    C: LinearCode<F> + CanonicalSerialize,
+    C::Config: CanonicalSerialize,
 {
-    codeword_len: u64,
-    witness_len: u64,
+    code_config: C::Config,
     hash_parameters: H::Parameters,
     initialization_vector: [u8; 32],
     max_num_constraints: u64,
+    previous_accumulations: Vec<F>,
 }
 
-pub struct PreimageRelationAccumulator<F, H, HG, R, S>
+pub struct PreimageRelationAccumulator<F, H, HG, R, S, C>
 where
     F: Field + PrimeField + SpongefishUnit,
     H: CRHScheme<Input = [F], Output = F>,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
     R: Relation<F>,
     S: DuplexSpongeInterface<F>,
+    C: LinearCode<F> + CanonicalSerialize,
 {
-    codeword_len: u64,
-    witness_len: u64,
+    code_config: C::Config,
     circuit_description: Vec<u8>,
     max_num_constraints: u64,
     spongefish: S,
@@ -44,26 +48,40 @@ where
     _sponge: PhantomData<S>,
 }
 
-impl<F, H, HG, R, S> RelationAccumulator<F> for PreimageRelationAccumulator<F, H, HG, R, S>
+impl<F, H, HG, R, S, C> RelationAccumulator<F> for PreimageRelationAccumulator<F, H, HG, R, S, C>
 where
     F: Field + PrimeField + SpongefishUnit,
     H: CRHScheme<Input = [F], Output = F>,
+    H::Parameters: CanonicalSerialize,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
     R: Relation<F>,
     S: DuplexSpongeInterface<F>,
+    C: LinearCode<F> + CanonicalSerialize,
+    C::Config: Clone + CanonicalSerialize,
 {
-    type Config = PreimageRelationAccumulatorConfig<F, H>;
-    type Relation = PreimageRelation<F, H, HG>;
-    type Commitment = F;
-    type Instance = F;
-    type Witness = Vec<F>;
+    type Config = PreimageRelationAccumulatorConfig<F, H, C>;
+    type Relation = PreimageRelation<F, H, HG>; // the constraint system
+    type Commitment = F; // the state of the accumulator
+    type Instance = F; // the output of the hash
+    type Witness = Vec<F>; // the input of the hash
     type Proof = Vec<F>;
 
     fn commit(&mut self, relations: &[Self::Relation]) {
-        // for new relations
+        // NOTE: Ignoring previous states for now
+
+        // Parse new relations
+        // for relation in relations {
+        //     self.spongefish
+        //         .absorb_unchecked(&vec_field_elements_from_bytes(&relation.public_inputs()));
+        // }
+
+        // Reduce
+        let encoder = C::new(self.code_config.clone());
+        let mut encodings = Vec::new();
         for relation in relations {
-            self.spongefish
-                .absorb_unchecked(&vec_field_elements_from_bytes(&relation.public_inputs()));
+            println!("private_inputs: {:?}", relation.private_inputs());
+            encodings
+                .push(encoder.encode(&vec_field_elements_from_bytes(&relation.private_inputs())));
         }
     }
 
@@ -73,15 +91,14 @@ where
 
     fn new(config: Self::Config) -> Self {
         // fs_state from i = (p, M, N, k)
-        let circuit_description = Self::Relation::description(&config.hash_parameters);
         let mut spongefish = S::new(config.initialization_vector);
+        let circuit_description = Self::Relation::description(&config.hash_parameters);
         spongefish.absorb_unchecked(&vec_field_elements_from_bytes(&circuit_description));
-        spongefish.absorb_unchecked(&[F::from(config.max_num_constraints)]);
-        spongefish.absorb_unchecked(&[F::from(config.codeword_len)]);
-        spongefish.absorb_unchecked(&[F::from(config.witness_len)]);
+        let mut public_config: Vec<u8> = Vec::new();
+        config.serialize_uncompressed(&mut public_config).unwrap();
+        spongefish.absorb_unchecked(&vec_field_elements_from_bytes(&mut public_config));
         Self {
-            codeword_len: config.codeword_len,
-            witness_len: config.witness_len,
+            code_config: config.code_config,
             circuit_description,
             max_num_constraints: config.max_num_constraints,
             spongefish,
@@ -120,6 +137,7 @@ mod tests {
     use spongefish_poseidon::PoseidonPermutation;
 
     use super::{PreimageRelationAccumulator, PreimageRelationAccumulatorConfig};
+    use crate::linear_code::{ReedSolomon, ReedSolomonConfig};
     use crate::merkle::poseidon_test_params;
     use crate::relation::{PreimageInstance, PreimageRelation, PreimageWitness, Relation};
     use crate::relation_accumulator::RelationAccumulator;
@@ -134,6 +152,7 @@ mod tests {
         TestCRHSchemeGadget,
         TestRelation,
         TestSponge,
+        ReedSolomon<BLS12_381>,
     >;
 
     fn next_power_of_two(n: usize) -> usize {
@@ -161,22 +180,24 @@ mod tests {
             parameters.clone(),
         );
         let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
+        let message_len = next_power_of_two(relation.private_inputs().len());
+        let code_len = next_power_of_two(message_len as usize);
 
         // config
         let config = PreimageRelationAccumulatorConfig {
-            codeword_len: 64,
-            witness_len: 32,
+            code_config: ReedSolomonConfig::<BLS12_381>::default(message_len, code_len),
             hash_parameters: poseidon_test_params(),
             initialization_vector: test_rng().gen(),
             max_num_constraints,
+            previous_accumulations: vec![],
         };
 
         // commit
         let accumulator: TestAccumulator = RelationAccumulator::new(config);
 
         // sanity
-        assert_eq!(accumulator.codeword_len, 64);
-        assert_eq!(accumulator.witness_len, 32);
+        // assert_eq!(accumulator.config.codeword_len, 256);
+        // assert_eq!(accumulator.config.witness_len, 128);
         assert_eq!(accumulator.max_num_constraints, 512);
         assert!(!accumulator.circuit_description.is_empty());
     }

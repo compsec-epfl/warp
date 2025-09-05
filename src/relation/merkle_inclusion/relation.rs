@@ -22,7 +22,9 @@ where
     MG: Clone,
 {
     constraint_system: ConstraintSystemRef<F>,
+    config: MerkleInclusionConfig<F, M, MG>,
     instance: MerkleInclusionInstance<F, M, MG>,
+    witness: MerkleInclusionWitness<F, M, MG>,
     _merkle_config: PhantomData<M>,
     _merkle_config_gadget: PhantomData<MG>,
 }
@@ -66,11 +68,16 @@ where
         };
         SerializableConstraintMatrices::generate_description(constraint_synthesizer)
     }
+
+    fn instance(&self) -> Self::Instance {
+        self.instance.clone()
+    }
+
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self {
         let constraint_synthesizer = MerkleInclusionSynthesizer::<F, M, MG> {
             instance: instance.clone(),
-            witness,
-            config,
+            witness: witness.clone(),
+            config: config.clone(),
         };
         let constraint_system = ConstraintSystem::<F>::new_ref();
         constraint_synthesizer
@@ -79,23 +86,37 @@ where
         Self {
             constraint_system,
             instance,
+            witness,
+            config,
             _merkle_config: PhantomData,
             _merkle_config_gadget: PhantomData,
         }
     }
-    fn public_inputs(&self) -> Vec<u8> {
+
+    fn public_config(&self) -> Vec<u8> {
         let mut inputs: Vec<u8> = Vec::new();
-        for leaf_chunk in &self.instance.leaf {
-            leaf_chunk.serialize_uncompressed(&mut inputs).unwrap();
-        }
-        self.instance
-            .root
-            .serialize_uncompressed(&mut inputs)
-            .unwrap();
+        self.config.serialize_uncompressed(&mut inputs).unwrap();
         inputs
     }
+
+    fn public_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.instance.serialize_uncompressed(&mut inputs).unwrap();
+        inputs
+    }
+
+    fn private_inputs(&self) -> Vec<u8> {
+        let mut inputs: Vec<u8> = Vec::new();
+        self.witness.serialize_uncompressed(&mut inputs).unwrap();
+        inputs
+    }
+
     fn verify(&self) -> bool {
         self.constraint_system.is_satisfied().unwrap()
+    }
+
+    fn witness(&self) -> Self::Witness {
+        self.witness.clone()
     }
 }
 

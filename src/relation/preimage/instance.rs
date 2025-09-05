@@ -1,6 +1,7 @@
 use ark_ff::{Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize)]
 pub struct PreimageInstance<F>
 where
     F: Field + PrimeField,

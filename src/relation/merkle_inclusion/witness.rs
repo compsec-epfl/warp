@@ -1,8 +1,9 @@
 use ark_crypto_primitives::merkle_tree::{constraints::ConfigGadget, Config as MerkleConfig, Path};
 use ark_ff::{Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize)]
 pub struct MerkleInclusionWitness<F, M, MG>
 where
     F: Field + PrimeField,

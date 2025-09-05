@@ -2,9 +2,11 @@ use ark_ff::{FftField, Field};
 use ark_poly::domain::GeneralEvaluationDomain;
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain};
+use ark_serialize::CanonicalSerialize;
 
 use crate::linear_code::LinearCode;
 
+#[derive(Clone, CanonicalSerialize)]
 pub struct ReedSolomonConfig<F: Field + FftField> {
     // k, the number of symbols in the message
     pub message_length: usize,
@@ -56,10 +58,12 @@ impl<F: Field + FftField> ReedSolomonConfig<F> {
     }
 }
 
+#[derive(Clone, CanonicalSerialize)]
 pub struct ReedSolomon<F: Field + FftField> {
     config: ReedSolomonConfig<F>,
 }
 
+// NOTE: would want LDE for completeness but this should work for benches
 impl<F: Field + FftField> LinearCode<F> for ReedSolomon<F> {
     type Config = ReedSolomonConfig<F>;
 
@@ -99,7 +103,7 @@ mod tests {
 
     #[test]
     fn sanity() {
-        let message: Vec<BLS12_381> = (0..4).map(|i| BLS12_381::from(i as u64)).collect();
+        let message: Vec<BLS12_381> = (0..4_u64).map(|i| BLS12_381::from(i)).collect();
         let rs = ReedSolomon::<BLS12_381>::new(ReedSolomonConfig::<BLS12_381>::default(4, 8));
         let codeword = rs.encode(&message);
         let decoded = rs.decode(&codeword).unwrap();

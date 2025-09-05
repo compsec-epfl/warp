@@ -1,7 +1,9 @@
 use ark_crypto_primitives::crh::CRHScheme;
 use ark_ff::{Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 
+#[derive(CanonicalSerialize)]
 pub struct PreimageWitness<F, H>
 where
     F: Field + PrimeField,
