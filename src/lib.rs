@@ -1,4 +1,5 @@
+pub mod accumulator;
 pub mod linear_code;
 pub mod merkle;
-pub mod relation;
-pub mod relation_accumulator;
+pub mod relations;
+pub mod utils;
