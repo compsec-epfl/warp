@@ -1,18 +1,22 @@
-use ark_ff::Field;
-use ark_std::io::Cursor;
+use ark_ff::{Field, PrimeField};
 
-pub fn bytes_to_vec_f<F: Field>(bytes: &[u8]) -> Vec<F> {
+pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();
     F::zero().serialize_uncompressed(&mut buf).unwrap();
     let chunk_size = buf.len();
+    chunk_size
+}
+
+pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
     bytes
-        .chunks(chunk_size)
+        .chunks(chunk_size::<F>()) //TODO(z-tech): shouldn't need to call chunk_size() at runtime
         .map(|chunk| {
-            let mut padded = Vec::with_capacity(chunk_size);
-            padded.extend_from_slice(chunk);
-            padded.resize(chunk_size, 0); // pad with zero bytes if necessary
-            let mut reader = Cursor::new(padded);
-            F::deserialize_uncompressed(&mut reader).unwrap()
+            F::from_le_bytes_mod_order(chunk)
+            // let mut padded = Vec::with_capacity(chunk_size);
+            // padded.extend_from_slice(chunk);
+            // padded.resize(chunk_size, 0); // pad with zero bytes if necessary
+            // let mut reader = Cursor::new(padded);
+            // F::deserialize_uncompressed(&mut reader).unwrap()
         })
         .collect()
 }

@@ -1,5 +1,6 @@
 use ark_crypto_primitives::{
     crh::{CRHScheme, CRHSchemeGadget},
+    // merkle_tree::{Path, Config as MerkleConfig}
     Error,
 };
 use ark_ff::{Field, PrimeField};
@@ -29,6 +30,18 @@ where
     max_num_constraints: u64,
     previous_accumulations: Vec<F>,
 }
+
+// struct PreimageRelationProof<F, M>
+// where
+//     F: Field + PrimeField,
+//     M: MerkleConfig,
+// {
+//     root_witness: F,
+//     root_constraint: F,
+//     final_accumulator: Vec<F>,
+//     openings: Vec<Path<M>>,
+//     opened_values: Vec<F>,
+// }
 
 pub struct PreimageRelationAccumulator<F, H, HG, R, S, C>
 where
@@ -65,10 +78,10 @@ where
     type Commitment = F;
     type Instance = F;
     type Witness = Vec<F>;
-    type Proof = Vec<F>;
+    type Proof = Vec<F>; // TODO(z-tech)
 
-    fn commit(config: &Self::Config, relations: &[Self::Relation]) -> Self {
-        // initialization of st_FS by absorbing: p, M, N, k
+    fn commit(config: &Self::Config, _relations: &[Self::Relation]) -> Self {
+        // initialize st_FS by absorbing: p, M, N, k
         let mut spongefish = S::new(config.initialization_vector);
         let circuit_description = Self::Relation::description(&config.hash_parameters);
         spongefish.absorb_unchecked(&bytes_to_vec_f(&circuit_description));
@@ -76,14 +89,13 @@ where
         config.serialize_uncompressed(&mut public_config).unwrap();
         spongefish.absorb_unchecked(&bytes_to_vec_f(&mut public_config));
 
-        // keys:
+        // now we have the keys:
         // pk_ACC = (st_FS, p, M, N, k)
         // vk_ACC = (st_FS, M, N, k)
 
+        // Would be nice to call helpers in separate files for chunks of work maybe like:
         // parse
-
         // reduce
-
         // accumulate
 
         Self {
@@ -99,10 +111,12 @@ where
     }
 
     fn commitment(&self) -> Self::Commitment {
+        // TODO(z-tech)
         F::zero()
     }
 
     fn open(&self, index: usize) -> Result<Self::Proof, Error> {
+        // TODO(z-tech)
         Ok(vec![F::from(index as u64)])
     }
 
@@ -112,6 +126,7 @@ where
         instance: &Self::Instance,
         proof: &Self::Proof,
     ) -> bool {
+        // TODO(z-tech)
         false
     }
 }
@@ -160,41 +175,40 @@ mod tests {
         1 << index_of_most_significant_bit
     }
 
-    // #[test]
-    // fn new() {
-    //     // relation
-    //     let mut rng = test_rng();
-    //     let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
-    //     let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
-    //     let digest = TestCRHScheme::evaluate(&parameters, preimage_0.clone()).unwrap();
-    //     let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
-    //         PreimageInstance { digest },
-    //         PreimageWitness {
-    //             preimage: preimage_0,
-    //             _crhs_scheme: PhantomData,
-    //         },
-    //         parameters.clone(),
-    //     );
-    //     let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
-    //     let message_len = next_power_of_two(relation.private_inputs().len());
-    //     let code_len = next_power_of_two(message_len as usize);
+    #[test]
+    fn new() {
+        let mut rng = test_rng();
+        let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
+        let digest = TestCRHScheme::evaluate(&parameters, preimage_0.clone()).unwrap();
+        let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
+            PreimageInstance { digest },
+            PreimageWitness {
+                preimage: preimage_0,
+                _crhs_scheme: PhantomData,
+            },
+            parameters.clone(),
+        );
 
-    //     // config
-    //     let config = PreimageRelationAccumulatorConfig {
-    //         code_config: ReedSolomonConfig::<BLS12_381>::default(message_len, code_len),
-    //         hash_parameters: poseidon_test_params(),
-    //         initialization_vector: test_rng().gen(),
-    //         max_num_constraints,
-    //         previous_accumulations: vec![],
-    //     };
+        // derive sizes
+        let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
+        let message_len = next_power_of_two(relation.private_inputs().len());
+        let code_len = next_power_of_two(message_len);
 
-    //     // commit
-    //     // let _accumulator: TestAccumulator = RelationAccumulator::commit(&config, &[relation]);
+        // config
+        let config: PreimageRelationAccumulatorConfig<
+            BLS12_381,
+            TestCRHScheme,
+            ReedSolomon<BLS12_381>,
+        > = PreimageRelationAccumulatorConfig {
+            code_config: ReedSolomonConfig::<BLS12_381>::default(message_len, code_len),
+            hash_parameters: poseidon_test_params(), // CRH parameters
+            initialization_vector: test_rng().gen::<[u8; 32]>(),
+            max_num_constraints,
+            previous_accumulations: vec![],
+        };
 
-    //     // sanity
-    //     // assert_eq!(accumulator.config.codeword_len, 256);
-    //     // assert_eq!(accumulator.config.witness_len, 128);
-    //     // assert_eq!(accumulator.max_num_constraints, 512);
-    //     // assert!(!accumulator.circuit_description.is_empty());
-    // }
+        // commit
+        let _accumulator: TestAccumulator = TestAccumulator::commit(&config, &[relation]);
+    }
 }
