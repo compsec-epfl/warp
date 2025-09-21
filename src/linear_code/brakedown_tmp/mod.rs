@@ -6,6 +6,7 @@ use ark_poly_commit::linear_codes::{
 };
 use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
+mod convert;
 
 use crate::linear_code::LinearCode;
 
@@ -37,7 +38,16 @@ impl<
     }
 
     fn encode(&self, message: &[F]) -> Vec<F> {
-        // assert_eq!(message.len(), ...);
+        // k must be 2^ell for multilinear
+        let k = message.len();
+        assert!(
+            k.is_power_of_two(),
+            "multilinear Brakedown requires k = 2^ell"
+        );
+        let ell = k.trailing_zeros() as usize;
+
+        let (k_expected, _n) = self.config.compute_dimensions(ell);
+        assert_eq!(k, k_expected, "params expect k = {k_expected}, got {k}");
         MultilinearBrakedown::<F, M, P, H>::encode(message, &self.config).unwrap()
     }
 

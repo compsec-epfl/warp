@@ -9,21 +9,29 @@ edition = "2021"
 
 [dependencies]
 ark-bls12-381 = "0.5.0"
+ark-bn254 = "0.5.0"
+ark-crypto-primitives = { version = "0.5.0", features = ["merkle_tree", "crh", "r1cs", "sponge"] }
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
-ark-crypto-primitives = { version = "0.5.0", features = ["merkle_tree", "crh", "r1cs", "sponge"] }
+ark-groth16 = "0.5.0"
 ark-poly = "0.5.0"
 ark-poly-commit = "0.5.0"
-ark-groth16 = "0.5.0"
-ark-std = "0.5.0"
-ark-relations = "0.5.0"
 ark-r1cs-std = "0.5.0"
-ark-bn254 = "0.5.0"
-serde = { version = "1.0.0", features = ["derive"]}
+ark-relations = "0.5.0"
+ark-serialize = "0.5.0"
+ark-std = "0.5.0"
+num-bigint = "0.4.6"
+p3_code = { git = "https://github.com/succinctlabs/plonky3", package = "p3-code" }
+p3_brakedown = { git = "https://github.com/succinctlabs/plonky3", package = "p3-brakedown" }
+p3_field = { git = "https://github.com/succinctlabs/Plonky3", package = "p3-field" }
+p3_goldilocks = { git = "https://github.com/succinctlabs/Plonky3", package = "p3-goldilocks" }
+p3_matrix = { git = "https://github.com/succinctlabs/Plonky3", package = "p3-matrix" }
+p3_mersenne_31 = { git = "https://github.com/succinctlabs/Plonky3", package = "p3-mersenne-31" }
+rand_chacha = "0.3"
+serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", branch = "main" }
 spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", package = "spongefish-poseidon", branch = "main", features = ["bls12-381"] }
-ark-serialize = "0.5.0"
 zeroize = { version = "1.5", features = ["derive"] }
 
 [dev-dependencies]
