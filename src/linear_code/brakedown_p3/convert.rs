@@ -103,17 +103,44 @@ mod tests {
     pub type ArkM31 = Fp64<MontBackend<ArkM31Config, 1>>;
 
     #[test]
-    fn sanity_32_bit() {
+    fn transmute_32_bit() {
         // couple values
         let ark_vals: Vec<ArkM31> = vec![ArkM31::from(0), ArkM31::from(1), ArkM31::from(u32::MAX)];
+
         // assert p3 equivalents
         let p3_vals: Vec<Mersenne31> = vec_ark_to_vec_p3_32(&ark_vals);
         assert_eq!(*p3_vals.get(0).unwrap(), Mersenne31::from_canonical_u32(0));
         assert_eq!(*p3_vals.get(1).unwrap(), Mersenne31::from_canonical_u32(1));
-        assert_eq!(
-            *p3_vals.get(2).unwrap(),
-            Mersenne31::from_canonical_u32(u32::MAX) // TODO(z-tech): why does this fail?
-        );
+        // NOTE(z-tech): Mersenne31::from_canonical_u32 (unlike Goldilocks::from_canonical_u64)
+        // does not reduce modulo p so the following assert would fail and you should
+        // ensure that the argument is always < p
+        // assert_eq!(
+        //     *p3_vals.get(2).unwrap(),
+        //     Mersenne31::from_canonical_u32(u32::MAX)
+        // );
+
+        // assert roundtrip equivalents
+        let roundtrip_vals: Vec<ArkM31> = vec_p3_to_vec_ark_32(&p3_vals);
+        assert_eq!(ark_vals, roundtrip_vals);
+    }
+
+    #[test]
+    fn sanity_32_bit() {
+        // couple values
+        let ark_vals: Vec<ArkM31> = vec![ArkM31::from(0), ArkM31::from(1), ArkM31::from(u32::MAX)];
+
+        // assert p3 equivalents
+        let p3_vals: Vec<Mersenne31> = vec_ark_to_vec_p3_32(&ark_vals);
+        assert_eq!(*p3_vals.get(0).unwrap(), Mersenne31::from_canonical_u32(0));
+        assert_eq!(*p3_vals.get(1).unwrap(), Mersenne31::from_canonical_u32(1));
+        // NOTE(z-tech): Mersenne31::from_canonical_u32 (unlike Goldilocks::from_canonical_u64)
+        // does not reduce modulo p so the following assert would fail and you should
+        // ensure that the argument is always < p
+        // assert_eq!(
+        //     *p3_vals.get(2).unwrap(),
+        //     Mersenne31::from_canonical_u32(u32::MAX)
+        // );
+
         // assert roundtrip equivalents
         let roundtrip_vals: Vec<ArkM31> = vec_p3_to_vec_ark_32(&p3_vals);
         assert_eq!(ark_vals, roundtrip_vals);
@@ -127,6 +154,7 @@ mod tests {
             ArkGoldilocks::from(1),
             ArkGoldilocks::from(u64::MAX),
         ];
+
         // assert p3 equivalents
         let p3_vals: Vec<Goldilocks> = vec_ark_to_vec_p3_64(&ark_vals);
         assert_eq!(*p3_vals.get(0).unwrap(), Goldilocks::from_canonical_u64(0));
@@ -135,6 +163,7 @@ mod tests {
             *p3_vals.get(2).unwrap(),
             Goldilocks::from_canonical_u64(u64::MAX)
         );
+
         // assert roundtrip equivalents
         let roundtrip_vals: Vec<ArkGoldilocks> = vec_p3_to_vec_ark_64(&p3_vals);
         assert_eq!(ark_vals, roundtrip_vals);
