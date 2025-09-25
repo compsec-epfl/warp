@@ -6,6 +6,8 @@ use ark_serialize::CanonicalSerialize;
 
 use crate::linear_code::LinearCode;
 
+pub mod multi_constraints;
+
 #[derive(Clone, CanonicalSerialize)]
 pub struct ReedSolomonConfig<F: Field + FftField> {
     // k, the number of symbols in the message
@@ -67,6 +69,14 @@ pub struct ReedSolomon<F: Field + FftField> {
 impl<F: Field + FftField> LinearCode<F> for ReedSolomon<F> {
     type Config = ReedSolomonConfig<F>;
 
+    fn message_len(&self) -> usize {
+        self.config.message_length
+    }
+
+    fn code_len(&self) -> usize {
+        self.config.code_length
+    }
+
     fn new(config: Self::Config) -> Self {
         Self { config }
     }
@@ -93,6 +103,14 @@ impl<F: Field + FftField> LinearCode<F> for ReedSolomon<F> {
 
         // extract the first k coefficients
         Some(coeffs[..self.config.message_length].to_vec())
+    }
+
+    fn config(&self) -> Self::Config {
+        Self::Config {
+            message_length: self.message_len(),
+            code_length: self.code_len(),
+            domain: self.config.domain,
+        }
     }
 }
 

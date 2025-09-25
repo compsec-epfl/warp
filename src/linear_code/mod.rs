@@ -1,5 +1,7 @@
-mod linear_code;
+pub mod linear_code;
 mod reed_solomon;
 
-pub use linear_code::LinearCode;
-pub use reed_solomon::{ReedSolomon, ReedSolomonConfig};
+pub use linear_code::{LinearCode, MultiConstrainedLinearCode};
+pub use reed_solomon::{
+    multi_constraints::MultiConstrainedReedSolomon, ReedSolomon, ReedSolomonConfig,
+};
