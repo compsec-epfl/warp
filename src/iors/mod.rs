@@ -6,13 +6,18 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 
-use crate::{linear_code::MultiConstrainedCode, WARPError};
+use crate::{linear_code::MultiConstrainedLinearCode, WARPError};
 
 use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
 pub mod ior_codewords_batch;
 pub mod pesat;
 
-pub struct IORConfig<F: Field + SpongefishUnit, MC: MultiConstrainedCode<F>, MT: Config> {
+pub struct IORConfig<
+    F: Field + SpongefishUnit,
+    MC: MultiConstrainedLinearCode<F, R>,
+    MT: Config,
+    const R: usize,
+> {
     code: MC,
     _f: PhantomData<F>,
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
@@ -21,9 +26,10 @@ pub struct IORConfig<F: Field + SpongefishUnit, MC: MultiConstrainedCode<F>, MT:
 
 pub trait IOR<
     F: Field + SpongefishUnit,
-    MC: MultiConstrainedCode<F>,
+    MC: MultiConstrainedLinearCode<F, R>,
     MT: Config,
     S: DuplexSpongeInterface<F>,
+    const R: usize,
 >
 {
     type Instance<'a>;

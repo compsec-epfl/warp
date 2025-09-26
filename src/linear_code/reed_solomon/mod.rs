@@ -6,6 +6,8 @@ use ark_serialize::CanonicalSerialize;
 
 use crate::linear_code::LinearCode;
 
+pub mod multi_constraints;
+
 #[derive(Clone, CanonicalSerialize)]
 pub struct ReedSolomonConfig<F: Field + FftField> {
     // k, the number of symbols in the message
