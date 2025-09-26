@@ -31,8 +31,8 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
     type Error = WARPError;
 
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
-        // cs.set_mode(SynthesisMode::Setup);
         let matrices = cs.to_matrices().unwrap();
+
         // number of constraints should be to be power of 2
         let m = matrices.num_constraints.next_power_of_two();
         let n = matrices.num_instance_variables + matrices.num_witness_variables;
