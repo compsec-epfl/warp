@@ -1,4 +1,4 @@
-mod linear_code;
+pub mod linear_code;
 mod reed_solomon;
 
 pub use linear_code::{LinearCode, MultiConstrainedLinearCode};

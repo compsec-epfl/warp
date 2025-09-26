@@ -104,6 +104,14 @@ impl<F: Field + FftField> LinearCode<F> for ReedSolomon<F> {
         // extract the first k coefficients
         Some(coeffs[..self.config.message_length].to_vec())
     }
+
+    fn config(&self) -> Self::Config {
+        Self::Config {
+            message_length: self.message_len(),
+            code_length: self.code_len(),
+            domain: self.config.domain,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,14 @@
+use std::marker::PhantomData;
+
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
 use ark_poly::Polynomial;
 
-use crate::{linear_code::MultiConstrainedLinearCode, relations::r1cs::R1CS, WARPError};
+use crate::{
+    linear_code::{LinearCode, MultiConstrainedLinearCode},
+    relations::r1cs::R1CS,
+    WARPError,
+};
 use spongefish::{
     DuplexSpongeInterface, ProofError, ProverState, Unit as SpongefishUnit, UnitTranscript,
 };
@@ -14,21 +20,24 @@ use crate::iors::{IORConfig, IOR};
 // a twin constraint code is the code for which R = 1
 pub struct R1CSTwinConstraintIOR<
     F: Field + SpongefishUnit,
-    MC: MultiConstrainedLinearCode<F, 1>,
+    C: LinearCode<F>,
+    MC: MultiConstrainedLinearCode<F, C, 1>,
     MT: Config,
     const L: usize, // L instances
 > {
     r1cs: R1CS<F>,
-    config: IORConfig<F, MC, MT, 1>,
+    config: IORConfig<F, C, MT>,
+    _mc: PhantomData<MC>,
 }
 
 impl<
         F: FftField + SpongefishUnit,
-        MC: MultiConstrainedLinearCode<F, 1>,
-        MT: Config<InnerDigest = F, Leaf = Vec<F>>,
+        C: LinearCode<F>,
+        MC: MultiConstrainedLinearCode<F, C, 1>,
+        MT: Config<InnerDigest = F, Leaf = [F]>,
         S: DuplexSpongeInterface<F>,
         const L: usize,
-    > IOR<F, MC, MT, S, 1> for R1CSTwinConstraintIOR<F, MC, MT, L>
+    > IOR<F, C, MT, S> for R1CSTwinConstraintIOR<F, C, MC, MT, L>
 {
     // we have L incoming (instance, witness) pairs
     // (x, w) s.t. R1CS(x, w) = 0
@@ -113,7 +122,7 @@ impl<
                 .fill_challenge_units(&mut tau_i)
                 .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
 
-            output_instance[i] = MC::new(
+            output_instance[i] = MC::new_with_constraint(
                 self.config.code.config(),
                 [(vec![F::ZERO; num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
@@ -131,26 +140,49 @@ impl<
 
 #[cfg(test)]
 pub mod tests {
-    use crate::linear_code::ReedSolomonConfig;
-    use ark_ec::AdditiveGroup;
+    use crate::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
+    use crate::iors::IORConfig;
+    use crate::iors::IOR;
+    use crate::linear_code::linear_code::LinearCode;
+    use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon};
+    use crate::merkle::poseidon::PoseidonMerkleConfig;
+    use crate::relations::relation::ToPolySystem;
+    use crate::{
+        linear_code::ReedSolomonConfig,
+        relations::r1cs::{merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation},
+    };
     use spongefish::duplex_sponge::DuplexSponge;
     use spongefish_poseidon::PoseidonPermutation;
 
     use ark_bls12_381::Fr;
 
     type TestSponge = DuplexSponge<PoseidonPermutation<255, Fr, 2, 3>>;
+    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, 1>;
 
     #[test]
-    pub fn test_pesat_ior() {
+    pub fn test_ior_twin_constraints() {
         const L1: usize = 2;
-        let config = ReedSolomonConfig::<Fr>::default(4, 8);
-        let test_instance = &vec![Fr::ZERO; 4];
-        let test_wtns = &vec![Fr::ZERO; 4];
 
-        // initialize l1 test instances and witnesses
-        let instance = [test_instance; L1];
-        let witness = [test_wtns; L1];
+        // prepare r1cs, code and example tree
+        let height = 3;
+        let (mt_config, leaves, mt) = get_test_merkle_tree(height);
+        let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
+        let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
+        let code = ReedSolomon::new(code_config);
 
-        // PESATIOR::<Fr, ReedSolomon<Fr>, TestSponge, L1>::prove(&config, &instance, &witness);
+        // initialize ior
+        let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig {
+            code,
+            _f: std::marker::PhantomData,
+            mt_leaf_hash_params: mt_config.leaf_hash_param,
+            mt_two_to_one_hash_params: mt_config.two_to_one_hash_param,
+        };
+        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _, L1> {
+            r1cs,
+            config: ior_config,
+            _mc: std::marker::PhantomData,
+        };
+
+        // r1cs_twinrs_ior.prove(prover_state, instance, witness)
     }
 }

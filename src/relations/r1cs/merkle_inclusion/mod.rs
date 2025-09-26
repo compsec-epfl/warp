@@ -71,12 +71,13 @@ where
 }
 
 #[cfg(test)]
-pub mod tests {
-
+pub(crate) mod tests {
+    use crate::relations::relation::ToPolySystem;
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
     use ark_ec::AdditiveGroup;
-    use ark_std::marker::PhantomData;
+    use ark_ff::UniformRand;
+    use ark_std::{marker::PhantomData, test_rng};
     use whir::poly_utils::hypercube::BinaryHypercube;
 
     use crate::{
@@ -88,15 +89,21 @@ pub mod tests {
                 MerkleInclusionConfig, MerkleInclusionInstance, MerkleInclusionRelation,
                 MerkleInclusionWitness,
             },
-            relation::ToPolySystem,
             Relation,
         },
     };
 
-    // extract r1cs and witness, check that all eval to 0
-    #[test]
-    pub fn test_merkle_r1cs() {
-        let height = 3; // n_leaves := 1 << (height - 1)
+    pub fn get_test_merkle_tree(
+        height: usize,
+    ) -> (
+        MerkleInclusionConfig<
+            BLS12_381,
+            PoseidonMerkleConfig<BLS12_381>,
+            PoseidonMerkleConfigGadget<BLS12_381>,
+        >,
+        Vec<Vec<BLS12_381>>,
+        MerkleTree<PoseidonMerkleConfig<BLS12_381>>,
+    ) {
         let leaf_len = 2;
         let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
         let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
@@ -116,20 +123,27 @@ pub mod tests {
         let r1cs = MerkleInclusionRelation::into_r1cs(&config).unwrap();
 
         // Create some leaves
-        let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
-        let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
-        let leaf2: Vec<BLS12_381> = vec![BLS12_381::from(5u64), BLS12_381::from(6u64)];
-        let leaf3: Vec<BLS12_381> = vec![BLS12_381::from(7u64), BLS12_381::from(8u64)];
-
-        let leaves: Vec<&[BLS12_381]> = vec![&leaf0, &leaf1, &leaf2, &leaf3];
+        let n_leaves = 1 << (height - 1);
+        let mut leaves = Vec::<Vec<BLS12_381>>::new();
+        let mut rng = test_rng();
+        for i in 0..n_leaves {
+            let leaf = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
+            leaves.push(leaf);
+        }
 
         // Commit to the Merkle tree
-        let mt = MerkleTree::<PoseidonMerkleConfig<BLS12_381>>::new(
-            &leaf_hash_param,
-            &two_to_one_hash_param,
-            &leaves,
-        )
-        .unwrap();
+        let mt = MerkleTree::new(&leaf_hash_param, &two_to_one_hash_param, &leaves).unwrap();
+
+        (config, leaves, mt)
+    }
+    // extract r1cs and witness, check that all eval to 0
+    #[test]
+    pub fn test_merkle_r1cs() {
+        let height = 3; // n_leaves := 1 << (height - 1)
+        let (config, leaves, mt) = get_test_merkle_tree(height);
+
+        // extract R1CS matrices
+        let r1cs = MerkleInclusionRelation::into_r1cs(&config).unwrap();
 
         // Get root and proof
         let root = mt.root();
