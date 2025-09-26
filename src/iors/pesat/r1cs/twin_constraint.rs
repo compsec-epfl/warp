@@ -58,14 +58,14 @@ impl<
     ) -> Result<(Self::OutputInstance<'a>, Self::OutputWitness<'a>), WARPError> {
         debug_assert!(instance.len() == L);
         debug_assert!(instance.len() == witness.len());
-
-        let mut output_witness = vec![vec![F::default(); self.config.code.message_len()]; L];
-        let mut output_instance = Vec::<MC>::with_capacity(L);
+        debug_assert!(self.config.code.code_len().is_power_of_two());
 
         let code_length = self.config.code.code_len();
-        let num_vars = code_length.ilog2() as usize;
+        let mut output_witness = vec![vec![F::default(); code_length]; L];
+        let mut output_instance = Vec::<MC>::with_capacity(L);
 
         // TODO: let user provide alpha (?)
+        let num_vars = code_length.ilog2() as usize;
         let alpha = vec![F::ZERO; num_vars];
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
