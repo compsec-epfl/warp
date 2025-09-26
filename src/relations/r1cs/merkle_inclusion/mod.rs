@@ -171,19 +171,20 @@ pub(crate) mod tests {
 
             // build relation, along with z vector
             let relation = MerkleInclusionRelation::new(instance, witness, config.clone());
+            let mut z = relation.x;
+            z.extend(relation.w);
 
             // assert p_i(z) == 0
             for p in BinaryHypercube::new(r1cs.log_m) {
-                let eval = r1cs.eval_p_i(&relation.z, &p).unwrap();
+                let eval = r1cs.eval_p_i(&z, &p).unwrap();
                 assert_eq!(BLS12_381::ZERO, eval);
             }
 
             // change z to incorrect assignment
-            let mut wrong_z = relation.z.clone();
-            wrong_z[10] = BLS12_381::from(42);
+            z[10] = BLS12_381::from(42);
             let mut is_0 = true;
             for p in BinaryHypercube::new(r1cs.log_m) {
-                let eval = r1cs.eval_p_i(&wrong_z, &p).unwrap();
+                let eval = r1cs.eval_p_i(&z, &p).unwrap();
                 if eval != BLS12_381::ZERO {
                     is_0 = false;
                     break;

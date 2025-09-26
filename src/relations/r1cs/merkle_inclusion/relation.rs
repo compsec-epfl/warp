@@ -28,7 +28,8 @@ where
     config: MerkleInclusionConfig<F, M, MG>,
     instance: MerkleInclusionInstance<F, M, MG>,
     witness: MerkleInclusionWitness<F, M, MG>,
-    pub z: Vec<F>,
+    pub w: Vec<F>,
+    pub x: Vec<F>,
     pub r1cs: R1CS<F>,
     _merkle_config: PhantomData<M>,
     _merkle_config_gadget: PhantomData<MG>,
@@ -94,8 +95,8 @@ where
         // compute z
         constraint_system.finalize();
         let cs = constraint_system.into_inner().unwrap();
-        let mut z = cs.instance_assignment.clone();
-        z.extend(cs.witness_assignment.clone());
+        let x = cs.instance_assignment.clone();
+        let w = cs.witness_assignment.clone();
         let r1cs = R1CS::try_from(ConstraintSystemRef::new(cs.clone())).unwrap();
 
         Self {
@@ -103,7 +104,8 @@ where
             instance,
             witness,
             config,
-            z,
+            w,
+            x,
             r1cs,
             _merkle_config: PhantomData,
             _merkle_config_gadget: PhantomData,

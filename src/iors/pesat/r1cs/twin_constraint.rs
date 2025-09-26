@@ -62,15 +62,15 @@ impl<
         let mut output_witness = vec![vec![F::default(); self.config.code.message_len()]; L];
         let mut output_instance = Vec::<MC>::with_capacity(L);
 
-        let message_length = self.config.code.message_len();
-        let num_vars = message_length.ilog2() as usize;
+        let code_length = self.config.code.code_len();
+        let num_vars = code_length.ilog2() as usize;
 
         // TODO: let user provide alpha (?)
         let alpha = vec![F::ZERO; num_vars];
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
         // we have L codeword instances, each has length n, i.e. build an n * L table
-        let mut stacked_witnesses = vec![vec![F::default(); L]; message_length];
+        let mut stacked_witnesses = vec![vec![F::default(); L]; code_length];
 
         // stores multilinear evaluations of \hat{f}
         let mut mu = vec![F::default(); L];
@@ -145,14 +145,19 @@ pub mod tests {
     use crate::iors::IOR;
     use crate::linear_code::linear_code::LinearCode;
     use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon};
-    use crate::merkle::poseidon::PoseidonMerkleConfig;
+    use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
+    use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
+    use crate::relations::r1cs::MerkleInclusionWitness;
     use crate::relations::relation::ToPolySystem;
+    use crate::relations::Relation;
     use crate::{
         linear_code::ReedSolomonConfig,
         relations::r1cs::{merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation},
     };
     use spongefish::duplex_sponge::DuplexSponge;
+    use spongefish::DomainSeparator;
     use spongefish_poseidon::PoseidonPermutation;
+    use std::marker::PhantomData;
 
     use ark_bls12_381::Fr;
 
@@ -174,8 +179,8 @@ pub mod tests {
         let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig {
             code,
             _f: std::marker::PhantomData,
-            mt_leaf_hash_params: mt_config.leaf_hash_param,
-            mt_two_to_one_hash_params: mt_config.two_to_one_hash_param,
+            mt_leaf_hash_params: mt_config.leaf_hash_param.clone(),
+            mt_two_to_one_hash_params: mt_config.two_to_one_hash_param.clone(),
         };
         let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _, L1> {
             r1cs,
@@ -183,6 +188,42 @@ pub mod tests {
             _mc: std::marker::PhantomData,
         };
 
-        // r1cs_twinrs_ior.prove(prover_state, instance, witness)
+        // intialize prover state
+        let domain_separator = DomainSeparator::<TestSponge, Fr>::new("test::ior::r1cs");
+        let mut prover_state = domain_separator.to_prover_state();
+
+        let mut witnesses = vec![];
+        let mut instances = vec![];
+
+        // intialize some instances and witnesses
+        for i in 0..L1 {
+            let proof = mt.generate_proof(i).unwrap();
+            let instance = MerkleInclusionInstance::<
+                Fr,
+                PoseidonMerkleConfig<Fr>,
+                PoseidonMerkleConfigGadget<Fr>,
+            > {
+                root: mt.root(),
+                leaf: (*leaves[i]).to_vec(),
+                _merkle_config_gadget: PhantomData,
+            };
+            let witness = MerkleInclusionWitness::<
+                Fr,
+                PoseidonMerkleConfig<Fr>,
+                PoseidonMerkleConfigGadget<Fr>,
+            > {
+                proof,
+                _merkle_config_gadget: PhantomData,
+            };
+
+            let relation = MerkleInclusionRelation::new(instance, witness, mt_config.clone());
+
+            witnesses.push(relation.w);
+            instances.push(relation.x);
+        }
+
+        r1cs_twinrs_ior
+            .prove(&mut prover_state, instances, witnesses)
+            .unwrap();
     }
 }
