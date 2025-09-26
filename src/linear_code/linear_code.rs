@@ -1,4 +1,5 @@
 use ark_ff::Field;
+use ark_poly::DenseMultilinearExtension;
 
 pub trait LinearCode<F: Field> {
     type Config;
@@ -11,4 +12,12 @@ pub trait LinearCode<F: Field> {
     // decode an n-symbol codeword back into the original k-symbol message
     // should return None if decoding fails (bc errors are beyond capacity etc)
     fn decode(&self, received: &[F]) -> Option<Vec<F>>;
+
+    fn message_len(&self) -> usize;
+
+    fn code_len(&self) -> usize;
+}
+
+pub trait MultiConstrainedCode<F: Field>: LinearCode<F> {
+    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F>;
 }

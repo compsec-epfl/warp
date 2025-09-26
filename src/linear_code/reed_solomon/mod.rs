@@ -67,6 +67,14 @@ pub struct ReedSolomon<F: Field + FftField> {
 impl<F: Field + FftField> LinearCode<F> for ReedSolomon<F> {
     type Config = ReedSolomonConfig<F>;
 
+    fn message_len(&self) -> usize {
+        self.config.message_length
+    }
+
+    fn code_len(&self) -> usize {
+        self.config.code_length
+    }
+
     fn new(config: Self::Config) -> Self {
         Self { config }
     }
