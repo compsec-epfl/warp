@@ -1,4 +1,7 @@
 use ark_ff::{Field, PrimeField};
+use whir::poly_utils::hypercube::BinaryHypercubePoint;
+
+pub mod poly;
 
 pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();

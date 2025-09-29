@@ -1,10 +1,16 @@
+use std::collections::HashMap;
+
 use ark_ff::FftField;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::CanonicalSerialize;
+use whir::poly_utils::hypercube::BinaryHypercube;
 
-use crate::linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode};
+use crate::{
+    linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode},
+    utils::poly::eq_poly,
+};
 
-#[derive(Clone, CanonicalSerialize)]
+#[derive(Clone)]
 pub struct MultiConstrainedReedSolomon<
     F: FftField,
     C: LinearCode<F, Config: CanonicalSerialize>,
@@ -14,6 +20,9 @@ pub struct MultiConstrainedReedSolomon<
     // (\alpha_i, \mu_i)_{r}
     evaluations: [(Vec<F>, F); R],
     beta: (Vec<F>, Vec<F>), // (tau, x)
+    // we store computations for eq(\tau, j)_{j \in {0, 1}^{\log m}} within a table indexed by
+    // hypercube points
+    tau_eq_evals: HashMap<usize, F>,
     eta: F,
 }
 
@@ -30,9 +39,20 @@ impl<F: FftField, C: LinearCode<F, Config: CanonicalSerialize>, const R: usize>
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self {
+        let mut tau_eq_evals = HashMap::<usize, F>::new();
+        let hypercube = BinaryHypercube::new(beta.0.len());
+        let tau = &beta.0;
+
+        // TODO: multithread this
+        // initialize table for eq(tau, i)
+        for point in hypercube {
+            tau_eq_evals.insert(point.0, eq_poly(tau, point));
+        }
+
         Self {
             config,
             evaluations,
+            tau_eq_evals,
             beta,
             eta,
         }

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData};
 
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
@@ -121,9 +121,7 @@ impl<
             prover_state
                 .fill_challenge_units(&mut tau_i)
                 .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
-            // for each tau we compute eq(\tau_i, j)_{j \in {0, 1}^{\log m}}
-            // to obtain the final twin constrained code
-            //
+
             output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
                 [(vec![F::ZERO; num_vars], mu[i])],
