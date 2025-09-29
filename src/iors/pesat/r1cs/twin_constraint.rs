@@ -165,7 +165,6 @@ pub mod tests {
     use ark_bls12_381::Fr;
 
     type TestPermutation = PoseidonPermutation<255, Fr, 2, 3>;
-    type TestSponge = DuplexSponge<TestPermutation>;
     type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, 1>;
 
     pub(crate) fn new_test_pesat_ior_domain_separator<

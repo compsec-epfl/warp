@@ -16,14 +16,14 @@ pub struct MultiConstrainedReedSolomon<
     C: LinearCode<F, Config: CanonicalSerialize>,
     const R: usize,
 > {
-    config: C::Config,
+    pub config: C::Config,
     // (\alpha_i, \mu_i)_{r}
-    evaluations: [(Vec<F>, F); R],
-    beta: (Vec<F>, Vec<F>), // (tau, x)
+    pub evaluations: [(Vec<F>, F); R],
+    pub beta: (Vec<F>, Vec<F>), // (tau, x)
     // we store computations for eq(\tau, j)_{j \in {0, 1}^{\log m}} within a table indexed by
     // hypercube points
-    tau_eq_evals: HashMap<usize, F>,
-    eta: F,
+    pub tau_eq_evals: HashMap<usize, F>,
+    pub eta: F,
 }
 
 impl<F: FftField, C: LinearCode<F, Config: CanonicalSerialize>, const R: usize>

@@ -119,14 +119,11 @@ pub(crate) mod tests {
             _merkle_config_gadget: PhantomData,
         };
 
-        // extract R1CS matrices
-        let r1cs = MerkleInclusionRelation::into_r1cs(&config).unwrap();
-
         // Create some leaves
         let n_leaves = 1 << (height - 1);
         let mut leaves = Vec::<Vec<BLS12_381>>::new();
         let mut rng = test_rng();
-        for i in 0..n_leaves {
+        for _ in 0..n_leaves {
             let leaf = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
             leaves.push(leaf);
         }
