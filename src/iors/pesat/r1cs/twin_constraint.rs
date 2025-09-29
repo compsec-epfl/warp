@@ -121,13 +121,15 @@ impl<
             prover_state
                 .fill_challenge_units(&mut tau_i)
                 .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
-
-            output_instance[i] = MC::new_with_constraint(
+            // for each tau we compute eq(\tau_i, j)_{j \in {0, 1}^{\log m}}
+            // to obtain the final twin constrained code
+            //
+            output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
                 [(vec![F::ZERO; num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
                 F::ZERO,
-            );
+            ));
         }
 
         Ok((output_instance, output_witness))
@@ -154,15 +156,32 @@ pub mod tests {
         linear_code::ReedSolomonConfig,
         relations::r1cs::{merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation},
     };
+    use ark_ff::Field;
     use spongefish::duplex_sponge::DuplexSponge;
+    use spongefish::duplex_sponge::Permutation;
     use spongefish::DomainSeparator;
+    use spongefish::Unit as SpongefishUnit;
     use spongefish_poseidon::PoseidonPermutation;
     use std::marker::PhantomData;
 
     use ark_bls12_381::Fr;
 
-    type TestSponge = DuplexSponge<PoseidonPermutation<255, Fr, 2, 3>>;
+    type TestPermutation = PoseidonPermutation<255, Fr, 2, 3>;
+    type TestSponge = DuplexSponge<TestPermutation>;
     type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, 1>;
+
+    pub(crate) fn new_test_pesat_ior_domain_separator<
+        F: Field + SpongefishUnit,
+        C: Permutation<U = F>,
+    >(
+        l1: usize,
+        log_m: usize,
+    ) -> DomainSeparator<DuplexSponge<C>, F> {
+        DomainSeparator::<DuplexSponge<C>, F>::new("ior::pesat")
+            .absorb(1, "root")
+            .absorb(l1, "mu")
+            .squeeze(log_m * l1, "tau")
+    }
 
     #[test]
     pub fn test_ior_twin_constraints() {
@@ -174,6 +193,7 @@ pub mod tests {
         let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
         let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
         let code = ReedSolomon::new(code_config);
+        let log_m = r1cs.log_m;
 
         // initialize ior
         let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig {
@@ -189,7 +209,8 @@ pub mod tests {
         };
 
         // intialize prover state
-        let domain_separator = DomainSeparator::<TestSponge, Fr>::new("test::ior::r1cs");
+        let domain_separator =
+            new_test_pesat_ior_domain_separator::<Fr, TestPermutation>(L1, log_m);
         let mut prover_state = domain_separator.to_prover_state();
 
         let mut witnesses = vec![];
