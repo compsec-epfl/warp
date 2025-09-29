@@ -1,15 +1,10 @@
 use ark_bls12_381::Fr as BLS12_381;
 use ark_bn254::Fr as BN254;
-use ark_ff::fields::{Fp64, MontBackend, MontConfig};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
 
-#[derive(MontConfig)]
-#[modulus = "18446744069414584321"] // q = 2^64 - 2^32 + 1
-#[generator = "2"]
-pub struct GoldilocksConfig;
-pub type Goldilocks = Fp64<MontBackend<GoldilocksConfig, 1>>;
+use warp::tests::F64 as Goldilocks;
 
 fn bench_for_field<F: ark_ff::Field + ark_ff::FftField + std::fmt::Debug + 'static>(
     c: &mut Criterion,
@@ -26,17 +21,6 @@ fn bench_for_field<F: ark_ff::Field + ark_ff::FftField + std::fmt::Debug + 'stat
         });
     }
     encode_group.finish();
-
-    let mut decode_group = c.benchmark_group(format!("rs_decode_{}", field_name));
-    for &(k, n) in &sizes {
-        let rs = ReedSolomon::<F>::new(ReedSolomonConfig::default(k, n));
-        let message: Vec<F> = (0..k).map(|i| F::from(i as u64)).collect();
-        let codeword = rs.encode(&message);
-        decode_group.bench_function(format!("decode_{}_{}", k, n), |b| {
-            b.iter(|| rs.decode(&codeword).unwrap())
-        });
-    }
-    decode_group.finish();
 }
 
 fn bench_all_fields(c: &mut Criterion) {
