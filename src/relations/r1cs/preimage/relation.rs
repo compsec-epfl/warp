@@ -45,7 +45,7 @@ where
             _crhs_scheme: PhantomData,
         };
         let zero_instance = PreimageInstance::<F> {
-            digest: H::evaluate(&config, zero_witness.preimage.clone()).unwrap(),
+            digest: H::evaluate(config, zero_witness.preimage.clone()).unwrap(),
         };
         let constraint_synthesizer = PreimageSynthesizer::<F, H, HG> {
             instance: zero_instance,

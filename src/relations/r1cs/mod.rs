@@ -70,9 +70,9 @@ impl<F: Field> R1CS<F> {
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
     pub fn eval_p_i(&self, z: &Vec<F>, i: &BinaryHypercubePoint) -> Result<F, WARPError> {
         let (a_i, b_i, c_i) = self.p.get(&i.0).ok_or(WARPError::R1CSNonExistingLC)?;
-        let eval_a_i = Self::eval_lc(a_i, &z)?;
-        let eval_b_i = Self::eval_lc(b_i, &z)?;
-        let eval_c_i = Self::eval_lc(c_i, &z)?;
+        let eval_a_i = Self::eval_lc(a_i, z)?;
+        let eval_b_i = Self::eval_lc(b_i, z)?;
+        let eval_c_i = Self::eval_lc(c_i, z)?;
         Ok(eval_a_i * eval_b_i - eval_c_i)
     }
 }

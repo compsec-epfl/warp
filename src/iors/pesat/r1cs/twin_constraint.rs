@@ -1,4 +1,4 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
@@ -107,10 +107,10 @@ impl<
         // absorb root and multilinear evaluations
         prover_state
             .add_units(&[mt.root()])
-            .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
+            .map_err(ProofError::InvalidDomainSeparator)?;
         prover_state
             .add_units(&mu)
-            .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
+            .map_err(ProofError::InvalidDomainSeparator)?;
 
         // for i \in [l_1] get \mathbf{\tau_i} \in \mathbf{F}^{\log M}
         // \beta_i = [x_i, \tau_i]
@@ -120,7 +120,7 @@ impl<
             let mut tau_i = vec![F::default(); tau_len];
             prover_state
                 .fill_challenge_units(&mut tau_i)
-                .map_err(|e| ProofError::InvalidDomainSeparator(e))?;
+                .map_err(ProofError::InvalidDomainSeparator)?;
 
             output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
