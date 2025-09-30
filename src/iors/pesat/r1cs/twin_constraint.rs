@@ -144,6 +144,7 @@ pub mod tests {
     use crate::iors::IORConfig;
     use crate::iors::IOR;
     use crate::linear_code::linear_code::LinearCode;
+    use crate::linear_code::MultiConstrainedLinearCode;
     use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon};
     use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
     use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
@@ -201,7 +202,7 @@ pub mod tests {
             mt_two_to_one_hash_params: mt_config.two_to_one_hash_param.clone(),
         };
         let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _, L1> {
-            r1cs,
+            r1cs: r1cs.clone(),
             config: ior_config,
             _mc: std::marker::PhantomData,
         };
@@ -241,8 +242,13 @@ pub mod tests {
             instances.push(relation.x);
         }
 
-        r1cs_twinrs_ior
+        let (new_instances, new_witnesses) = r1cs_twinrs_ior
             .prove(&mut prover_state, instances, witnesses)
             .unwrap();
+
+        // check multicodewords constraints
+        for (mc, c) in new_instances.iter().zip(new_witnesses) {
+            mc.check_constraints(&c, &r1cs).unwrap();
+        }
     }
 }

@@ -18,6 +18,7 @@ use crate::WARPError;
 
 use super::relation::BundledPESAT;
 
+#[derive(Clone)]
 pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)

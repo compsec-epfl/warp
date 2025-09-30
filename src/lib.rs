@@ -24,4 +24,8 @@ pub enum WARPError {
     ZeroEvaderSize(usize, usize),
     #[error("LC does not exist")]
     R1CSNonExistingLC,
+    #[error("Error decoding codeword")]
+    DecodeFailed,
+    #[error("Bundled PESAT eval returned {0}, multilinear evals returned {1}")]
+    UnsatisfiedMultiConstraints(bool, bool),
 }
