@@ -33,9 +33,5 @@ criterion = "0.4"
 blake3 = "1.3"
 
 [[bench]]
-name = "poseidon_hash"
-harness = false
-
-[[bench]]
-name = "reed_solomon"
+name = "pesat_r1cs_ior"
 harness = false

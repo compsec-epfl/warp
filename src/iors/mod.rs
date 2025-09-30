@@ -12,11 +12,27 @@ use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
 pub mod ior_codewords_batch;
 pub mod pesat;
 
+#[derive(Clone)]
 pub struct IORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
     code: C,
     _f: PhantomData<F>,
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
     mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+}
+
+impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> IORConfig<F, C, MT> {
+    pub fn new(
+        code: C,
+        mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
+        mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+    ) -> Self {
+        Self {
+            code,
+            mt_leaf_hash_params,
+            mt_two_to_one_hash_params,
+            _f: PhantomData,
+        }
+    }
 }
 
 pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config, S: DuplexSpongeInterface<F>>

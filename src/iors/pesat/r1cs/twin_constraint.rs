@@ -23,11 +23,33 @@ pub struct R1CSTwinConstraintIOR<
     C: LinearCode<F>,
     MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
     MT: Config,
-    const L: usize, // L instances
 > {
+    // l instances
+    l: usize,
     r1cs: R1CS<F>,
     config: IORConfig<F, C, MT>,
     _mc: PhantomData<MC>,
+}
+impl<
+        F: Field + SpongefishUnit,
+        C: LinearCode<F> + Clone,
+        MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
+        MT: Config,
+    > R1CSTwinConstraintIOR<F, C, MC, MT>
+{
+    pub fn new(r1cs: R1CS<F>, config: &IORConfig<F, C, MT>, l: usize) -> Self {
+        let config = IORConfig::new(
+            config.code.clone(),
+            config.mt_leaf_hash_params.clone(),
+            config.mt_two_to_one_hash_params.clone(),
+        );
+        Self {
+            r1cs,
+            config,
+            l,
+            _mc: PhantomData,
+        }
+    }
 }
 
 impl<
@@ -36,8 +58,7 @@ impl<
         MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
         MT: Config<InnerDigest = F, Leaf = [F]>,
         S: DuplexSpongeInterface<F>,
-        const L: usize,
-    > IOR<F, C, MT, S> for R1CSTwinConstraintIOR<F, C, MC, MT, L>
+    > IOR<F, C, MT, S> for R1CSTwinConstraintIOR<F, C, MC, MT>
 {
     // we have L incoming (instance, witness) pairs
     // (x, w) s.t. R1CS(x, w) = 0
@@ -56,13 +77,13 @@ impl<
         instance: Self::Instance<'a>,
         witness: Self::Witness<'a>,
     ) -> Result<(Self::OutputInstance<'a>, Self::OutputWitness<'a>), WARPError> {
-        debug_assert!(instance.len() == L);
+        debug_assert!(instance.len() == self.l);
         debug_assert!(instance.len() == witness.len());
         debug_assert!(self.config.code.code_len().is_power_of_two());
 
         let code_length = self.config.code.code_len();
-        let mut output_witness = vec![vec![F::default(); code_length]; L];
-        let mut output_instance = Vec::<MC>::with_capacity(L);
+        let mut output_witness = vec![vec![F::default(); code_length]; self.l];
+        let mut output_instance = Vec::<MC>::with_capacity(self.l);
 
         // TODO: let user provide alpha (?)
         let num_vars = code_length.ilog2() as usize;
@@ -70,14 +91,14 @@ impl<
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
         // we have L codeword instances, each has length n, i.e. build an n * L table
-        let mut stacked_witnesses = vec![vec![F::default(); L]; code_length];
+        let mut stacked_witnesses = vec![vec![F::default(); self.l]; code_length];
 
         // stores multilinear evaluations of \hat{f}
-        let mut mu = vec![F::default(); L];
+        let mut mu = vec![F::default(); self.l];
 
         // encode and evaluate the multilinear extension over [0; nvars]
         // TODO: multithread this (?)
-        for i in 0..L {
+        for i in 0..self.l {
             let f_i = self.config.code.encode(&witness[i]);
 
             // stacking codewords
@@ -116,7 +137,7 @@ impl<
         // \beta_i = [x_i, \tau_i]
         let tau_len: usize = self.r1cs.log_m;
 
-        for i in 0..L {
+        for i in 0..self.l {
             let mut tau_i = vec![F::default(); tau_len];
             prover_state
                 .fill_challenge_units(&mut tau_i)
@@ -184,7 +205,7 @@ pub mod tests {
 
     #[test]
     pub fn test_ior_twin_constraints() {
-        const L1: usize = 2;
+        let l = 2;
 
         // prepare r1cs, code and example tree
         let height = 3;
@@ -195,28 +216,27 @@ pub mod tests {
         let log_m = r1cs.log_m;
 
         // initialize ior
-        let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig {
+        let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig::new(
             code,
-            _f: std::marker::PhantomData,
-            mt_leaf_hash_params: mt_config.leaf_hash_param.clone(),
-            mt_two_to_one_hash_params: mt_config.two_to_one_hash_param.clone(),
-        };
-        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _, L1> {
+            mt_config.leaf_hash_param.clone(),
+            mt_config.two_to_one_hash_param.clone(),
+        );
+        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _> {
             r1cs: r1cs.clone(),
             config: ior_config,
+            l,
             _mc: std::marker::PhantomData,
         };
 
         // intialize prover state
-        let domain_separator =
-            new_test_pesat_ior_domain_separator::<Fr, TestPermutation>(L1, log_m);
+        let domain_separator = new_test_pesat_ior_domain_separator::<Fr, TestPermutation>(l, log_m);
         let mut prover_state = domain_separator.to_prover_state();
 
         let mut witnesses = vec![];
         let mut instances = vec![];
 
         // intialize some instances and witnesses
-        for i in 0..L1 {
+        for i in 0..l {
             let proof = mt.generate_proof(i).unwrap();
             let instance = MerkleInclusionInstance::<
                 Fr,

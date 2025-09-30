@@ -5,7 +5,7 @@ pub mod poly;
 pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();
     F::zero().serialize_uncompressed(&mut buf).unwrap();
-    
+
     buf.len()
 }
 
