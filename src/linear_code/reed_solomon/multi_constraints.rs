@@ -52,15 +52,14 @@ impl<
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self {
-        let mut tau_eq_evals = HashMap::<usize, F>::new();
         let hypercube = BinaryHypercube::new(beta.0.len());
         let tau = &beta.0;
 
         // TODO: multithread this
         // initialize table for eq(tau, i)
-        for point in hypercube {
-            tau_eq_evals.insert(point.0, eq_poly(tau, point));
-        }
+        let tau_eq_evals = hypercube
+            .map(|point| (point.0, eq_poly(tau, point)))
+            .collect();
 
         Self {
             _p: PhantomData::<P>,
