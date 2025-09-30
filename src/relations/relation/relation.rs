@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+
 use ark_ff::Field;
+
+use crate::WARPError;
 
 pub trait Relation<F: Field> {
     type Instance;
@@ -13,4 +17,12 @@ pub trait Relation<F: Field> {
     fn private_inputs(&self) -> Vec<u8>;
     fn verify(&self) -> bool;
     fn witness(&self) -> Self::Witness;
+}
+
+pub trait BundledPESAT<F: Field> {
+    fn evaluate_bundled(
+        &self,
+        zero_evader_evals: &HashMap<usize, F>,
+        z: &Vec<F>,
+    ) -> Result<F, WARPError>;
 }

@@ -21,7 +21,7 @@ use crate::iors::{IORConfig, IOR};
 pub struct R1CSTwinConstraintIOR<
     F: Field + SpongefishUnit,
     C: LinearCode<F>,
-    MC: MultiConstrainedLinearCode<F, C, 1>,
+    MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
     MT: Config,
     const L: usize, // L instances
 > {
@@ -33,7 +33,7 @@ pub struct R1CSTwinConstraintIOR<
 impl<
         F: FftField + SpongefishUnit,
         C: LinearCode<F>,
-        MC: MultiConstrainedLinearCode<F, C, 1>,
+        MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
         MT: Config<InnerDigest = F, Leaf = [F]>,
         S: DuplexSpongeInterface<F>,
         const L: usize,
@@ -148,6 +148,7 @@ pub mod tests {
     use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
     use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
     use crate::relations::r1cs::MerkleInclusionWitness;
+    use crate::relations::r1cs::R1CS;
     use crate::relations::relation::ToPolySystem;
     use crate::relations::Relation;
     use crate::{
@@ -165,7 +166,7 @@ pub mod tests {
     use ark_bls12_381::Fr;
 
     type TestPermutation = PoseidonPermutation<255, Fr, 2, 3>;
-    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, 1>;
+    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>, 1>;
 
     pub(crate) fn new_test_pesat_ior_domain_separator<
         F: Field + SpongefishUnit,

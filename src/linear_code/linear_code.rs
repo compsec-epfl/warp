@@ -1,6 +1,8 @@
 use ark_ff::Field;
 use ark_poly::DenseMultilinearExtension;
 
+use crate::relations::relation::BundledPESAT;
+
 pub trait LinearCode<F: Field> {
     type Config;
 
@@ -20,7 +22,8 @@ pub trait LinearCode<F: Field> {
     fn config(&self) -> Self::Config;
 }
 
-pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, const R: usize> {
+pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, P: BundledPESAT<F>, const R: usize>
+{
     fn new_with_constraint(
         config: <C as LinearCode<F>>::Config,
         evaluations: [(Vec<F>, F); R],
@@ -29,4 +32,6 @@ pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, const R: usize>
     ) -> Self;
 
     fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F>;
+
+    fn check_constraints(&self, f: &Vec<F>, p: &P) -> bool;
 }

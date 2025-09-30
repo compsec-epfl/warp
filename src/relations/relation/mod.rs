@@ -3,7 +3,7 @@ mod relation;
 
 use ark_ff::Field;
 pub use description::SerializableConstraintMatrices;
-pub use relation::Relation;
+pub use relation::{BundledPESAT, Relation};
 
 use crate::WARPError;
 

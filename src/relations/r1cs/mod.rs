@@ -16,6 +16,8 @@ use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::WARPError;
 
+use super::relation::BundledPESAT;
+
 pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
@@ -74,5 +76,24 @@ impl<F: Field> R1CS<F> {
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
         Ok(eval_a_i * eval_b_i - eval_c_i)
+    }
+}
+
+impl<F: Field> BundledPESAT<F> for R1CS<F> {
+    fn evaluate_bundled(
+        &self,
+        zero_evader_evals: &HashMap<usize, F>,
+        z: &Vec<F>,
+    ) -> Result<F, WARPError> {
+        let mut cube = BinaryHypercube::new(self.log_m);
+
+        // TODO: multithread this
+        cube.try_fold(F::ZERO, |acc, point| {
+            let eq_tau_i = *zero_evader_evals
+                .get(&point.0)
+                .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), point.0))?;
+            let p_i = self.eval_p_i(z, &point)?;
+            Ok(acc + eq_tau_i * p_i)
+        })
     }
 }

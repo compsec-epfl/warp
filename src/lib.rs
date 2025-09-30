@@ -18,8 +18,10 @@ pub enum WARPError {
     ArkError(#[from] Error),
     #[error("Incorrect IOR config")]
     IORConfigError,
-    #[error("Tried accessing at {1} when z.len() is {0}")]
+    #[error("z.len() is {0}, but tried accessing at {1}")]
     R1CSWitnessSize(usize, usize),
+    #[error("Tried accessing at {1} when z.len() is {0}")]
+    ZeroEvaderSize(usize, usize),
     #[error("LC does not exist")]
     R1CSNonExistingLC,
 }

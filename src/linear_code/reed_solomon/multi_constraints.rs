@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 
 use ark_ff::FftField;
 use ark_poly::DenseMultilinearExtension;
@@ -7,6 +7,7 @@ use whir::poly_utils::hypercube::BinaryHypercube;
 
 use crate::{
     linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode},
+    relations::relation::BundledPESAT,
     utils::poly::eq_poly,
 };
 
@@ -14,8 +15,10 @@ use crate::{
 pub struct MultiConstrainedReedSolomon<
     F: FftField,
     C: LinearCode<F, Config: CanonicalSerialize>,
+    P: BundledPESAT<F>,
     const R: usize,
 > {
+    pub _p: PhantomData<P>,
     pub config: C::Config,
     // (\alpha_i, \mu_i)_{r}
     pub evaluations: [(Vec<F>, F); R],
@@ -26,8 +29,12 @@ pub struct MultiConstrainedReedSolomon<
     pub eta: F,
 }
 
-impl<F: FftField, C: LinearCode<F, Config: CanonicalSerialize>, const R: usize>
-    MultiConstrainedLinearCode<F, C, R> for MultiConstrainedReedSolomon<F, C, R>
+impl<
+        F: FftField,
+        C: LinearCode<F, Config: CanonicalSerialize>,
+        P: BundledPESAT<F>,
+        const R: usize,
+    > MultiConstrainedLinearCode<F, C, P, R> for MultiConstrainedReedSolomon<F, C, P, R>
 {
     fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F> {
         DenseMultilinearExtension::from_evaluations_slice(num_vars, f)
@@ -50,11 +57,19 @@ impl<F: FftField, C: LinearCode<F, Config: CanonicalSerialize>, const R: usize>
         }
 
         Self {
+            _p: PhantomData::<P>,
             config,
             evaluations,
             tau_eq_evals,
             beta,
             eta,
         }
+    }
+
+    fn check_constraints(&self, f: &Vec<F>, p: &P) -> bool {
+        //let rs = ReedSolomon::new(&self.config);
+        //let (_, x) = self.beta;
+        //p.evaluate_bundled(&self.tau_eq_evals, z);
+        todo!()
     }
 }
