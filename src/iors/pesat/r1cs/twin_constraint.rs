@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
 use ark_poly::Polynomial;
+use ark_std::iterable::Iterable;
 
 use crate::{
     linear_code::{LinearCode, MultiConstrainedLinearCode},
@@ -91,7 +92,8 @@ impl<
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
         // we have L codeword instances, each has length n, i.e. build an n * L table
-        let mut stacked_witnesses = vec![vec![F::default(); self.l]; code_length];
+        // we chunk them below
+        let mut stacked_witnesses = vec![F::default(); self.l * code_length];
 
         // stores multilinear evaluations of \hat{f}
         let mut mu = vec![F::default(); self.l];
@@ -108,7 +110,7 @@ impl<
             // ..
             // N - 1 [w_0[N-1], w_1[N-1], ..]
             for (j, value) in f_i.iter().enumerate() {
-                stacked_witnesses[j][i] = *value;
+                stacked_witnesses[(j * self.l) + i] = *value;
             }
 
             // evaluate the dense mle for the codeword
@@ -118,11 +120,13 @@ impl<
             output_witness[i] = f_i;
         }
 
+        let leaves: Vec<&[F]> = stacked_witnesses.chunks_exact(code_length).collect();
+
         // commit
         let mt = MerkleTree::<MT>::new(
             &self.config.mt_leaf_hash_params,
             &self.config.mt_two_to_one_hash_params,
-            &stacked_witnesses,
+            leaves,
         )?;
 
         // absorb root and multilinear evaluations
