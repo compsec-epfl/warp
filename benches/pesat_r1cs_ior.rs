@@ -1,38 +1,44 @@
+use std::marker::PhantomData;
+
 use ark_bls12_381::Fr as BLS12_381;
+use ark_crypto_primitives::crh::poseidon::constraints::CRHGadget;
+use ark_crypto_primitives::crh::poseidon::CRH;
+use ark_ff::UniformRand;
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 mod utils;
 use utils::domain_sep::initialize_pesat_ior_domain_separator;
-use utils::merkle::generate_merkle_instance_witness_pair;
-use utils::{codes::TwinConstraintRS, merkle, poseidon};
+use utils::{codes::TwinConstraintRS, poseidon};
 use warp::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
 use warp::iors::{IORConfig, IOR};
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
 use warp::merkle::poseidon::PoseidonMerkleConfig;
-use warp::relations::r1cs::MerkleInclusionRelation;
+use warp::relations::r1cs::hashchain::{
+    compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness,
+};
 use warp::relations::relation::ToPolySystem;
+use warp::relations::Relation;
 
-pub fn bench_rs_pesat_r1cs_ior(c: &mut Criterion) {
-    const TREE_HEIGHT: usize = 15;
+pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
+    let hash_chain_size = 160;
     let mut rng = thread_rng();
     let poseidon_config = poseidon::initialize_poseidon_config::<BLS12_381>();
-    let (mt_config, leaves, mt) =
-        merkle::initialize_merkle_tree(TREE_HEIGHT, poseidon_config, &mut rng);
-    let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
-    let code_config = ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
-    let code = ReedSolomon::new(code_config);
+    let r1cs = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+        poseidon_config.clone(),
+        hash_chain_size,
+    ))
+    .unwrap();
     let log_m = r1cs.log_m;
+    let code_config = ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
+
+    let code = ReedSolomon::new(code_config);
 
     // initialize IOR
     let ior_config: IORConfig<BLS12_381, ReedSolomon<BLS12_381>, PoseidonMerkleConfig<BLS12_381>> =
-        IORConfig::new(
-            code,
-            mt_config.leaf_hash_param.clone(),
-            mt_config.two_to_one_hash_param.clone(),
-        );
+        IORConfig::new(code, poseidon_config.clone(), poseidon_config.clone());
 
-    for l in [2, 32, 64, 128, 256, 512] {
+    for l in [32, 64, 128, 256, 512] {
         let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS<BLS12_381>, _>::new(
             r1cs.clone(),
             &ior_config,
@@ -40,17 +46,29 @@ pub fn bench_rs_pesat_r1cs_ior(c: &mut Criterion) {
         );
 
         let instances_witnesses: (Vec<Vec<BLS12_381>>, Vec<Vec<BLS12_381>>) = (0..l)
-            .map(|index| {
-                generate_merkle_instance_witness_pair(
-                    &mt_config,
-                    &mt,
-                    index,
-                    leaves.get(index).unwrap(),
-                )
+            .map(|_| {
+                let preimage = vec![BLS12_381::rand(&mut rng)];
+                let instance = HashChainInstance {
+                    digest: compute_hash_chain::<BLS12_381, CRH<_>>(
+                        &poseidon_config,
+                        &preimage,
+                        hash_chain_size,
+                    ),
+                };
+                let witness = HashChainWitness {
+                    preimage,
+                    _crhs_scheme: PhantomData::<CRH<BLS12_381>>,
+                };
+                let relation = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::new(
+                    instance,
+                    witness,
+                    (poseidon_config.clone(), hash_chain_size),
+                );
+                (relation.x, relation.w)
             })
             .unzip();
 
-        let mut group = c.benchmark_group("pesat_ior_rs_r1cs_bls12_381");
+        let mut group = c.benchmark_group("pesat_ior_rs_r1cs_bls12_381_hash_chain");
         group.sample_size(10);
 
         group.bench_with_input(
@@ -76,9 +94,7 @@ pub fn bench_rs_pesat_r1cs_ior(c: &mut Criterion) {
             },
         );
     }
-
-    // intialize prover state
 }
 
-criterion_group!(benches, bench_rs_pesat_r1cs_ior);
+criterion_group!(benches, bench_rs_pesat_r1cs_ior_hashchain);
 criterion_main!(benches);
