@@ -1,7 +1,9 @@
+pub mod hashchain;
 pub mod identity;
 pub mod is_prime;
 pub mod merkle_inclusion;
 pub mod preimage;
+
 use std::collections::HashMap;
 
 use ark_ff::Field;
@@ -81,17 +83,13 @@ impl<F: Field> R1CS<F> {
 }
 
 impl<F: Field> BundledPESAT<F> for R1CS<F> {
-    fn evaluate_bundled(
-        &self,
-        zero_evader_evals: &HashMap<usize, F>,
-        z: &Vec<F>,
-    ) -> Result<F, WARPError> {
+    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
         let mut cube = BinaryHypercube::new(self.log_m);
 
         // TODO: multithread this
         cube.try_fold(F::ZERO, |acc, point| {
             let eq_tau_i = *zero_evader_evals
-                .get(&point.0)
+                .get(point.0)
                 .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), point.0))?;
             let p_i = self.eval_p_i(z, &point)?;
             Ok(acc + eq_tau_i * p_i)

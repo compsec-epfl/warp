@@ -30,7 +30,7 @@ pub struct MultiConstrainedReedSolomon<
     pub beta: (Vec<F>, Vec<F>),
     // we store computations for eq(\tau, j)_{j \in {0, 1}^{\log m}} within a table indexed by
     // hypercube points
-    pub tau_eq_evals: HashMap<usize, F>,
+    pub tau_eq_evals: Vec<F>,
     // expected evaluation result of the bundled pesat \hat{p}(beta, w)
     pub eta: F,
 }
@@ -57,9 +57,7 @@ impl<
 
         // TODO: multithread this
         // initialize table for eq(tau, i)
-        let tau_eq_evals = hypercube
-            .map(|point| (point.0, eq_poly(tau, point)))
-            .collect();
+        let tau_eq_evals = hypercube.map(|point| eq_poly(tau, point)).collect();
 
         Self {
             _p: PhantomData::<P>,

@@ -59,6 +59,7 @@ pub fn bench_rs_pesat_r1cs_ior(c: &mut Criterion) {
             |b, instance_witnesses| {
                 b.iter_with_setup(
                     || {
+                        // need to initialize a proper domain separator
                         let domain_separator = initialize_pesat_ior_domain_separator::<
                             BLS12_381,
                             poseidon::Permutation<BLS12_381>,

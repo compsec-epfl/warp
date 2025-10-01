@@ -20,9 +20,5 @@ pub trait Relation<F: Field> {
 }
 
 pub trait BundledPESAT<F: Field> {
-    fn evaluate_bundled(
-        &self,
-        zero_evader_evals: &HashMap<usize, F>,
-        z: &Vec<F>,
-    ) -> Result<F, WARPError>;
+    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError>;
 }
