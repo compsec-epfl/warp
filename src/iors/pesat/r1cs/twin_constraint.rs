@@ -91,8 +91,6 @@ impl<
         let alpha = vec![F::ZERO; num_vars];
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        // we have L codeword instances, each has length n, i.e. build an n * L table
-        // we chunk them below
         let mut stacked_witnesses = vec![F::default(); self.l * code_length];
 
         // stores multilinear evaluations of \hat{f}
@@ -103,12 +101,8 @@ impl<
         for i in 0..self.l {
             let f_i = self.config.code.encode(&witness[i]);
 
-            // stacking codewords
-            // w_i elements are in position in each of the j vecs
-            // 0 [w_0[0], w_1[0], ..] // L elements
-            // 1 [w_0[1], w_1[1], ..]
-            // ..
-            // N - 1 [w_0[N-1], w_1[N-1], ..]
+            // stacking codewords in flat array, which we chunk below
+            // [w_0[0], .., w_{N-1}[0], .., w_0[N-1], .., w_{N-1}[N-1]] // L * N elements
             for (j, value) in f_i.iter().enumerate() {
                 stacked_witnesses[(j * self.l) + i] = *value;
             }
