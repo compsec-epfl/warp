@@ -105,11 +105,11 @@ mod tests {
 
             let beta = (0..r1cs.log_m).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
 
-            let mut beta_eq_evals = HashMap::<usize, Fr>::new();
+            let mut beta_eq_evals = Vec::<Fr>::new();
             let hypercube = BinaryHypercube::new(r1cs.log_m);
 
             for point in hypercube {
-                beta_eq_evals.insert(point.0, eq_poly(&beta, point));
+                beta_eq_evals.push(eq_poly(&beta, point));
             }
 
             let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
@@ -172,10 +172,10 @@ mod tests {
             }
         }
 
-        let mut beta_eq_evals = HashMap::<usize, Fr>::new();
+        let mut beta_eq_evals = Vec::<Fr>::new();
         let hypercube = BinaryHypercube::new(r1cs.log_m);
         for point in hypercube {
-            beta_eq_evals.insert(point.0, eq_poly(&beta, point));
+            beta_eq_evals.push(eq_poly(&beta, point));
         }
 
         let z = [&x[..], &w].concat();
