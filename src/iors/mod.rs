@@ -9,7 +9,7 @@ use ark_ff::Field;
 use crate::{linear_code::LinearCode, WARPError};
 
 use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
-pub mod ior_codewords_batch;
+pub mod codeword_batching;
 pub mod pesat;
 
 #[derive(Clone)]
