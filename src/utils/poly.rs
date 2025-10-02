@@ -9,7 +9,7 @@ pub fn eq_poly<F: Field>(tau: &[F], mut point: BinaryHypercubePoint) -> F {
 
     let mut acc = F::ONE;
 
-    for val in tau.iter().rev() {
+    for val in tau.iter() {
         let b = *point % 2;
         acc *= if b == 1 { *val } else { F::ONE - *val };
         *point >>= 1;

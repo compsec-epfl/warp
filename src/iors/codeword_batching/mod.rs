@@ -184,7 +184,7 @@ mod tests {
 
         // Now impl the IOR from pseudo-batching accumulation relation to multi-evaluation relation with 1 + S + T evaluations
         let domain_separator =
-            DomainSeparator::<DuplexSponge<PoseidonPermx5_255_5>, Fr>::new("ior::pesat")
+            DomainSeparator::<DuplexSponge<PoseidonPermx5_255_5>, Fr>::new("ior::codeword_batching")
                 .absorb(1, "root")
                 .absorb(1, "mu")
                 .absorb(1, "eta")
