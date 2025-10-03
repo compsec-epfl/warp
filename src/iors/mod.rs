@@ -11,6 +11,7 @@ use crate::{linear_code::LinearCode, WARPError};
 use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
 pub mod codeword_batching;
 pub mod multilinear_constraint_batching;
+pub mod twin_constraint_pseudo_batching;
 pub mod pesat;
 
 #[derive(Clone)]
