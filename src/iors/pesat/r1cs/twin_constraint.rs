@@ -25,6 +25,7 @@ pub struct R1CSTwinConstraintIOR<
 > {
     // l instances
     l: usize,
+    // NOTE: when proving we only need log(M), not the R1CS itself
     r1cs: R1CS<F>,
     config: IORConfig<F, C, MT>,
     _mc: PhantomData<MC>,

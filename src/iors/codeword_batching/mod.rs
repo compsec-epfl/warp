@@ -1,6 +1,8 @@
+mod twin_constraint;
+
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, error::Error};
+    use std::error::Error;
 
     use ark_bls12_381::Fr;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
@@ -183,14 +185,15 @@ mod tests {
         let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
 
         // Now impl the IOR from pseudo-batching accumulation relation to multi-evaluation relation with 1 + S + T evaluations
-        let domain_separator =
-            DomainSeparator::<DuplexSponge<PoseidonPermx5_255_5>, Fr>::new("ior::codeword_batching")
-                .absorb(1, "root")
-                .absorb(1, "mu")
-                .absorb(1, "eta")
-                .squeeze(S * log2(N) as usize, "alpha")
-                .absorb(S, "mus")
-                .challenge_bytes((T * log2(N) as usize).div_ceil(8), "x");
+        let domain_separator = DomainSeparator::<DuplexSponge<PoseidonPermx5_255_5>, Fr>::new(
+            "ior::codeword_batching",
+        )
+        .absorb(1, "root")
+        .absorb(1, "mu")
+        .absorb(1, "eta")
+        .squeeze(S * log2(N) as usize, "alpha")
+        .absorb(S, "mus")
+        .challenge_bytes((T * log2(N) as usize).div_ceil(8), "x");
         let mut prover_state = domain_separator.to_prover_state();
 
         // 7.1 step 1, send witness oracle `u` (in non-interactive version, this is a commitment)

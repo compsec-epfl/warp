@@ -30,6 +30,7 @@ pub struct R1CS<F: Field> {
     pub n: usize,
     pub k: usize,
     pub log_m: usize,
+    pub log_n: usize,
 }
 
 impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
@@ -42,8 +43,12 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         let m = matrices.num_constraints.next_power_of_two();
         let n = matrices.num_instance_variables + matrices.num_witness_variables;
         let k = matrices.num_witness_variables;
-        let log_m = m.ilog2().try_into().unwrap(); // safe since warp/lib.rs forbids compiling on platforms
-                                                   // with 16-bits pointers width
+
+        // both `unwrap()` calls below are safe since warp/lib.rs forbids compiling on platforms
+        // with 16-bits pointers width
+        let log_m = m.ilog2().try_into().unwrap();
+        let log_n = n.ilog2().try_into().unwrap();
+
         let mut a = matrices.a.into_iter();
         let mut b = matrices.b.into_iter();
         let mut c = matrices.c.into_iter();
@@ -56,7 +61,15 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
             let c_i = c.next().unwrap_or(Vec::with_capacity(0));
             p.insert(point.0, (a_i, b_i, c_i));
         }
-        Ok(R1CS { p, m, n, k, log_m })
+
+        Ok(R1CS {
+            p,
+            m,
+            n,
+            k,
+            log_m,
+            log_n,
+        })
     }
 }
 

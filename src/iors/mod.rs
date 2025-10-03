@@ -12,7 +12,6 @@ use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
 pub mod codeword_batching;
 pub mod multilinear_constraint_batching;
 pub mod pesat;
-pub mod pseudo_batching;
 
 #[derive(Clone)]
 pub struct IORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {

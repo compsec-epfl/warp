@@ -34,4 +34,6 @@ pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, P: BundledPESAT
     fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F>;
 
     fn check_constraints(&self, f: &Vec<F>, p: &P) -> Result<(), WARPError>;
+
+    fn get_constraints(&self) -> (&[(Vec<F>, F); R], &(Vec<F>, Vec<F>), F);
 }

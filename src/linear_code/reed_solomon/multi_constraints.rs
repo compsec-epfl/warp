@@ -102,4 +102,8 @@ impl<
             ))
         }
     }
+
+    fn get_constraints(&self) -> (&[(Vec<F>, F); R], &(Vec<F>, Vec<F>), F) {
+        (&self.evaluations, &self.beta, self.eta)
+    }
 }
