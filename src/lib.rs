@@ -28,4 +28,6 @@ pub enum WARPError {
     DecodeFailed,
     #[error("Bundled PESAT eval returned {0}, multilinear evals returned {1}")]
     UnsatisfiedMultiConstraints(bool, bool),
+    #[error("f.len() is {0}, but tried accessing at {1}")]
+    CodewordSize(usize, usize),
 }

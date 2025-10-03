@@ -11,6 +11,7 @@ use crate::{linear_code::LinearCode, WARPError};
 use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
 pub mod codeword_batching;
 pub mod pesat;
+pub mod pseudo_batching;
 
 #[derive(Clone)]
 pub struct IORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
@@ -37,17 +38,17 @@ impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> IORConfig<F, C, MT
 
 pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config, S: DuplexSpongeInterface<F>>
 {
-    type Instance<'a>;
-    type Witness<'a>;
-    type OutputInstance<'a>;
-    type OutputWitness<'a>;
+    type Instance;
+    type Witness;
+    type OutputInstance;
+    type OutputWitness;
 
     fn prove<'a>(
         &self,
         prover_state: &mut ProverState<S, F>,
-        instance: Self::Instance<'a>,
-        witness: Self::Witness<'a>,
-    ) -> Result<(Self::OutputInstance<'a>, Self::OutputWitness<'a>), WARPError>;
+        instance: Self::Instance,
+        witness: Self::Witness,
+    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>;
 
     fn verify();
 }

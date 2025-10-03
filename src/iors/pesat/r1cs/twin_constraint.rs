@@ -2,8 +2,6 @@ use std::marker::PhantomData;
 
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
-use ark_poly::Polynomial;
-use ark_std::iterable::Iterable;
 
 use crate::{
     linear_code::{LinearCode, MultiConstrainedLinearCode},
@@ -63,21 +61,21 @@ impl<
 {
     // we have L incoming (instance, witness) pairs
     // (x, w) s.t. R1CS(x, w) = 0
-    type Instance<'a> = Vec<Vec<F>>;
-    type Witness<'a> = Vec<Vec<F>>;
+    type Instance = Vec<Vec<F>>;
+    type Witness = Vec<Vec<F>>;
 
     // L twin constraint codes
-    type OutputInstance<'a> = Vec<MC>;
+    type OutputInstance = Vec<MC>;
 
-    // L corresponding codewords
-    type OutputWitness<'a> = Vec<Vec<F>>;
+    // L corresponding ewords
+    type OutputWitness = Vec<Vec<F>>;
 
-    fn prove<'a>(
+    fn prove(
         &self,
         prover_state: &mut ProverState<S, F>,
-        instance: Self::Instance<'a>,
-        witness: Self::Witness<'a>,
-    ) -> Result<(Self::OutputInstance<'a>, Self::OutputWitness<'a>), WARPError> {
+        instance: Self::Instance,
+        witness: Self::Witness,
+    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError> {
         debug_assert!(instance.len() == self.l);
         debug_assert!(instance.len() == witness.len());
         debug_assert!(self.config.code.code_len().is_power_of_two());
@@ -88,7 +86,7 @@ impl<
 
         // TODO: let user provide alpha (?)
         let num_vars = code_length.ilog2() as usize;
-        let alpha = vec![F::ZERO; num_vars];
+        let alpha = 0;
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
         let mut stacked_witnesses = vec![F::default(); self.l * code_length];
@@ -108,8 +106,10 @@ impl<
             }
 
             // evaluate the dense mle for the codeword
-            let f_hat = MC::as_multilinear_extension(num_vars, &f_i);
-            mu[i] = f_hat.evaluate(&alpha);
+            // \hat{f}(alpha) == f[alpha]
+            mu[i] = *f_i
+                .get(alpha)
+                .ok_or(WARPError::CodewordSize(f_i.len(), alpha))?;
 
             output_witness[i] = f_i;
         }
