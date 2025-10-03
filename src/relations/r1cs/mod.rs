@@ -25,7 +25,7 @@ pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
     // point is encoded viat the n least significant bits of a usize
-    pub p: HashMap<usize, (Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>,
+    pub p: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>,
     pub m: usize,
     pub n: usize,
     pub k: usize,
@@ -52,14 +52,13 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         let mut a = matrices.a.into_iter();
         let mut b = matrices.b.into_iter();
         let mut c = matrices.c.into_iter();
-        let mut p = HashMap::new();
-        let hypercube = BinaryHypercube::new(log_m);
-        for point in hypercube {
+        let mut p = vec![];
+        for _ in 0..m {
             // when there are no constraints left, we store an empty one
             let a_i = a.next().unwrap_or(Vec::with_capacity(0));
             let b_i = b.next().unwrap_or(Vec::with_capacity(0));
             let c_i = c.next().unwrap_or(Vec::with_capacity(0));
-            p.insert(point.0, (a_i, b_i, c_i));
+            p.push((a_i, b_i, c_i));
         }
 
         Ok(R1CS {
@@ -87,7 +86,7 @@ impl<F: Field> R1CS<F> {
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
     pub fn eval_p_i(&self, z: &Vec<F>, i: &BinaryHypercubePoint) -> Result<F, WARPError> {
-        let (a_i, b_i, c_i) = self.p.get(&i.0).ok_or(WARPError::R1CSNonExistingLC)?;
+        let (a_i, b_i, c_i) = self.p.get(i.0).ok_or(WARPError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
