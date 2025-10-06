@@ -1,44 +1,22 @@
-use std::marker::PhantomData;
-
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::Config,
-};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 
 use crate::{linear_code::LinearCode, WARPError};
 
-use spongefish::{DuplexSpongeInterface, ProverState, Unit as SpongefishUnit};
+use spongefish::{
+    codecs::arkworks_algebra::UnitToField, ProverState, Unit as SpongefishUnit, UnitToBytes,
+};
+
 pub mod codeword_batching;
 pub mod multilinear_constraint_batching;
 pub mod twin_constraint_pseudo_batching;
 pub mod pesat;
 
-#[derive(Clone)]
-pub struct IORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
-    code: C,
-    _f: PhantomData<F>,
-    mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
-    mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+pub trait IORConfig {
+    fn get_config(&self) -> Self;
 }
 
-impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> IORConfig<F, C, MT> {
-    pub fn new(
-        code: C,
-        mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
-        mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
-    ) -> Self {
-        Self {
-            code,
-            mt_leaf_hash_params,
-            mt_two_to_one_hash_params,
-            _f: PhantomData,
-        }
-    }
-}
-
-pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config, S: DuplexSpongeInterface<F>>
-{
+pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
     type Instance;
     type Witness;
     type OutputInstance;
@@ -46,10 +24,12 @@ pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config, S: Duplex
 
     fn prove<'a>(
         &self,
-        prover_state: &mut ProverState<S, F>,
+        prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
-    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>;
+    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>
+    where
+        ProverState: UnitToField<F> + UnitToBytes;
 
     fn verify();
 }

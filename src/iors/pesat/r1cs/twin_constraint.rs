@@ -4,15 +4,17 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
 
 use crate::{
+    iors::pesat::TwinConstraintIORConfig,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
     relations::r1cs::R1CS,
     WARPError,
 };
 use spongefish::{
-    DuplexSpongeInterface, ProofError, ProverState, Unit as SpongefishUnit, UnitTranscript,
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    ProverState, Unit as SpongefishUnit,
 };
 
-use crate::iors::{IORConfig, IOR};
+use crate::iors::IOR;
 
 // L should be a power of 2
 // we have L incoming (instance, witness) pairs (noted l1 when in WARP context)
@@ -23,11 +25,9 @@ pub struct R1CSTwinConstraintIOR<
     MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
     MT: Config,
 > {
-    // l instances
-    l: usize,
     // NOTE: when proving we only need log(M), not the R1CS itself
     r1cs: R1CS<F>,
-    config: IORConfig<F, C, MT>,
+    pub config: TwinConstraintIORConfig<F, C, MT>,
     _mc: PhantomData<MC>,
 }
 impl<
@@ -37,16 +37,10 @@ impl<
         MT: Config,
     > R1CSTwinConstraintIOR<F, C, MC, MT>
 {
-    pub fn new(r1cs: R1CS<F>, config: &IORConfig<F, C, MT>, l: usize) -> Self {
-        let config = IORConfig::new(
-            config.code.clone(),
-            config.mt_leaf_hash_params.clone(),
-            config.mt_two_to_one_hash_params.clone(),
-        );
+    pub fn new(r1cs: R1CS<F>, config: TwinConstraintIORConfig<F, C, MT>) -> Self {
         Self {
             r1cs,
             config,
-            l,
             _mc: PhantomData,
         }
     }
@@ -57,8 +51,7 @@ impl<
         C: LinearCode<F>,
         MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
         MT: Config<InnerDigest = F, Leaf = [F]>,
-        S: DuplexSpongeInterface<F>,
-    > IOR<F, C, MT, S> for R1CSTwinConstraintIOR<F, C, MC, MT>
+    > IOR<F, C, MT> for R1CSTwinConstraintIOR<F, C, MC, MT>
 {
     // we have L incoming (instance, witness) pairs
     // (x, w) s.t. R1CS(x, w) = 0
@@ -73,37 +66,37 @@ impl<
 
     fn prove(
         &self,
-        prover_state: &mut ProverState<S, F>,
+        prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
     ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError> {
-        debug_assert!(instance.len() == self.l);
+        debug_assert!(instance.len() == self.config.l);
         debug_assert!(instance.len() == witness.len());
         debug_assert!(self.config.code.code_len().is_power_of_two());
 
         let code_length = self.config.code.code_len();
-        let mut output_witness = vec![vec![F::default(); code_length]; self.l];
-        let mut output_instance = Vec::<MC>::with_capacity(self.l);
+        let mut output_witness = vec![vec![F::default(); code_length]; self.config.l];
+        let mut output_instance = Vec::<MC>::with_capacity(self.config.l);
 
         // TODO: let user provide alpha (?)
         let num_vars = code_length.ilog2() as usize;
         let alpha = 0;
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        let mut stacked_witnesses = vec![F::default(); self.l * code_length];
+        let mut stacked_witnesses = vec![F::default(); self.config.l * code_length];
 
         // stores multilinear evaluations of \hat{f}
-        let mut mu = vec![F::default(); self.l];
+        let mut mu = vec![F::default(); self.config.l];
 
         // encode and evaluate the multilinear extension over [0; nvars]
         // TODO: multithread this (?)
-        for i in 0..self.l {
+        for i in 0..self.config.l {
             let f_i = self.config.code.encode(&witness[i]);
 
             // stacking codewords in flat array, which we chunk below
             // [w_0[0], .., w_{N-1}[0], .., w_0[N-1], .., w_{N-1}[N-1]] // L * N elements
             for (j, value) in f_i.iter().enumerate() {
-                stacked_witnesses[(j * self.l) + i] = *value;
+                stacked_witnesses[(j * self.config.l) + i] = *value;
             }
 
             // evaluate the dense mle for the codeword
@@ -125,22 +118,16 @@ impl<
         )?;
 
         // absorb root and multilinear evaluations
-        prover_state
-            .add_units(&[mt.root()])
-            .map_err(ProofError::InvalidDomainSeparator)?;
-        prover_state
-            .add_units(&mu)
-            .map_err(ProofError::InvalidDomainSeparator)?;
+        prover_state.add_scalars(&[mt.root()])?;
+        prover_state.add_scalars(&mu)?;
 
         // for i \in [l_1] get \mathbf{\tau_i} \in \mathbf{F}^{\log M}
         // \beta_i = [x_i, \tau_i]
         let tau_len: usize = self.r1cs.log_m;
 
-        for i in 0..self.l {
+        for i in 0..self.config.l {
             let mut tau_i = vec![F::default(); tau_len];
-            prover_state
-                .fill_challenge_units(&mut tau_i)
-                .map_err(ProofError::InvalidDomainSeparator)?;
+            prover_state.fill_challenge_scalars(&mut tau_i)?;
 
             output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
@@ -160,8 +147,8 @@ impl<
 
 #[cfg(test)]
 pub mod tests {
+    use crate::domainsep::WARPDomainSeparator;
     use crate::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
-    use crate::iors::IORConfig;
     use crate::iors::IOR;
     use crate::linear_code::linear_code::LinearCode;
     use crate::linear_code::MultiConstrainedLinearCode;
@@ -176,34 +163,19 @@ pub mod tests {
         linear_code::ReedSolomonConfig,
         relations::r1cs::{merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation},
     };
-    use ark_ff::Field;
-    use spongefish::duplex_sponge::DuplexSponge;
-    use spongefish::duplex_sponge::Permutation;
     use spongefish::DomainSeparator;
-    use spongefish::Unit as SpongefishUnit;
-    use spongefish_poseidon::PoseidonPermutation;
     use std::marker::PhantomData;
 
     use ark_bls12_381::Fr;
 
-    type TestPermutation = PoseidonPermutation<255, Fr, 2, 3>;
-    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>, 1>;
+    use super::TwinConstraintIORConfig;
 
-    pub(crate) fn new_test_pesat_ior_domain_separator<
-        F: Field + SpongefishUnit,
-        C: Permutation<U = F>,
-    >(
-        l1: usize,
-        log_m: usize,
-    ) -> DomainSeparator<DuplexSponge<C>, F> {
-        DomainSeparator::<DuplexSponge<C>, F>::new("ior::pesat")
-            .absorb(1, "root")
-            .absorb(l1, "mu")
-            .squeeze(log_m * l1, "tau")
-    }
+    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>, 1>;
 
     #[test]
     pub fn test_ior_twin_constraints() {
+        let domainsep = DomainSeparator::new("test::ior");
+
         let l = 2;
 
         // prepare r1cs, code and example tree
@@ -215,21 +187,23 @@ pub mod tests {
         let log_m = r1cs.log_m;
 
         // initialize ior
-        let ior_config: IORConfig<Fr, ReedSolomon<Fr>, PoseidonMerkleConfig<Fr>> = IORConfig::new(
+        let ior_config = TwinConstraintIORConfig::<_, _, PoseidonMerkleConfig<Fr>>::new(
             code,
             mt_config.leaf_hash_param.clone(),
             mt_config.two_to_one_hash_param.clone(),
+            l,
+            log_m,
         );
+
         let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _> {
             r1cs: r1cs.clone(),
             config: ior_config,
-            l,
             _mc: std::marker::PhantomData,
         };
 
         // intialize prover state
-        let domain_separator = new_test_pesat_ior_domain_separator::<Fr, TestPermutation>(l, log_m);
-        let mut prover_state = domain_separator.to_prover_state();
+        let domainsep = domainsep.pesat_ior(&r1cs_twinrs_ior.config);
+        let mut prover_state = domainsep.to_prover_state();
 
         let mut witnesses = vec![];
         let mut instances = vec![];

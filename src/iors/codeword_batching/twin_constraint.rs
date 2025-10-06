@@ -1,20 +1,38 @@
 use std::marker::PhantomData;
 
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::{
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::{Config, MerkleTree},
+};
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use spongefish::{
-    DuplexSpongeInterface, ProofError, ProverState, Unit as SpongefishUnit, UnitTranscript,
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    ProverState, Unit as SpongefishUnit,
 };
 
 use crate::{
-    iors::{IORConfig, IOR},
+    iors::IOR,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
     relations::relation::BundledPESAT,
     WARPError,
 };
 
 use spongefish::UnitToBytes;
+
+pub struct TwinConstraintPseudoBatchingIORConfig<
+    F: Field + SpongefishUnit,
+    C: LinearCode<F>,
+    MT: Config,
+> {
+    code: C,
+    l: usize,
+    t: usize,
+    s: usize,
+    mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
+    mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+    _f: PhantomData<F>,
+}
 
 pub struct TwinConstraintPseudoBatchingIOR<
     F: Field + SpongefishUnit,
@@ -24,10 +42,7 @@ pub struct TwinConstraintPseudoBatchingIOR<
     MT: Config,
 > {
     // note that R is one by def and is provided as a constant
-    config: IORConfig<F, C, MT>,
-    l: usize,
-    t: usize,
-    s: usize,
+    config: TwinConstraintPseudoBatchingIORConfig<F, C, MT>,
     _mc: PhantomData<MC>,
     _p: PhantomData<P>,
 }
@@ -38,8 +53,7 @@ impl<
         P: BundledPESAT<F>,
         MC: MultiConstrainedLinearCode<F, C, P, 1>,
         MT: Config<Leaf = [F], InnerDigest = F>,
-        S: DuplexSpongeInterface<F>,
-    > IOR<F, C, MT, S> for TwinConstraintPseudoBatchingIOR<F, C, P, MC, MT>
+    > IOR<F, C, MT> for TwinConstraintPseudoBatchingIOR<F, C, P, MC, MT>
 {
     // instance is a vector \gamma, an twin constraint and corresponding codewords
     // (\gamma, (\alpha, \mu), \beta, \eta, (u_1, \dots, u_l))
@@ -57,7 +71,7 @@ impl<
 
     fn prove<'a>(
         &self,
-        prover_state: &mut ProverState<S, F>,
+        prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
     ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError> {
@@ -79,23 +93,15 @@ impl<
         )?;
 
         // absorb commitment to the rlc of the codewords
-        prover_state
-            .add_units(&[mt.root()])
-            .map_err(ProofError::InvalidDomainSeparator)?;
-        prover_state
-            .add_units(&[mu])
-            .map_err(ProofError::InvalidDomainSeparator)?;
-        prover_state
-            .add_units(&[eta])
-            .map_err(ProofError::InvalidDomainSeparator)?;
+        prover_state.add_scalars(&[mt.root()])?;
+        prover_state.add_scalars(&[mu])?;
+        prover_state.add_scalars(&[eta])?;
 
         // 7.1 step 2, get OOD challenges `alpha_i` for i in [S]
-        let n_ood_samples = self.s * log_n;
+        let n_ood_samples = self.config.s * log_n;
         let mut ood_samples = vec![F::default(); n_ood_samples];
 
-        prover_state
-            .fill_challenge_units(&mut ood_samples)
-            .map_err(ProofError::InvalidDomainSeparator)?;
+        prover_state.fill_challenge_scalars(&mut ood_samples)?;
 
         let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
 
@@ -106,20 +112,16 @@ impl<
             .collect::<Vec<_>>();
 
         // Absorb ood answers
-        prover_state
-            .add_units(&eta_vec)
-            .map_err(ProofError::InvalidDomainSeparator)?;
+        prover_state.add_scalars(&eta_vec)?;
 
         // 7.1 step 4, get shift query points `x_i` for i in [T]
         // Note that `x_i` should be in range 0..N, not in Fr
-        let n_shift_queries = (self.t * log_n).div_ceil(8);
+        let n_shift_queries = (self.config.t * log_n).div_ceil(8);
         let mut shift_queries = vec![F::default(); n_shift_queries];
 
         // NOTE: this should be binary
         // TODO: fix this
-        prover_state
-            .fill_challenge_units(&mut shift_queries)
-            .map_err(ProofError::InvalidDomainSeparator)?;
+        prover_state.fill_challenge_scalars(&mut shift_queries)?;
         todo!()
     }
 

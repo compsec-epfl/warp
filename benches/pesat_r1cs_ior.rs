@@ -1,17 +1,19 @@
-use std::marker::PhantomData;
-
 use ark_bls12_381::Fr as BLS12_381;
 use ark_crypto_primitives::crh::poseidon::constraints::CRHGadget;
 use ark_crypto_primitives::crh::poseidon::CRH;
 use ark_ff::UniformRand;
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::marker::PhantomData;
+use warp::domainsep::WARPDomainSeparator;
 
 mod utils;
+use spongefish::DomainSeparator;
 use utils::domain_sep::initialize_pesat_ior_domain_separator;
 use utils::{codes::TwinConstraintRS, poseidon};
 use warp::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
-use warp::iors::{IORConfig, IOR};
+use warp::iors::pesat::TwinConstraintIORConfig;
+use warp::iors::IOR;
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
 use warp::merkle::poseidon::PoseidonMerkleConfig;
 use warp::relations::r1cs::hashchain::{
@@ -35,14 +37,19 @@ pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
     let code = ReedSolomon::new(code_config);
 
     // initialize IOR
-    let ior_config: IORConfig<BLS12_381, ReedSolomon<BLS12_381>, PoseidonMerkleConfig<BLS12_381>> =
-        IORConfig::new(code, poseidon_config.clone(), poseidon_config.clone());
 
     for l in [32, 64, 128, 256, 512] {
+        let ior_config = TwinConstraintIORConfig::<_, _, PoseidonMerkleConfig<BLS12_381>>::new(
+            code.clone(),
+            poseidon_config.clone(),
+            poseidon_config.clone(),
+            l,
+            log_m,
+        );
+
         let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS<BLS12_381>, _>::new(
             r1cs.clone(),
-            &ior_config,
-            l,
+            ior_config,
         );
 
         let instances_witnesses: (Vec<Vec<BLS12_381>>, Vec<Vec<BLS12_381>>) = (0..l)
@@ -82,7 +89,10 @@ pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
                             BLS12_381,
                             poseidon::Permutation<BLS12_381>,
                         >(l, log_m);
-                        let prover_state = domain_separator.to_prover_state();
+
+                        let domainsep = DomainSeparator::new("bench::ior");
+                        let domainsep = domainsep.pesat_ior(&r1cs_twinrs_ior.config);
+                        let mut prover_state = domainsep.to_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
                     |(mut prover_state, x_w)| {
