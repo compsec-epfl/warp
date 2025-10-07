@@ -22,11 +22,10 @@ pub trait LinearCode<F: Field> {
     fn config(&self) -> Self::Config;
 }
 
-pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, P: BundledPESAT<F>, const R: usize>
-{
+pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, P: BundledPESAT<F>> {
     fn new_with_constraint(
         config: <C as LinearCode<F>>::Config,
-        evaluations: [(Vec<F>, F); R],
+        evaluations: Vec<(Vec<F>, F)>,
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self;
@@ -35,5 +34,5 @@ pub trait MultiConstrainedLinearCode<F: Field, C: LinearCode<F>, P: BundledPESAT
 
     fn check_constraints(&self, f: &Vec<F>, p: &P) -> Result<(), WARPError>;
 
-    fn get_constraints(&self) -> (&[(Vec<F>, F); R], &(Vec<F>, Vec<F>), F);
+    fn get_constraints(&self) -> (&[(Vec<F>, F)], &(Vec<F>, Vec<F>), F);
 }

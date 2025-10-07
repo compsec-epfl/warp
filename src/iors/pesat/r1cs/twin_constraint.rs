@@ -22,7 +22,7 @@ use crate::iors::IOR;
 pub struct R1CSTwinConstraintIOR<
     F: Field + SpongefishUnit,
     C: LinearCode<F>,
-    MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
+    MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
     MT: Config,
 > {
     // NOTE: when proving we only need log(M), not the R1CS itself
@@ -33,7 +33,7 @@ pub struct R1CSTwinConstraintIOR<
 impl<
         F: Field + SpongefishUnit,
         C: LinearCode<F> + Clone,
-        MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
+        MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
         MT: Config,
     > R1CSTwinConstraintIOR<F, C, MC, MT>
 {
@@ -49,7 +49,7 @@ impl<
 impl<
         F: FftField + SpongefishUnit,
         C: LinearCode<F>,
-        MC: MultiConstrainedLinearCode<F, C, R1CS<F>, 1>,
+        MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
         MT: Config<InnerDigest = F, Leaf = [F]>,
     > IOR<F, C, MT> for R1CSTwinConstraintIOR<F, C, MC, MT>
 {
@@ -131,7 +131,7 @@ impl<
 
             output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
-                [(vec![F::ZERO; num_vars], mu[i])],
+                vec![(vec![F::ZERO; num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
                 F::ZERO,
             ));
@@ -170,7 +170,7 @@ pub mod tests {
 
     use super::TwinConstraintIORConfig;
 
-    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>, 1>;
+    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>>;
 
     #[test]
     pub fn test_ior_twin_constraints() {
