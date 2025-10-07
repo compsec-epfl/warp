@@ -19,13 +19,13 @@ pub struct MultiConstrainedReedSolomon<
     F: FftField,
     C: LinearCode<F, Config: CanonicalSerialize>,
     P: BundledPESAT<F>,
-    const R: usize,
 > {
     pub _p: PhantomData<P>,
     pub _c: PhantomData<C>,
+    pub r: usize,
     pub config: ReedSolomonConfig<F>,
     // (\alpha_i, \mu_i)_{r}
-    pub evaluations: [(Vec<F>, F); R],
+    pub evaluations: Vec<(Vec<F>, F)>,
     // (tau, x)
     pub beta: (Vec<F>, Vec<F>),
     // we store computations for eq(\tau, j)_{j \in {0, 1}^{\log m}} within a table indexed by
@@ -35,12 +35,8 @@ pub struct MultiConstrainedReedSolomon<
     pub eta: F,
 }
 
-impl<
-        F: FftField,
-        C: LinearCode<F, Config = ReedSolomonConfig<F>>,
-        P: BundledPESAT<F>,
-        const R: usize,
-    > MultiConstrainedLinearCode<F, C, P, R> for MultiConstrainedReedSolomon<F, C, P, R>
+impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPESAT<F>>
+    MultiConstrainedLinearCode<F, C, P> for MultiConstrainedReedSolomon<F, C, P>
 {
     fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F> {
         DenseMultilinearExtension::from_evaluations_slice(num_vars, f)
@@ -48,7 +44,7 @@ impl<
 
     fn new_with_constraint(
         config: ReedSolomonConfig<F>,
-        evaluations: [(Vec<F>, F); R],
+        evaluations: Vec<(Vec<F>, F)>,
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self {
@@ -62,6 +58,7 @@ impl<
         Self {
             _p: PhantomData::<P>,
             _c: PhantomData::<C>,
+            r: evaluations.len(),
             config,
             evaluations,
             tau_eq_evals,
@@ -103,7 +100,7 @@ impl<
         }
     }
 
-    fn get_constraints(&self) -> (&[(Vec<F>, F); R], &(Vec<F>, Vec<F>), F) {
+    fn get_constraints(&self) -> (&[(Vec<F>, F)], &(Vec<F>, Vec<F>), F) {
         (&self.evaluations, &self.beta, self.eta)
     }
 }
