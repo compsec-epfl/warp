@@ -147,7 +147,7 @@ mod tests {
     use super::{PreimageRelationAccumulator, PreimageRelationAccumulatorConfig};
     use crate::accumulator::RelationAccumulator;
     use crate::linear_code::{ReedSolomon, ReedSolomonConfig};
-    use crate::merkle::poseidon_test_params;
+    use crate::merkle::poseidon::poseidon_test_params;
     use crate::relations::{
         r1cs::{PreimageInstance, PreimageRelation, PreimageWitness},
         Relation,

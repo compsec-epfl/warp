@@ -1,16 +1,6 @@
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::Config,
-};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
-use spongefish::{
-    codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, ProofResult, ProverState,
-    Unit,
-};
-use whir::{
-    crypto::merkle_tree::{digest::GenericDigest, parameters::MerkleTreeParams},
-    whir::utils::DigestToUnitSerialize,
-};
+use spongefish::{codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, Unit};
 
 use crate::{
     iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},

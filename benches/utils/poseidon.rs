@@ -1,9 +1,6 @@
 use ark_crypto_primitives::sponge::poseidon::find_poseidon_ark_and_mds;
 use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use ark_ff::PrimeField;
-use spongefish_poseidon::PoseidonPermutation;
-
-pub type Permutation<F: PrimeField> = PoseidonPermutation<255, F, 2, 3>;
 
 pub fn initialize_poseidon_config<F: PrimeField>() -> PoseidonConfig<F> {
     let full_rounds = 8;

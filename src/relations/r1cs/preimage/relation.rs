@@ -119,7 +119,7 @@ mod tests {
     use ark_ff::{UniformRand, Zero};
     use ark_std::{marker::PhantomData, test_rng};
 
-    use crate::merkle::poseidon_test_params;
+    use crate::merkle::poseidon::poseidon_test_params;
     use crate::relations::r1cs::preimage::{PreimageInstance, PreimageRelation, PreimageWitness};
     use crate::relations::Relation;
 

@@ -41,32 +41,6 @@ pub trait DigestDomainSeparator<MerkleConfig: Config> {
 }
 
 // from whir
-impl<F: Field, LeafH, CompressH, const N: usize>
-    DigestDomainSeparator<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
-    for DomainSeparator
-where
-    LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
-    CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
-{
-    fn add_digest(self, label: &str) -> Self {
-        self.add_bytes(N, label)
-    }
-}
-
-// from whir
 pub trait DigestToUnitSerialize<MerkleConfig: Config> {
     fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
-}
-
-// from whir
-impl<F: Field, LeafH, CompressH, const N: usize>
-    DigestToUnitSerialize<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>> for ProverState
-where
-    LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
-    CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
-{
-    fn add_digest(&mut self, digest: GenericDigest<N>) -> ProofResult<()> {
-        self.add_bytes(&digest.0)
-            .map_err(ProofError::InvalidDomainSeparator)
-    }
 }

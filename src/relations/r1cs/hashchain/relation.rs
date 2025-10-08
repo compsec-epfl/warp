@@ -148,7 +148,9 @@ mod tests {
 
     use crate::relations::r1cs::hashchain::relation::HashChainRelation;
     use crate::relations::Relation;
-    use crate::{merkle::poseidon_test_params, relations::r1cs::hashchain::HashChainWitness};
+    use crate::{
+        merkle::poseidon::poseidon_test_params, relations::r1cs::hashchain::HashChainWitness,
+    };
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
