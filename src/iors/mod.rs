@@ -1,10 +1,11 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 
-use crate::{linear_code::LinearCode, utils::DigestToUnitSerialize, WARPError};
+use crate::{linear_code::LinearCode, utils::DigestToUnitSerialize};
 
 use spongefish::{
-    codecs::arkworks_algebra::UnitToField, ProverState, Unit as SpongefishUnit, UnitToBytes,
+    codecs::arkworks_algebra::UnitToField, ProofResult, ProverState, Unit as SpongefishUnit,
+    UnitToBytes,
 };
 
 pub mod codeword_batching;
@@ -22,12 +23,12 @@ pub trait IOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
     type OutputInstance;
     type OutputWitness;
 
-    fn prove<'a>(
+    fn prove(
         &self,
         prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
-    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>
+    ) -> ProofResult<(Self::OutputInstance, Self::OutputWitness)>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
 

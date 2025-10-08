@@ -7,7 +7,7 @@ use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProofError, ProverState, Unit as SpongefishUnit,
+    ProofResult, ProverState, Unit as SpongefishUnit,
 };
 use std::marker::PhantomData;
 
@@ -15,7 +15,6 @@ use crate::{
     iors::IOR,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
     relations::relation::BundledPESAT,
-    WARPError,
 };
 
 use spongefish::UnitToBytes;
@@ -111,7 +110,7 @@ impl<
         prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
-    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>
+    ) -> ProofResult<(Self::OutputInstance, Self::OutputWitness)>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
@@ -128,11 +127,13 @@ impl<
         let u_mle = DenseMultilinearExtension::from_evaluations_slice(self.config.log_n, &witness);
 
         // commit to the rlc of the codeword
+        // TODO: figure out how to handle unwrap below
         let mt = MerkleTree::<MT>::new(
             &self.config.mt_leaf_hash_params,
             &self.config.mt_two_to_one_hash_params,
             &witness.chunks(1).collect::<Vec<_>>(),
-        )?;
+        )
+        .unwrap();
 
         // absorb commitment to the rlc of the codewords
         prover_state.add_digest(mt.root())?;
@@ -167,12 +168,9 @@ impl<
         // 7.1 step 4, get shift query points `x_i` for i in [T]
         // Note that `x_i` should be in range 0..N, not in Fr
         let n_shift_queries = (self.config.t * self.config.log_n).div_ceil(8);
-        let mut bytes_shift_queries = vec![0; n_shift_queries];
+        let mut bytes_shift_queries = vec![0u8; n_shift_queries];
 
-        // TODO: we shouldn't call `map_err`, there might be a trait missing on `ProverState`
-        prover_state
-            .fill_challenge_bytes(&mut bytes_shift_queries)
-            .map_err(|d| ProofError::InvalidDomainSeparator(d))?;
+        prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
 
         // build a vector of tuples where both are either 1 or 0, but where the first element is a
         // field element and the second element is a bool. we use it below to then store those new

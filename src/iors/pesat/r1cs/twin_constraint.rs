@@ -12,7 +12,7 @@ use crate::{
 };
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProverState, Unit as SpongefishUnit, UnitToBytes,
+    ProofResult, ProverState, Unit as SpongefishUnit, UnitToBytes,
 };
 
 use crate::iors::IOR;
@@ -70,7 +70,7 @@ impl<
         prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
-    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>
+    ) -> ProofResult<(Self::OutputInstance, Self::OutputWitness)>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
@@ -105,9 +105,7 @@ impl<
 
             // evaluate the dense mle for the codeword
             // \hat{f}(alpha) == f[alpha]
-            mu[i] = *f_i
-                .get(alpha)
-                .ok_or(WARPError::CodewordSize(f_i.len(), alpha))?;
+            mu[i] = f_i[alpha];
 
             output_witness[i] = f_i;
         }
@@ -119,7 +117,8 @@ impl<
             &self.config.mt_leaf_hash_params,
             &self.config.mt_two_to_one_hash_params,
             leaves,
-        )?;
+        )
+        .unwrap();
 
         // absorb root and multilinear evaluations
         prover_state.add_digest(mt.root())?;
