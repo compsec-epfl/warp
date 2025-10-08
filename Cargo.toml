@@ -26,7 +26,9 @@ ark-serialize = "0.5.0"
 zeroize = { version = "1.5", features = ["derive"] }
 rayon = { version = "1.11.0" }
 thiserror = "2.0.16"
-whir = { git = "https://github.com/WizardOfMenlo/whir", rev = "22c6758" }
+whir = { git = "https://github.com/WizardOfMenlo/whir", rev = "3d627d3" }
+rand = "0.8"
+blake3 = "1.5.0"
 
 [dev-dependencies]
 criterion = "0.4"

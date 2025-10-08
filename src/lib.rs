@@ -7,13 +7,12 @@ pub mod relations;
 pub mod utils;
 
 use ark_crypto_primitives::Error;
-use spongefish::ProofError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WARPError {
     #[error("{0}")]
-    ProofError(#[from] ProofError),
+    SpongeFishProofError(#[from] spongefish::ProofError),
     #[error("{0}")]
     ArkError(#[from] Error),
     #[error("Incorrect IOR config")]

@@ -1,4 +1,13 @@
+use ark_crypto_primitives::{
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::Config,
+};
 use ark_ff::{Field, PrimeField};
+use spongefish::{ByteDomainSeparator, BytesToUnitSerialize, DomainSeparator};
+use spongefish::{ProofError, ProofResult, ProverState};
+use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
+
+use whir::crypto::merkle_tree::digest::GenericDigest;
 
 pub mod poly;
 
@@ -21,4 +30,43 @@ pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
             // F::deserialize_uncompressed(&mut reader).unwrap()
         })
         .collect()
+}
+
+// we copy instead of import from whir since we would like to implement the `DigestDomainSeparator` trait
+// as well on `DomainSeparator`
+// https://github.com/WizardOfMenlo/whir/blob/22c675807fc9295fef68a11945713dc3e184e1c1/src/whir/domainsep.rs#L11
+pub trait DigestDomainSeparator<MerkleConfig: Config> {
+    #[must_use]
+    fn add_digest(self, label: &str) -> Self;
+}
+
+// from whir
+impl<F: Field, LeafH, CompressH, const N: usize>
+    DigestDomainSeparator<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
+    for DomainSeparator
+where
+    LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
+    CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
+{
+    fn add_digest(self, label: &str) -> Self {
+        self.add_bytes(N, label)
+    }
+}
+
+// from whir
+pub trait DigestToUnitSerialize<MerkleConfig: Config> {
+    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
+}
+
+// from whir
+impl<F: Field, LeafH, CompressH, const N: usize>
+    DigestToUnitSerialize<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>> for ProverState
+where
+    LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
+    CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
+{
+    fn add_digest(&mut self, digest: GenericDigest<N>) -> ProofResult<()> {
+        self.add_bytes(&digest.0)
+            .map_err(ProofError::InvalidDomainSeparator)
+    }
 }

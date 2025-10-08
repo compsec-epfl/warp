@@ -7,11 +7,12 @@ use crate::{
     iors::pesat::TwinConstraintIORConfig,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
     relations::r1cs::R1CS,
+    utils::DigestToUnitSerialize,
     WARPError,
 };
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProverState, Unit as SpongefishUnit,
+    ProverState, Unit as SpongefishUnit, UnitToBytes,
 };
 
 use crate::iors::IOR;
@@ -50,7 +51,7 @@ impl<
         F: FftField + SpongefishUnit,
         C: LinearCode<F>,
         MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
-        MT: Config<InnerDigest = F, Leaf = [F]>,
+        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
     > IOR<F, C, MT> for R1CSTwinConstraintIOR<F, C, MC, MT>
 {
     // we have L incoming (instance, witness) pairs
@@ -69,7 +70,10 @@ impl<
         prover_state: &mut ProverState,
         instance: Self::Instance,
         witness: Self::Witness,
-    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError> {
+    ) -> Result<(Self::OutputInstance, Self::OutputWitness), WARPError>
+    where
+        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+    {
         debug_assert!(instance.len() == self.config.l);
         debug_assert!(instance.len() == witness.len());
         debug_assert!(self.config.code.code_len().is_power_of_two());
@@ -118,7 +122,7 @@ impl<
         )?;
 
         // absorb root and multilinear evaluations
-        prover_state.add_scalars(&[mt.root()])?;
+        prover_state.add_digest(mt.root())?;
         prover_state.add_scalars(&mu)?;
 
         // for i \in [l_1] get \mathbf{\tau_i} \in \mathbf{F}^{\log M}
@@ -131,9 +135,9 @@ impl<
 
             output_instance.push(MC::new_with_constraint(
                 self.config.code.config(),
-                vec![(vec![F::ZERO; num_vars], mu[i])],
+                vec![(vec![F::zero(); num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
-                F::ZERO,
+                F::zero(),
             ));
         }
 
@@ -165,6 +169,7 @@ pub mod tests {
     };
     use spongefish::DomainSeparator;
     use std::marker::PhantomData;
+    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
     use ark_bls12_381::Fr;
 
@@ -187,10 +192,10 @@ pub mod tests {
         let log_m = r1cs.log_m;
 
         // initialize ior
-        let ior_config = TwinConstraintIORConfig::<_, _, PoseidonMerkleConfig<Fr>>::new(
+        let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
             code,
-            mt_config.leaf_hash_param.clone(),
-            mt_config.two_to_one_hash_param.clone(),
+            (),
+            (),
             l,
             log_m,
         );

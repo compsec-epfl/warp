@@ -6,16 +6,15 @@ use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::marker::PhantomData;
 use warp::domainsep::WARPDomainSeparator;
+use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
 mod utils;
 use spongefish::DomainSeparator;
-use utils::domain_sep::initialize_pesat_ior_domain_separator;
 use utils::{codes::TwinConstraintRS, poseidon};
 use warp::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
 use warp::iors::pesat::TwinConstraintIORConfig;
 use warp::iors::IOR;
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
-use warp::merkle::poseidon::PoseidonMerkleConfig;
 use warp::relations::r1cs::hashchain::{
     compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness,
 };
@@ -39,10 +38,10 @@ pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
     // initialize IOR
 
     for l in [32, 64, 128, 256, 512] {
-        let ior_config = TwinConstraintIORConfig::<_, _, PoseidonMerkleConfig<BLS12_381>>::new(
+        let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<BLS12_381>>::new(
             code.clone(),
-            poseidon_config.clone(),
-            poseidon_config.clone(),
+            (),
+            (),
             l,
             log_m,
         );
@@ -84,15 +83,9 @@ pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
             |b, instance_witnesses| {
                 b.iter_with_setup(
                     || {
-                        // need to initialize a proper domain separator
-                        let domain_separator = initialize_pesat_ior_domain_separator::<
-                            BLS12_381,
-                            poseidon::Permutation<BLS12_381>,
-                        >(l, log_m);
-
                         let domainsep = DomainSeparator::new("bench::ior");
                         let domainsep = domainsep.pesat_ior(&r1cs_twinrs_ior.config);
-                        let mut prover_state = domainsep.to_prover_state();
+                        let prover_state = domainsep.to_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
                     |(mut prover_state, x_w)| {
