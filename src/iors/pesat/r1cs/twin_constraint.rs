@@ -8,7 +8,6 @@ use crate::{
     linear_code::{LinearCode, MultiConstrainedLinearCode},
     relations::r1cs::R1CS,
     utils::DigestToUnitSerialize,
-    WARPError,
 };
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
@@ -62,7 +61,7 @@ impl<
     // L twin constraint codes
     type OutputInstance = Vec<MC>;
 
-    // L corresponding ewords
+    // L corresponding codewords
     type OutputWitness = Vec<Vec<F>>;
 
     fn prove(
@@ -174,7 +173,7 @@ pub mod tests {
 
     use super::TwinConstraintIORConfig;
 
-    type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>>;
+    pub type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>>;
 
     #[test]
     pub fn test_ior_twin_constraints() {

@@ -197,8 +197,10 @@ impl<
                     array_tuples.to_vec().into_iter().unzip();
 
                 // compute x_k as usize from binary representation
+                // we need to rev for the mle evaluation routine of arkworks
                 let x_k = alpha_as_bool
                     .iter()
+                    .rev()
                     .fold(0, |acc, &b| (acc << 1) | b as usize);
                 let mu = (0..self.config.l)
                     .map(|i| {
@@ -216,6 +218,7 @@ impl<
         debug_assert!(multilinear_evals.len() == 1 + self.config.s + self.config.t);
 
         Ok((
+            // NOTE: this is recomputing the eq_evaluation table
             MC::new_with_constraint(
                 self.config.code.config(),
                 multilinear_evals,
@@ -233,11 +236,37 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use std::marker::PhantomData;
 
+    use crate::{
+        domainsep::WARPDomainSeparator,
+        iors::{
+            pesat::{
+                r1cs::twin_constraint::{tests::TwinConstraintRS, R1CSTwinConstraintIOR},
+                TwinConstraintIORConfig,
+            },
+            IOR,
+        },
+        linear_code::MultiConstrainedLinearCode,
+        merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
+        relations::{
+            r1cs::{
+                merkle_inclusion::{tests::get_test_merkle_tree, MerkleInclusionInstance},
+                MerkleInclusionRelation, MerkleInclusionWitness,
+            },
+            relation::{BundledPESAT, ToPolySystem},
+            Relation,
+        },
+        utils::poly::eq_poly,
+    };
     use ark_bls12_381::Fr;
     use ark_ff::{UniformRand, Zero};
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
     use ark_std::{log2, test_rng};
-    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
+    use spongefish::DomainSeparator;
+    use whir::{
+        crypto::merkle_tree::blake3::Blake3MerkleTreeParams, poly_utils::hypercube::BinaryHypercube,
+    };
 
     use crate::{
         iors::codeword_batching::PseudoBatchingIOR,
@@ -249,35 +278,155 @@ mod tests {
 
     #[test]
     pub fn test_ior_codeword_batching() {
-        let message_length = 4;
-        let code_length = 16;
         let mut rng = test_rng();
-        let (l, s, t) = (5, 5, 5);
 
-        // sample l random codewords
-        let codewords: Vec<Vec<Fr>> = (0..l)
-            .map(|_| vec![Fr::rand(&mut rng); code_length])
-            .collect();
-        let gamma = vec![Fr::rand(&mut rng); code_length];
+        // prepare r1cs, code and example tree
+        let height = 3;
+        let (mt_config, leaves, mt) = get_test_merkle_tree(height);
+        let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
+        let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
+        let code = ReedSolomon::new(code_config);
+
+        let (l, s, t) = (4, 5, 5);
+        let log_l = log2(l) as usize;
+
+        // initialize pesat ior config
+        let pesat_ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
+            code.clone(),
+            (),
+            (),
+            l,
+            r1cs.log_m,
+        );
+
+        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _>::new(
+            r1cs.clone(),
+            pesat_ior_config.clone(),
+        );
+
+        let mut witnesses = vec![];
+        let mut instances = vec![];
+
+        // intialize some instances and witnesses
+        for i in 0..l {
+            let proof = mt.generate_proof(i).unwrap();
+            let instance = MerkleInclusionInstance::<
+                Fr,
+                PoseidonMerkleConfig<Fr>,
+                PoseidonMerkleConfigGadget<Fr>,
+            > {
+                root: mt.root(),
+                leaf: (*leaves[i]).to_vec(),
+                _merkle_config_gadget: PhantomData,
+            };
+            let witness = MerkleInclusionWitness::<
+                Fr,
+                PoseidonMerkleConfig<Fr>,
+                PoseidonMerkleConfigGadget<Fr>,
+            > {
+                proof,
+                _merkle_config_gadget: PhantomData,
+            };
+
+            let relation = MerkleInclusionRelation::new(instance, witness, mt_config.clone());
+
+            witnesses.push(relation.w);
+            instances.push(relation.x);
+        }
+
+        let domainsep = DomainSeparator::new("test::ior").pesat_ior(&pesat_ior_config);
+        let mut prover_state = domainsep.to_prover_state();
+
+        let (constraints, codewords) = r1cs_twinrs_ior
+            .prove(&mut prover_state, instances, witnesses.clone())
+            .unwrap();
+
+        let gamma = vec![Fr::rand(&mut rng); log_l];
+        let gamma_eq_evals = BinaryHypercube::new(log_l)
+            .map(|p| eq_poly(&gamma, p))
+            .collect::<Vec<Fr>>();
 
         // compute the rlc
-        let mut rlc_codewords = vec![Fr::zero(); code_length];
-        for (codeword, gamma) in codewords.iter().zip(gamma) {
-            for (i, element) in codeword.iter().enumerate() {
-                rlc_codewords[i] += gamma * element;
+        let mut rlc_w = vec![Fr::zero(); r1cs.k];
+        let mut rlc_f = vec![Fr::zero(); code.code_len()];
+        let mut rlc_alpha = vec![Fr::zero(); log2(code.code_len()) as usize];
+        let mut rlc_beta = (
+            vec![Fr::zero(); constraints[0].beta.0.len()],
+            vec![Fr::zero(); r1cs.n - r1cs.k],
+        );
+
+        for p in BinaryHypercube::new(log_l) {
+            let constraint_i = constraints[p.0].clone();
+
+            let alpha_i = &constraint_i.evaluations[0].0;
+            let beta = &constraint_i.beta;
+
+            let f_i = &codewords[p.0];
+            let w_i = &witnesses[p.0];
+            let eq_eval_i = &gamma_eq_evals[p.0];
+
+            for (i, element) in f_i.iter().enumerate() {
+                rlc_f[i] += eq_eval_i * element;
+            }
+
+            for (i, element) in w_i.iter().enumerate() {
+                rlc_w[i] += eq_eval_i * element;
+            }
+
+            for (i, element) in beta.0.iter().enumerate() {
+                rlc_beta.0[i] += eq_eval_i * element;
+            }
+
+            for (i, element) in beta.1.iter().enumerate() {
+                rlc_beta.1[i] += eq_eval_i * element;
+            }
+
+            for (i, element) in alpha_i.iter().enumerate() {
+                rlc_alpha[i] += eq_eval_i * element;
             }
         }
 
-        let code = ReedSolomon::<Fr>::new(ReedSolomonConfig::default(message_length, code_length));
+        let rlc_f_mle = DenseMultilinearExtension::from_evaluations_slice(
+            log2(code.code_len()) as usize,
+            &rlc_f,
+        );
+        let upsilon = rlc_f_mle.evaluate(&rlc_alpha);
+
+        // compute zero evader evals before evaluating on pesat
+        let zero_evader = BinaryHypercube::new(r1cs.log_m)
+            .map(|p| eq_poly(&rlc_beta.0, p))
+            .collect::<Vec<Fr>>();
+
+        let mut z = rlc_beta.1.clone();
+        z.extend(rlc_w);
+
+        let eta = r1cs.evaluate_bundled(&zero_evader, &z).unwrap();
+
+        let mc_instance =
+            MultiConstrainedReedSolomon::<_, ReedSolomon<Fr>, R1CS<Fr>>::new_with_constraint(
+                code.config(),
+                vec![(rlc_alpha, upsilon)],
+                rlc_beta,
+                eta,
+            );
+
+        // check that the built multi constrained codeword instance is correct
+        mc_instance.check_constraints(&rlc_f, &r1cs).unwrap();
+
         let config = PseudoBatchingIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
-            code,
-            log2(code_length).try_into().unwrap(),
+            code.clone(),
+            log2(code.code_len()).try_into().unwrap(),
             l,
             t,
             s,
             (),
             (),
         );
+
+        let domainsep =
+            DomainSeparator::new("test::ior::codeword_batching").pseudo_batching_ior(&config);
+
+        let mut prover_state = domainsep.to_prover_state();
 
         let pseudo_batching_ior = PseudoBatchingIOR::<
             Fr,
@@ -287,6 +436,14 @@ mod tests {
             Blake3MerkleTreeParams<Fr>,
         >::new(config);
 
-        // pseudo_batching_ior.prove();
+        let (new_mc, wtns) = pseudo_batching_ior
+            .prove(
+                &mut prover_state,
+                (gamma_eq_evals, mc_instance, codewords),
+                rlc_f.clone(),
+            )
+            .unwrap();
+
+        new_mc.check_constraints(&wtns, &r1cs).unwrap();
     }
 }

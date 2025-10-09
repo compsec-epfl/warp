@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ark_ff::Field;
 
 use crate::WARPError;
@@ -20,5 +18,13 @@ pub trait Relation<F: Field> {
 }
 
 pub trait BundledPESAT<F: Field> {
+    type Config;
+    type Constraints;
+
     fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError>;
+
+    // returns (M, N, k)
+    fn config(&self) -> Self::Config;
+
+    fn description(&self) -> Vec<u8>;
 }

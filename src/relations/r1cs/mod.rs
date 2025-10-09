@@ -4,8 +4,6 @@ pub mod is_prime;
 pub mod merkle_inclusion;
 pub mod preimage;
 
-use std::collections::HashMap;
-
 use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
 pub use identity::{IdentityInstance, IdentityRelation, IdentitySynthesizer, IdentityWitness};
@@ -24,7 +22,7 @@ use super::relation::BundledPESAT;
 pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
-    // point is encoded viat the n least significant bits of a usize
+    // point is encoded via the n least significant bits of a usize
     pub p: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>,
     pub m: usize,
     pub n: usize,
@@ -95,6 +93,9 @@ impl<F: Field> R1CS<F> {
 }
 
 impl<F: Field> BundledPESAT<F> for R1CS<F> {
+    type Config = (usize, usize, usize);
+    type Constraints = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
+
     fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
         let mut cube = BinaryHypercube::new(self.log_m);
 
@@ -106,5 +107,13 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
             let p_i = self.eval_p_i(z, &point)?;
             Ok(acc + eq_tau_i * p_i)
         })
+    }
+
+    fn config(&self) -> Self::Config {
+        (self.m, self.n, self.k)
+    }
+
+    fn description(&self) -> Vec<u8> {
+        todo!()
     }
 }

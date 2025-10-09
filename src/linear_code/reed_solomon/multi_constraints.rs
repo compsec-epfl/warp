@@ -1,8 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 use ark_ff::FftField;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_serialize::CanonicalSerialize;
+use ark_std::log2;
 use whir::poly_utils::hypercube::BinaryHypercube;
 
 use crate::{
@@ -81,7 +82,7 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
 
         // evaluate multilinear points
         let is_correct_multilinear_evals = if self.evaluations.len() > 0 {
-            let num_vars = self.evaluations[0].0.len();
+            let num_vars = log2(self.config.code_length) as usize;
             let f_hat = Self::as_multilinear_extension(num_vars, f);
             self.evaluations.iter().fold(true, |acc, (point, eval)| {
                 (f_hat.evaluate(point) == *eval) & acc
