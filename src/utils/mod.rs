@@ -44,3 +44,8 @@ pub trait DigestDomainSeparator<MerkleConfig: Config> {
 pub trait DigestToUnitSerialize<MerkleConfig: Config> {
     fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
 }
+
+// from whir
+pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
+    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}

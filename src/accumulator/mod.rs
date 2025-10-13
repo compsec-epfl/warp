@@ -6,10 +6,11 @@ pub use accumulator::RelationAccumulator;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use spongefish::{
-    codecs::arkworks_algebra::UnitToField, ProofResult, ProverState, UnitToBytes, VerifierState,
+    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
+    BytesToUnitDeserialize, ProofResult, ProverState, UnitToBytes, VerifierState,
 };
 
-use crate::utils::DigestToUnitSerialize;
+use crate::utils::{DigestToUnitDeserialize, DigestToUnitSerialize};
 
 pub trait AccumulationScheme<F: Field, MT: Config> {
     type Index;
@@ -46,13 +47,15 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         &self,
         vk: Self::VerifierKey,
         prover_state: &mut VerifierState<'a>,
-        instances: Vec<Self::Instance>,
-        acc_instances: Vec<Self::AccumulatorInstance>,
         acc_instance: Self::AccumulatorInstance,
         proof: Self::Proof,
     ) -> ProofResult<()>
     where
-        VerifierState<'a>: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+        VerifierState<'a>: UnitToBytes
+            + FieldToUnitDeserialize<F>
+            + UnitToField<F>
+            + DigestToUnitDeserialize<MT>
+            + BytesToUnitDeserialize;
 
     fn decide();
 }

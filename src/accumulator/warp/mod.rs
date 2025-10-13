@@ -1,4 +1,4 @@
-use crate::utils::{poly::eq_poly, DigestToUnitSerialize};
+use crate::utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
@@ -7,8 +7,9 @@ use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::log2;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    BytesToUnitSerialize, ProofError, ProofResult, ProverState, UnitToBytes, VerifierState,
+    codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
+    BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
+    UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
 use whir::poly_utils::hypercube::BinaryHypercube;
@@ -26,6 +27,8 @@ pub struct WARPConfig {
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
     _f: PhantomData<F>,
     l: usize,
+    l1: usize,
+    l2: usize,
     s: usize,
     t: usize,
     p: P,
@@ -76,8 +79,8 @@ impl<
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.len(), acc_instances.len());
 
-        let (l1, l2) = (witnesses.len(), acc_instances.len());
-        let l = l1 + l2;
+        let (l1, l2, l) = (self.l1, self.l2, self.l);
+        debug_assert_eq!(l1 + l2, l);
 
         debug_assert!(l.is_power_of_two());
 
@@ -85,7 +88,7 @@ impl<
         // 1. Parsing phase
         ////////////////////////
         // a. index
-        let (m, n, k) = (pk.1, pk.2, pk.3);
+        let (m, n, _) = (pk.1, pk.2, pk.3);
         let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
 
         // b. and c. statements and accumulators
@@ -279,37 +282,64 @@ impl<
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        instances: Vec<Self::Instance>,
-        acc_instances: Vec<Self::AccumulatorInstance>,
         acc_instance: Self::AccumulatorInstance,
         proof: Self::Proof,
     ) -> ProofResult<()>
     where
-        VerifierState<'a>: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+        VerifierState<'a>: UnitToBytes
+            + FieldToUnitDeserialize<F>
+            + UnitToField<F>
+            + DigestToUnitDeserialize<MT>
+            + BytesToUnitDeserialize,
     {
         ////////////////////////
         // 1. Parsing phase
         ////////////////////////
         // a. verification key
         let (m, n, k) = (vk.0, vk.1, vk.2);
-        // b. and c. instances and accumulators parsing
+        let (l1, l2, l) = (self.l1, self.l2, self.l);
+        let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
+
+        // b. instances parsing
+        let instances: Vec<Vec<F>> = (0..l1)
+            .map(|_| {
+                let mut instance = vec![F::default(); n - k];
+                verifier_state.fill_next_scalars(&mut instance);
+                instance
+            })
+            .collect();
+
+        // c. accumulators parsing
+        let acc_instances = (0..l2)
+            .map(|_| {
+                let mut alpha = vec![F::default(); log_n];
+                let mut beta = vec![F::default(); log_m + n];
+                let mut mu_eta = vec![F::default(); 2];
+                let rt = verifier_state.read_digest()?;
+                verifier_state.fill_next_scalars(&mut alpha)?;
+                verifier_state.fill_next_scalars(&mut beta)?;
+                verifier_state.fill_next_scalars(&mut mu_eta)?;
+                Ok((rt, alpha, mu_eta[0], beta, mu_eta[1]))
+            })
+            .collect::<Result<Vec<Self::AccumulatorInstance>, ProofError>>();
+
         // d. final accumulator
         let (rt, alpha, mu, beta, eta) = acc_instance;
 
         // d. absorb parameters
-        instances
-            .iter()
-            .try_for_each(|x| verifier_state.next_scalars(x))?;
+        //instances
+        //    .iter()
+        //    .try_for_each(|x| verifier_state.fill_next_scalars(output)?;
 
-        acc_instances
-            .iter()
-            .try_for_each::<_, Result<(), ProofError>>(|x| {
-                verifier_state.add_digest(x.0.clone())?; // mt root
-                verifier_state.add_scalars(&x.1)?; // \alpha
-                verifier_state.add_scalars(&x.3)?; // \beta
-                verifier_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
-                Ok(())
-            })?;
+        //acc_instances
+        //    .iter()
+        //    .try_for_each::<_, Result<(), ProofError>>(|x| {
+        //        verifier_state.add_digest(x.0.clone())?; // mt root
+        //        verifier_state.add_scalars(&x.1)?; // \alpha
+        //        verifier_state.add_scalars(&x.3)?; // \beta
+        //        verifier_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
+        //        Ok(())
+        //    })?;
 
         ////////////////////////
         // 2. Derive randomness
