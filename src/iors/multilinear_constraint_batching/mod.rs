@@ -1,9 +1,192 @@
+use ark_ff::Field;
+use ark_poly::{DenseMultilinearExtension, Polynomial};
+use ark_std::log2;
+use spongefish::codecs::arkworks_algebra::{
+    FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
+};
+use whir::poly_utils::hypercube::BinaryHypercubePoint;
+
+use crate::{
+    sumcheck::{vsbw_reduce_evaluations, Sumcheck},
+    utils::poly::eq_poly,
+    WARPError,
+};
+
+pub struct MultilinearConstraintBatchingSumcheck {}
+
+impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
+    type Evaluations = (Vec<F>, Vec<Vec<F>>, Vec<(usize, F)>);
+    type Target = F;
+    type Challenge = F;
+
+    fn prove_round(
+        prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+        (f_evals, ood_evals_vec, id_non_0_evals_vec): &mut Self::Evaluations,
+    ) -> Result<Self::Challenge, WARPError> {
+        let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
+            .step_by(2)
+            .map(|a| {
+                let p0 = f_evals[a];
+                let p1 = f_evals[a + 1];
+                let q0 = ood_evals_vec.iter().map(|v| v[a]).sum::<F>()
+                    + id_non_0_evals_vec
+                        .iter()
+                        .filter_map(|&(j, v)| (j == a).then_some(v))
+                        .sum::<F>();
+                let q1 = ood_evals_vec.iter().map(|v| v[a + 1]).sum::<F>()
+                    + id_non_0_evals_vec
+                        .iter()
+                        .filter_map(|&(j, v)| (j == a + 1).then_some(v))
+                        .sum::<F>();
+                (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
+            })
+            .fold((F::zero(), F::zero(), F::zero()), |acc, x| {
+                (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
+            });
+
+        prover_state.add_scalars(&[sum_00, sum_11, sum_0110])?;
+        // get challenge
+        let [c] = prover_state.challenge_scalars::<1>()?;
+
+        // update evaluation tables
+        *f_evals = vsbw_reduce_evaluations(f_evals, c);
+        ood_evals_vec.iter_mut().for_each(|e| {
+            *e = vsbw_reduce_evaluations(e, c);
+        });
+        id_non_0_evals_vec.iter_mut().for_each(|(i, eval)| {
+            *eval *= if *i & 1 == 1 { c } else { F::one() - c };
+            *i >>= 1;
+        });
+        Ok(c)
+    }
+
+    fn verify_round(
+        verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+        target: &mut Self::Target,
+    ) -> Result<Self::Challenge, WARPError> {
+        let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
+        if sum_00 + sum_11 != *target {
+            return Err(WARPError::VerificationFailed(
+                "Evaluations of the claimed polynomial do not sum to the target".to_string(),
+            ));
+        }
+
+        // get challenge
+        let [c]: [F; 1] = verifier_state.challenge_scalars()?;
+        // update sumcheck target for next round
+        *target =
+            (*target - sum_0110) * c.square() + sum_00 * (F::one() - c.double()) + sum_0110 * c;
+        Ok(c)
+    }
+}
+
+pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
+    prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+    alpha_vec: Vec<Vec<F>>,
+    _mu_vec: Vec<F>,
+    beta: Vec<F>,
+    eta: F,
+    u: Vec<F>,
+) -> Result<((Vec<F>, F, Vec<F>, F), Vec<F>), WARPError> {
+    let u_mle = DenseMultilinearExtension::from_evaluations_slice(log2(N) as usize, &u);
+
+    // 8.1 step 1, sample challenge \xi
+    let mut xi = vec![F::zero(); log2(R) as usize];
+    prover_state.fill_challenge_scalars(&mut xi)?;
+    let xi_eq_evals = (0..R)
+        .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+        .collect::<Vec<_>>();
+
+    // 8.1 step 2, initialize evaluation tables
+    let f_evals = u.clone();
+    let ood_evals_vec = (0..1 + S)
+        .map(|i| {
+            (0..N)
+                .map(|a| eq_poly(&alpha_vec[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    // Optimization from Hyperplonk
+    let id_non_0_evals_vec = (1 + S..R)
+        .map(|i| {
+            (
+                alpha_vec[i]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+                    .sum::<usize>(),
+                xi_eq_evals[i],
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // 8.1 step 2, sumcheck starts
+    let alpha = MultilinearConstraintBatchingSumcheck::prove(
+        prover_state,
+        &mut (f_evals, ood_evals_vec, id_non_0_evals_vec),
+        log2(N) as usize,
+    )?;
+
+    let mu = u_mle.evaluate(&alpha);
+
+    prover_state.add_scalars(&[mu])?;
+
+    Ok(((alpha, mu, beta, eta), u))
+}
+
+pub fn verifier<F: Field, const R: usize, const N: usize>(
+    verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+    alpha_vec: Vec<Vec<F>>,
+    mu_vec: Vec<F>,
+    beta: Vec<F>,
+    eta: F,
+) -> Result<(Vec<F>, F, Vec<F>, F), WARPError> {
+    // 8.1 step 1, sample challenge \xi
+    let mut xi = vec![F::zero(); log2(R) as usize];
+    verifier_state.fill_challenge_scalars(&mut xi)?;
+    let xi_eq_evals = (0..R)
+        .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+        .collect::<Vec<_>>();
+
+    // 8.1 step 2, RHS of the equation (sumcheck target)
+    let mut sigma = (0..R).map(|i| mu_vec[i] * xi_eq_evals[i]).sum::<F>();
+
+    // 8.1 step 2, initialize evaluation tables
+    let alpha = MultilinearConstraintBatchingSumcheck::verify(
+        verifier_state,
+        &mut sigma,
+        log2(N) as usize,
+    )?;
+
+    let [mu]: [F; 1] = verifier_state.next_scalars()?;
+
+    if mu
+        * (0..R)
+            .map(|i| {
+                xi_eq_evals[i]
+                    * alpha
+                        .iter()
+                        .zip(&alpha_vec[i])
+                        .map(|(a, b)| a.double() * b - a - b + F::one())
+                        .product::<F>()
+            })
+            .sum::<F>()
+        != sigma
+    {
+        return Err(WARPError::VerificationFailed(
+            "eq^*(alpha) * mu does not match the sumcheck target".to_string(),
+        ));
+    }
+
+    Ok((alpha, mu, beta, eta))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{error::Error};
+    use std::error::Error;
 
     use ark_bls12_381::Fr;
-    use ark_ff::{AdditiveGroup, Field, One, PrimeField, UniformRand, Zero};
+    use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_r1cs_std::{
         alloc::AllocVar,
@@ -14,23 +197,17 @@ mod tests {
         ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
     };
     use ark_std::{log2, test_rng};
-    use spongefish::{
-        codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-        duplex_sponge::DuplexSponge,
-        DomainSeparator,
-    };
+    use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
+    use whir::poly_utils::hypercube::BinaryHypercube;
+
+    use super::*;
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
         relations::{r1cs::R1CS, relation::BundledPESAT},
         utils::poly::eq_poly,
     };
-
-    pub fn vsbw_reduce_evaluations<F: Field>(evals: &[F], c: F) -> Vec<F> {
-        evals.chunks(2).map(|e| e[0] + c * (e[1] - e[0])).collect()
-    }
 
     struct C<F: PrimeField> {
         v: Vec<F>,
@@ -135,98 +312,23 @@ mod tests {
                 .absorb(3, &format!("h_{}", i))
                 .squeeze(1, &format!("challenge_{}", i));
         }
+        domain_separator = domain_separator.absorb(1, "mu");
 
         let mut prover_state = domain_separator.to_prover_state();
-        // 8.1 step 1, sample challenge \xi
-        let xi = prover_state.challenge_scalars::<{ log2(R) as usize }>()?;
-        let xi_eq_evals = (0..R)
-            .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
-            .collect::<Vec<_>>();
 
-        // 8.1 step 2, RHS of the equation (sumcheck target)
-        let mut sigma = (0..R).map(|i| mu_vec[i] * xi_eq_evals[i]).sum::<Fr>();
+        let (prover_instance, _prover_witness) = prover::<Fr, S, R, N>(
+            &mut prover_state,
+            alpha_vec.clone(),
+            mu_vec.clone(),
+            beta.clone(),
+            eta,
+            u,
+        )?;
+        let mut verifier_state = domain_separator.to_verifier_state(prover_state.narg_string());
+        let verifier_instance =
+            verifier::<Fr, R, N>(&mut verifier_state, alpha_vec, mu_vec, beta, eta)?;
 
-        let mut alpha = vec![];
-        // 8.1 step 2, initialize evaluation tables
-        let mut f_evals = u;
-        let mut ood_evals_vec = (0..1 + S)
-            .map(|i| {
-                (0..N)
-                    .map(|a| eq_poly(&alpha_vec[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        // Optimization from Hyperplonk
-        let mut id_non_0_evals_vec = (1 + S..R)
-            .map(|i| {
-                (
-                    alpha_vec[i]
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
-                        .sum::<usize>(),
-                    xi_eq_evals[i],
-                )
-            })
-            .collect::<Vec<_>>();
-        // 8.1 step 2, sumcheck starts
-        for _ in 0..log2(N) {
-            // compute prover message
-            let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
-                .step_by(2)
-                .map(|a| {
-                    let p0 = f_evals[a];
-                    let p1 = f_evals[a + 1];
-                    let q0 = ood_evals_vec.iter().map(|v| v[a]).sum::<Fr>()
-                        + id_non_0_evals_vec
-                            .iter()
-                            .filter_map(|&(j, v)| (j == a).then_some(v))
-                            .sum::<Fr>();
-                    let q1 = ood_evals_vec.iter().map(|v| v[a + 1]).sum::<Fr>()
-                        + id_non_0_evals_vec
-                            .iter()
-                            .filter_map(|&(j, v)| (j == a + 1).then_some(v))
-                            .sum::<Fr>();
-                    (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
-                })
-                .fold((Fr::zero(), Fr::zero(), Fr::zero()), |acc, x| {
-                    (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
-                });
-            assert_eq!(sum_00 + sum_11, sigma);
-
-            prover_state.add_scalars(&[sum_00, sum_11, sum_0110])?;
-            // get challenge
-            let [c] = prover_state.challenge_scalars::<1>()?;
-            alpha.push(c);
-            // update sumcheck target for next round
-            sigma =
-                (sigma - sum_0110) * c.square() + sum_00 * (Fr::one() - c.double()) + sum_0110 * c;
-
-            // update evaluation tables
-            f_evals = vsbw_reduce_evaluations(&f_evals, c);
-            ood_evals_vec.iter_mut().for_each(|e| {
-                *e = vsbw_reduce_evaluations(e, c);
-            });
-            id_non_0_evals_vec.iter_mut().for_each(|(i, eval)| {
-                *eval *= if *i & 1 == 1 { c } else { Fr::one() - c };
-                *i >>= 1;
-            });
-        }
-        // 8.1 step 3, compute \mu as part of twin constraint relation instance
-        let mu = u_mle.evaluate(&alpha);
-        assert_eq!(
-            sigma,
-            mu * (0..R)
-                .map(|i| xi_eq_evals[i]
-                    * alpha
-                        .iter()
-                        .zip(&alpha_vec[i])
-                        .map(|(a, b)| a * b + (Fr::one() - a) * (Fr::one() - b))
-                        .product::<Fr>())
-                .sum::<Fr>()
-        );
-
-        let output = (alpha, mu, beta, eta);
+        assert_eq!(prover_instance, verifier_instance);
 
         Ok(())
     }
