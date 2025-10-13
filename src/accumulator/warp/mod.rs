@@ -1,16 +1,17 @@
 use crate::utils::{poly::eq_poly, DigestToUnitSerialize};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, MerkleTree},
+    merkle_tree::{Config, MerkleTree, Path},
 };
 use ark_ff::Field;
+use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::log2;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    BytesToUnitSerialize, ProofResult, ProverState, UnitToBytes,
+    BytesToUnitSerialize, ProofError, ProofResult, ProverState, UnitToBytes,
 };
 use std::marker::PhantomData;
-use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
+use whir::poly_utils::hypercube::BinaryHypercube;
 
 use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
 
@@ -25,6 +26,8 @@ pub struct WARPConfig {
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
     _f: PhantomData<F>,
     l: usize,
+    s: usize,
+    t: usize,
     p: P,
     code: C,
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
@@ -44,7 +47,7 @@ impl<
     type Instance = Vec<F>;
     type Witness = Vec<F>;
     type AccumulatorInstance = (MT::InnerDigest, Vec<F>, F, Vec<F>, F); // (rt, \alpha, \mu, \beta, \eta)
-    type AccumulatorWitness = (MT, Vec<F>, Vec<F>); // (td, f, w)
+    type AccumulatorWitness = (MerkleTree<MT>, Vec<F>, Vec<F>); // (td, f, w)
     type Proof = F;
 
     fn index(
@@ -81,10 +84,25 @@ impl<
         ////////////////////////
         // 1. Parsing phase
         ////////////////////////
+        // a. index
         let (m, n, k) = (pk.1, pk.2, pk.3);
-        let (log_m, log_n, log_l) = (log2(m) as usize, log2(n), log2(l) as usize);
+        let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
 
-        // NOTE: todo()!
+        // b. and c. statements and accumulators
+        // d. absorb parameters
+        instances
+            .iter()
+            .try_for_each(|x| prover_state.add_scalars(x))?;
+
+        acc_instances
+            .iter()
+            .try_for_each::<_, Result<(), ProofError>>(|x| {
+                prover_state.add_digest(x.0.clone())?; // mt root
+                prover_state.add_scalars(&x.1)?; // \alpha
+                prover_state.add_scalars(&x.3)?; // \beta
+                prover_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
+                Ok(())
+            })?;
 
         ////////////////////////
         // 2. PESAT Reduction
@@ -115,7 +133,7 @@ impl<
             codewords_as_leaves.chunks_exact(code_length).collect();
 
         // c. commit to witnesses
-        let mt = MerkleTree::<MT>::new(
+        let td_0 = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
             codewords_as_leaves,
@@ -123,7 +141,7 @@ impl<
         .unwrap();
 
         // d. absorb commitment and code evaluations
-        prover_state.add_digest(mt.root())?;
+        prover_state.add_digest(td_0.root())?;
         prover_state.add_scalars(&mu)?;
 
         // e. zero check randomness and f. bundled evaluations
@@ -140,7 +158,7 @@ impl<
         // 3. Constrained Code Accumulation
         ////////////////////////
         // a. zero check randomness
-        let omega = prover_state.challenge_scalars::<1>()?[0];
+        let [omega] = prover_state.challenge_scalars::<1>()?;
         let mut tau = vec![F::default(); log_l];
         prover_state.fill_challenge_scalars(&mut tau)?;
 
@@ -150,6 +168,109 @@ impl<
         let tau_eq_evals = BinaryHypercube::new(log_l)
             .map(|p| eq_poly(&tau, p))
             .collect::<Vec<F>>();
+
+        let fn_f_i = ();
+
+        // e. new oracle and target
+        let f = vec![F::zero(); n]; // TODO placeholder
+        let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
+
+        // f. new commitment
+        let mt_linear_comb = MerkleTree::<MT>::new(
+            &self.mt_leaf_hash_params,
+            &self.mt_two_to_one_hash_params,
+            &f.chunks(1).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let eta = F::zero();
+        let nu_0 = F::zero();
+
+        // g. absorb new commitment and target
+        prover_state.add_digest(mt_linear_comb.root())?;
+        prover_state.add_scalars(&[eta, nu_0])?;
+
+        // h. ood samples
+        let n_ood_samples = self.s * log_n;
+        let mut ood_samples = vec![F::default(); n_ood_samples];
+        prover_state.fill_challenge_scalars(&mut ood_samples)?;
+        let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
+
+        // i. ood answers
+        let ood_answers = ood_samples
+            .iter()
+            .map(|ood_p| f_hat.fix_variables(ood_p)[0])
+            .collect::<Vec<F>>();
+
+        // j. absorb ood answers
+        prover_state.add_scalars(&ood_answers)?;
+
+        // k. shift queries and zerocheck randomness
+        let (r, log_r) = (1 + self.s + self.t, log2(1 + self.s + self.t) as usize);
+        let n_shift_queries = (self.t * log_n).div_ceil(8);
+        let mut bytes_shift_queries = vec![0u8; n_shift_queries];
+        let mut xi = vec![F::default(); log_r];
+
+        prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
+        prover_state.fill_challenge_scalars(&mut xi)?;
+
+        // build a vector of tuples where first element is a
+        // field element (1 or 0) and the second element equals the first, but as bool.
+        let alpha_binary_shift_indexes = bytes_shift_queries
+            .iter()
+            .flat_map(|x| {
+                (0..8)
+                    .map(|i| {
+                        let val = (x >> i) & 1 == 1;
+                        // return in field element and in binary
+                        (F::from(val), val)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .take(self.t * log_n)
+            .collect::<Vec<(F, bool)>>();
+
+        // l. sumcheck polynomials
+
+        // m. new target
+        let alpha = vec![F::default(); log_n];
+        let mu = F::default();
+
+        // n. compute authentication paths
+
+        // chunk into log_n arrays whose elements are tuples (F, bool) --
+        // F is either 1 or 0 and equals the bool
+        // build an index out of it
+        let query_index: Vec<usize> = alpha_binary_shift_indexes
+            .chunks(log_n)
+            .map(|vals| {
+                vals.iter()
+                    .rev()
+                    .fold(0, |acc, &b| (acc << 1) | b.1 as usize)
+            })
+            .collect();
+
+        let auth_0: Vec<Path<MT>> = query_index
+            .iter()
+            .map(|x_t| {
+                td_0.generate_proof(*x_t)
+                    .map_err(|_| ProofError::InvalidProof)
+            })
+            .collect::<Result<Vec<Path<MT>>, ProofError>>()?;
+
+        let auth: Vec<Vec<Path<MT>>> = acc_witnesses // for each accumulated witness and for each
+            // query index, get corresponding auth path
+            .iter()
+            .map(|(td, _, _)| {
+                query_index
+                    .iter()
+                    .map(|x_t| {
+                        td.generate_proof(*x_t)
+                            .map_err(|_| ProofError::InvalidProof)
+                    })
+                    .collect::<Result<Vec<Path<MT>>, ProofError>>()
+            })
+            .collect::<Result<Vec<Vec<Path<MT>>>, ProofError>>()?;
 
         todo!()
     }
