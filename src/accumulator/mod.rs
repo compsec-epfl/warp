@@ -5,7 +5,9 @@ pub mod warp;
 pub use accumulator::RelationAccumulator;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
-use spongefish::{codecs::arkworks_algebra::UnitToField, ProofResult, ProverState, UnitToBytes};
+use spongefish::{
+    codecs::arkworks_algebra::UnitToField, ProofResult, ProverState, UnitToBytes, VerifierState,
+};
 
 use crate::utils::DigestToUnitSerialize;
 
@@ -40,6 +42,17 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
 
-    fn verify();
+    fn verify<'a>(
+        &self,
+        vk: Self::VerifierKey,
+        prover_state: &mut VerifierState<'a>,
+        instances: Vec<Self::Instance>,
+        acc_instances: Vec<Self::AccumulatorInstance>,
+        acc_instance: Self::AccumulatorInstance,
+        proof: Self::Proof,
+    ) -> ProofResult<()>
+    where
+        VerifierState<'a>: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+
     fn decide();
 }

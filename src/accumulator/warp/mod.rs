@@ -8,7 +8,7 @@ use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::log2;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    BytesToUnitSerialize, ProofError, ProofResult, ProverState, UnitToBytes,
+    BytesToUnitSerialize, ProofError, ProofResult, ProverState, UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
 use whir::poly_utils::hypercube::BinaryHypercube;
@@ -275,7 +275,46 @@ impl<
         todo!()
     }
 
-    fn verify() {
+    fn verify<'a>(
+        &self,
+        vk: Self::VerifierKey,
+        verifier_state: &mut VerifierState<'a>,
+        instances: Vec<Self::Instance>,
+        acc_instances: Vec<Self::AccumulatorInstance>,
+        acc_instance: Self::AccumulatorInstance,
+        proof: Self::Proof,
+    ) -> ProofResult<()>
+    where
+        VerifierState<'a>: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+    {
+        ////////////////////////
+        // 1. Parsing phase
+        ////////////////////////
+        // a. verification key
+        let (m, n, k) = (vk.0, vk.1, vk.2);
+        // b. and c. instances and accumulators parsing
+        // d. final accumulator
+        let (rt, alpha, mu, beta, eta) = acc_instance;
+
+        // d. absorb parameters
+        instances
+            .iter()
+            .try_for_each(|x| verifier_state.next_scalars(x))?;
+
+        acc_instances
+            .iter()
+            .try_for_each::<_, Result<(), ProofError>>(|x| {
+                verifier_state.add_digest(x.0.clone())?; // mt root
+                verifier_state.add_scalars(&x.1)?; // \alpha
+                verifier_state.add_scalars(&x.3)?; // \beta
+                verifier_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
+                Ok(())
+            })?;
+
+        ////////////////////////
+        // 2. Derive randomness
+        ////////////////////////
+
         todo!()
     }
 
