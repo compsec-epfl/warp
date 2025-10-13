@@ -3,6 +3,7 @@ pub mod domainsep;
 pub mod iors;
 pub mod linear_code;
 pub mod merkle;
+pub mod sumcheck;
 pub mod relations;
 pub mod utils;
 
@@ -29,4 +30,6 @@ pub enum WARPError {
     UnsatisfiedMultiConstraints(bool, bool),
     #[error("f.len() is {0}, but tried accessing at {1}")]
     CodewordSize(usize, usize),
+    #[error("Verification failed: {0}")]
+    VerificationFailed(String),
 }
