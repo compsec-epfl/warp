@@ -42,12 +42,14 @@ pub fn protogalaxy_trick<F: Field>(
 
 pub trait Sumcheck<F: Field> {
     type Evaluations;
+    type Auxiliary<'a>;
     type Target;
     type Challenge;
 
     fn prove_round(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
+        aux: &Self::Auxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError>;
 
     fn verify_round(
@@ -58,11 +60,12 @@ pub trait Sumcheck<F: Field> {
     fn prove(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
+        aux: &Self::Auxiliary<'_>,
         n_rounds: usize,
     ) -> Result<Vec<Self::Challenge>, WARPError> {
         let mut challenges = Vec::with_capacity(n_rounds);
         for _ in 0..n_rounds {
-            let c = Self::prove_round(prover_state, evals)?;
+            let c = Self::prove_round(prover_state, evals, &aux)?;
             challenges.push(c);
         }
         Ok(challenges)

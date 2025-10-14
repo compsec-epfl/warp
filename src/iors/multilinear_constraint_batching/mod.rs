@@ -1,6 +1,10 @@
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
-use ark_std::log2;
+use ark_std::{
+    collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
+    log2,
+};
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
@@ -12,16 +16,37 @@ use crate::{
     WARPError,
 };
 
+pub type UsizeMap<V> = HashMap<usize, V, BuildHasherDefault<IdentityHasher>>;
+
+#[derive(Default)]
+pub struct IdentityHasher(usize);
+
+impl Hasher for IdentityHasher {
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.0 = n
+    }
+
+    fn finish(&self) -> u64 {
+        self.0 as u64
+    }
+}
+
 pub struct MultilinearConstraintBatchingSumcheck {}
 
 impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
-    type Evaluations = (Vec<F>, Vec<Vec<F>>, Vec<(usize, F)>);
+    type Evaluations = (Vec<F>, Vec<Vec<F>>, UsizeMap<F>);
+    type Auxiliary<'a> = ();
     type Target = F;
     type Challenge = F;
 
     fn prove_round(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
-        (f_evals, ood_evals_vec, id_non_0_evals_vec): &mut Self::Evaluations,
+        (f_evals, ood_evals_vec, id_non_0_eval_sums): &mut Self::Evaluations,
+        _aux: &Self::Auxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
             .step_by(2)
@@ -29,15 +54,9 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
                 let p0 = f_evals[a];
                 let p1 = f_evals[a + 1];
                 let q0 = ood_evals_vec.iter().map(|v| v[a]).sum::<F>()
-                    + id_non_0_evals_vec
-                        .iter()
-                        .filter_map(|&(j, v)| (j == a).then_some(v))
-                        .sum::<F>();
+                    + id_non_0_eval_sums.get(&a).unwrap_or(&F::zero());
                 let q1 = ood_evals_vec.iter().map(|v| v[a + 1]).sum::<F>()
-                    + id_non_0_evals_vec
-                        .iter()
-                        .filter_map(|&(j, v)| (j == a + 1).then_some(v))
-                        .sum::<F>();
+                    + id_non_0_eval_sums.get(&(a + 1)).unwrap_or(&F::zero());
                 (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
             })
             .fold((F::zero(), F::zero(), F::zero()), |acc, x| {
@@ -53,10 +72,12 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         ood_evals_vec.iter_mut().for_each(|e| {
             *e = vsbw_reduce_evaluations(e, c);
         });
-        id_non_0_evals_vec.iter_mut().for_each(|(i, eval)| {
-            *eval *= if *i & 1 == 1 { c } else { F::one() - c };
-            *i >>= 1;
-        });
+        let mut map = UsizeMap::default();
+        for (&i, &eval) in id_non_0_eval_sums.iter() {
+            *map.entry(i >> 1).or_insert(F::zero()) +=
+                eval * if i & 1 == 1 { c } else { F::one() - c };
+        }
+        *id_non_0_eval_sums = map;
         Ok(c)
     }
 
@@ -107,23 +128,21 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
         })
         .collect::<Vec<_>>();
     // Optimization from Hyperplonk
-    let id_non_0_evals_vec = (1 + S..R)
-        .map(|i| {
-            (
-                alpha_vec[i]
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
-                    .sum::<usize>(),
-                xi_eq_evals[i],
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut id_non_0_eval_sums = UsizeMap::default();
+    for i in 1 + S..R {
+        let a = alpha_vec[i]
+            .iter()
+            .enumerate()
+            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+            .sum::<usize>();
+        *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
+    }
 
     // 8.1 step 2, sumcheck starts
     let alpha = MultilinearConstraintBatchingSumcheck::prove(
         prover_state,
-        &mut (f_evals, ood_evals_vec, id_non_0_evals_vec),
+        &mut (f_evals, ood_evals_vec, id_non_0_eval_sums),
+        &(),
         log2(N) as usize,
     )?;
 
