@@ -1,12 +1,238 @@
+use ark_ff::{Field, Zero};
+use ark_poly::{
+    univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial, Polynomial,
+};
+use ark_std::log2;
+use rayon::prelude::*;
+use spongefish::codecs::arkworks_algebra::{
+    FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
+};
+use whir::poly_utils::hypercube::BinaryHypercubePoint;
+
+use crate::{
+    relations::{r1cs::R1CS, relation::BundledPESAT},
+    sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
+    utils::poly::eq_poly,
+    WARPError,
+};
+
+pub struct Evals<F> {
+    u: Vec<Vec<F>>,
+    z: Vec<Vec<F>>,
+    a: Vec<Vec<F>>,
+    b: Vec<Vec<F>>,
+    tau: Vec<F>,
+}
+
+pub struct TwinConstraintPseudoBatchingSumcheck<const M: usize, const N: usize> {}
+
+impl<F: Field, const M: usize, const N: usize> Sumcheck<F>
+    for TwinConstraintPseudoBatchingSumcheck<M, N>
+{
+    type Evaluations = Evals<F>;
+    type Auxiliary<'a> = (&'a R1CS<F>, F);
+    type Target = F;
+    type Challenge = F;
+
+    fn prove_round(
+        prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+        Evals { u, z, a, b, tau }: &mut Self::Evaluations,
+        &(r1cs, xi): &Self::Auxiliary<'_>,
+    ) -> Result<Self::Challenge, WARPError> {
+        // compute prover message `h`
+        let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
+            protogalaxy_trick(
+                a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
+                u[0].par_iter()
+                    .zip(&u[1])
+                    .map(|(&l, &r)| DensePolynomial::from_coefficients_vec(vec![l, r - l]))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
+            protogalaxy_trick(
+                b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
+                r1cs.p
+                    .par_iter()
+                    .map(|(a, b, c)| {
+                        let a0 = a.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                        let a1 = a.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - a0;
+                        let b0 = b.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                        let b1 = b.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - b0;
+                        let c0 = c.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                        let c1 = c.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - c0;
+                        vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1]
+                    })
+                    .map(DensePolynomial::from_coefficients_vec)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let t_iter = tau
+            .chunks(2)
+            .map(|t| DensePolynomial::from_coefficients_vec(vec![t[0], t[1] - t[0]]));
+        let h = f_iter
+            .zip(p_iter)
+            .zip(t_iter)
+            .map(|((f, p), t)| (f + p * xi).naive_mul(&t))
+            .fold(DensePolynomial::zero(), |acc, r| acc + r);
+
+        prover_state.add_scalars(&h.coeffs)?;
+        // get challenge
+        let [c] = prover_state.challenge_scalars::<1>()?;
+
+        // update evaluation tables
+        *u = vsbw_reduce_vec_evaluations(u, c);
+        *z = vsbw_reduce_vec_evaluations(z, c);
+        *a = vsbw_reduce_vec_evaluations(a, c);
+        *b = vsbw_reduce_vec_evaluations(b, c);
+        *tau = vsbw_reduce_evaluations(tau, c);
+        Ok(c)
+    }
+
+    fn verify_round(
+        verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+        target: &mut Self::Target,
+    ) -> Result<Self::Challenge, WARPError> {
+        let mut h_coeffs = vec![F::zero(); 2 + (log2(N) + 1).max(log2(M) + 2) as usize];
+        verifier_state.fill_next_scalars(&mut h_coeffs)?;
+        let h = DensePolynomial::from_coefficients_vec(h_coeffs);
+        if h.evaluate(&F::zero()) + h.evaluate(&F::one()) != *target {
+            return Err(WARPError::VerificationFailed(
+                "Evaluations of the claimed polynomial do not sum to the target".to_string(),
+            ));
+        }
+
+        // get challenge
+        let [c] = verifier_state.challenge_scalars::<1>()?;
+        // update sumcheck target for next round
+        *target = h.evaluate(&c);
+        Ok(c)
+    }
+}
+
+pub fn prover<F: Field, const M: usize, const N: usize, const L: usize>(
+    prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+    r1cs: &R1CS<F>,
+    alpha_vec: Vec<Vec<F>>,
+    _mu_vec: Vec<F>,
+    beta_vec: Vec<Vec<F>>,
+    _eta_vec: Vec<F>,
+    u_vec: Vec<Vec<F>>,
+    z_vec: Vec<Vec<F>>,
+) -> Result<((Vec<F>, Vec<F>, F, Vec<F>, F), Vec<F>), WARPError> {
+    // 6.1 step 1, sample challenge \tau and \xi
+    let mut tau = vec![F::zero(); log2(L) as usize];
+    prover_state.fill_challenge_scalars(&mut tau)?;
+    let tau_eq_evals = (0..L)
+        .map(|i| eq_poly(&tau, BinaryHypercubePoint(i)))
+        .collect::<Vec<_>>();
+    let [xi] = prover_state.challenge_scalars::<1>()?;
+
+    // 6.1 step 2, initialize evaluation tables
+    let mut evals = Evals {
+        u: u_vec,
+        z: z_vec,
+        a: alpha_vec,
+        b: beta_vec,
+        tau: tau_eq_evals,
+    };
+
+    // 6.1 step 2, sumcheck starts
+    let gamma = TwinConstraintPseudoBatchingSumcheck::<M, N>::prove(
+        prover_state,
+        &mut evals,
+        &(r1cs, xi),
+        log2(L) as usize,
+    )?;
+
+    // 6.1 step 3, compute new instance and witness for pseudo-batching accumulation relation
+    let alpha = evals.a.pop().unwrap();
+
+    let u = evals.u.pop().unwrap();
+    let u_mle = DenseMultilinearExtension::from_evaluations_slice(log2(N) as usize, &u);
+    let mu = u_mle.evaluate(&alpha);
+
+    let beta = evals.b.pop().unwrap();
+
+    let z = evals.z.pop().unwrap();
+
+    let beta_eq_evals = (0..M)
+        .map(|i| eq_poly(&beta, BinaryHypercubePoint(i)))
+        .collect::<Vec<_>>();
+
+    let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
+
+    prover_state.add_scalars(&[mu])?;
+    prover_state.add_scalars(&[eta])?;
+
+    Ok(((gamma, alpha, mu, beta, eta), u))
+}
+
+pub fn verifier<F: Field, const M: usize, const N: usize, const L: usize>(
+    verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+    alpha_vec: Vec<Vec<F>>,
+    mu_vec: Vec<F>,
+    beta_vec: Vec<Vec<F>>,
+    eta_vec: Vec<F>,
+) -> Result<(Vec<F>, Vec<F>, F, Vec<F>, F), WARPError> {
+    // 6.1 step 1, sample challenge \tau and \xi
+    let mut tau = vec![F::zero(); log2(L) as usize];
+    verifier_state.fill_challenge_scalars(&mut tau)?;
+    let tau_eq_evals = (0..L)
+        .map(|i| eq_poly(&tau, BinaryHypercubePoint(i)))
+        .collect::<Vec<_>>();
+    let [xi] = verifier_state.challenge_scalars::<1>()?;
+
+    // 6.1 step 2, RHS of the equation (sumcheck target)
+    let mut sigma = (0..L)
+        .map(|i| tau_eq_evals[i] * (mu_vec[i] + xi * eta_vec[i]))
+        .sum::<F>();
+    let gamma = TwinConstraintPseudoBatchingSumcheck::<M, N>::verify(
+        verifier_state,
+        &mut sigma,
+        log2(L) as usize,
+    )?;
+
+    // 6.1 step 3, compute new instance and witness for pseudo-batching accumulation relation
+    let alpha = (0..log2(N) as usize)
+        .map(|j| {
+            (0..L)
+                .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * alpha_vec[i][j])
+                .sum::<F>()
+        })
+        .collect();
+    let beta = (0..log2(M) as usize)
+        .map(|j| {
+            (0..L)
+                .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * beta_vec[i][j])
+                .sum::<F>()
+        })
+        .collect();
+
+    let [mu]: [F; 1] = verifier_state.next_scalars()?;
+    let [eta]: [F; 1] = verifier_state.next_scalars()?;
+
+    // New target decision
+    assert_eq!(
+        sigma,
+        (mu + xi * eta)
+            * tau
+                .iter()
+                .zip(&gamma)
+                .map(|(a, b)| a.double() * b - a - b + F::one())
+                .product::<F>()
+    );
+
+    Ok((gamma, alpha, mu, beta, eta))
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error;
 
     use ark_bls12_381::Fr;
-    use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
-    use ark_poly::{
-        univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial, Polynomial,
-    };
+    use ark_ff::{PrimeField, UniformRand};
+    use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_r1cs_std::{
         alloc::AllocVar,
         eq::EqGadget,
@@ -16,14 +242,9 @@ mod tests {
         ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
     };
     use ark_std::{log2, test_rng};
-    use rayon::prelude::*;
-    use spongefish::{
-        codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-        duplex_sponge::DuplexSponge,
-        DomainSeparator,
-    };
+    use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
+    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
@@ -31,39 +252,7 @@ mod tests {
         utils::poly::eq_poly,
     };
 
-    pub fn vsbw_reduce_evaluations<F: Field>(evals: &[F], c: F) -> Vec<F> {
-        evals.chunks(2).map(|e| e[0] + c * (e[1] - e[0])).collect()
-    }
-
-    pub fn vsbw_reduce_vec_evaluations<F: Field>(evals: &[Vec<F>], c: F) -> Vec<Vec<F>> {
-        evals
-            .chunks(2)
-            .map(|e| {
-                e[0].par_iter()
-                    .zip(&e[1])
-                    .map(|(&a, &b)| a + c * (b - a))
-                    .collect()
-            })
-            .collect()
-    }
-
-    fn protogalaxy_trick<F: Field>(
-        c: impl Iterator<Item = (F, F)>,
-        mut q: Vec<DensePolynomial<F>>,
-    ) -> DensePolynomial<F> {
-        for (a, b) in c {
-            q = q
-                .par_chunks(2)
-                .map(|p| {
-                    &p[0]
-                        + DensePolynomial::from_coefficients_vec(vec![a, b])
-                            .naive_mul(&(&p[1] - &p[0]))
-                })
-                .collect();
-        }
-        assert_eq!(q.len(), 1);
-        q.pop().unwrap()
-    }
+    use super::*;
 
     struct C<F: PrimeField, const M: usize> {
         v: Vec<F>,
@@ -172,116 +361,26 @@ mod tests {
                 )
                 .squeeze(1, &format!("challenge_{}", i));
         }
+        domain_separator = domain_separator.absorb(1, "mu").absorb(1, "eta");
 
         let mut prover_state = domain_separator.to_prover_state();
 
-        // 6.1 step 1, sample challenge \tau and \xi
-        let tau = prover_state.challenge_scalars::<{ log2(L) as usize }>()?;
-        let tau_eq_evals = (0..L)
-            .map(|i| eq_poly(&tau, BinaryHypercubePoint(i)))
-            .collect::<Vec<_>>();
-        let [xi] = prover_state.challenge_scalars::<1>()?;
+        let (prover_instance, prover_witness) = prover::<Fr, M, N, L>(
+            &mut prover_state,
+            &r1cs,
+            alpha_vec.clone(),
+            mu_vec.clone(),
+            beta_vec.clone(),
+            eta_vec.clone(),
+            u_vec.clone(),
+            z_vec.clone(),
+        )?;
 
-        // 6.1 step 2, RHS of the equation (sumcheck target)
-        let mut sigma = (0..L)
-            .map(|i| tau_eq_evals[i] * (mu_vec[i] + xi * eta_vec[i]))
-            .sum::<Fr>();
-        let mut gamma = vec![];
+        let mut verifier_state = domain_separator.to_verifier_state(prover_state.narg_string());
+        let verifier_instance =
+            verifier::<Fr, M, N, L>(&mut verifier_state, alpha_vec, mu_vec, beta_vec, eta_vec)?;
 
-        // 6.1 step 2, initialize evaluation tables
-        let mut u_evals = u_vec;
-        let mut z_evals = z_vec;
-        let mut a_evals = alpha_vec;
-        let mut b_evals = beta_vec;
-        let mut tau_evals = tau_eq_evals;
-
-        // 6.1 step 2, sumcheck starts
-        for _ in 0..log2(L) as usize {
-            // compute prover message `h`
-            let f_iter = u_evals.chunks(2).zip(a_evals.chunks(2)).map(|(u, a)| {
-                protogalaxy_trick(
-                    a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
-                    u[0].par_iter()
-                        .zip(&u[1])
-                        .map(|(&l, &r)| DensePolynomial::from_coefficients_vec(vec![l, r - l]))
-                        .collect::<Vec<_>>(),
-                )
-            });
-            let p_iter = b_evals.chunks(2).zip(z_evals.chunks(2)).map(|(b, z)| {
-                protogalaxy_trick(
-                    b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
-                    r1cs.p
-                        .par_iter()
-                        .map(|(a, b, c)| {
-                            let a0 = a.iter().map(|(t, i)| z[0][*i] * t).sum::<Fr>();
-                            let a1 = a.iter().map(|(t, i)| z[1][*i] * t).sum::<Fr>() - a0;
-                            let b0 = b.iter().map(|(t, i)| z[0][*i] * t).sum::<Fr>();
-                            let b1 = b.iter().map(|(t, i)| z[1][*i] * t).sum::<Fr>() - b0;
-                            let c0 = c.iter().map(|(t, i)| z[0][*i] * t).sum::<Fr>();
-                            let c1 = c.iter().map(|(t, i)| z[1][*i] * t).sum::<Fr>() - c0;
-                            vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1]
-                        })
-                        .map(DensePolynomial::from_coefficients_vec)
-                        .collect::<Vec<_>>(),
-                )
-            });
-            let t_iter = tau_evals
-                .chunks(2)
-                .map(|t| DensePolynomial::from_coefficients_vec(vec![t[0], t[1] - t[0]]));
-            let h = f_iter
-                .zip(p_iter)
-                .zip(t_iter)
-                .map(|((f, p), t)| (f + p * xi).naive_mul(&t))
-                .fold(DensePolynomial::zero(), |acc, r| acc + r);
-
-            assert_eq!(h.evaluate(&Fr::zero()) + h.evaluate(&Fr::one()), sigma);
-
-            assert_eq!(
-                h.coeffs.len(),
-                2 + (log2(N) as usize + 1).max(r1cs.log_m + 2)
-            );
-            prover_state.add_scalars(&h.coeffs)?;
-            // get challenge
-            let [c] = prover_state.challenge_scalars::<1>()?;
-            gamma.push(c);
-            // update sumcheck target for next round
-            sigma = h.evaluate(&c);
-
-            // update evaluation tables
-            u_evals = vsbw_reduce_vec_evaluations(&u_evals, c);
-            z_evals = vsbw_reduce_vec_evaluations(&z_evals, c);
-            a_evals = vsbw_reduce_vec_evaluations(&a_evals, c);
-            b_evals = vsbw_reduce_vec_evaluations(&b_evals, c);
-            tau_evals = vsbw_reduce_evaluations(&tau_evals, c);
-        }
-
-        // 6.1 step 3, compute new instance and witness for pseudo-batching accumulation relation
-        let alpha = a_evals.pop().unwrap();
-
-        let u = u_evals.pop().unwrap();
-        let u_mle = DenseMultilinearExtension::from_evaluations_slice(log2(N) as usize, &u);
-        let mu = u_mle.evaluate(&alpha);
-
-        let beta = b_evals.pop().unwrap();
-
-        let z = z_evals.pop().unwrap();
-
-        let beta_eq_evals = (0..r1cs.m)
-            .map(|i| eq_poly(&beta, BinaryHypercubePoint(i)))
-            .collect::<Vec<_>>();
-
-        let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
-
-        // New target decision
-        assert_eq!(
-            sigma,
-            (mu + xi * eta)
-                * tau
-                    .iter()
-                    .zip(&gamma)
-                    .map(|(a, b)| a * b + (Fr::one() - a) * (Fr::one() - b))
-                    .product::<Fr>()
-        );
+        assert_eq!(prover_instance, verifier_instance);
 
         Ok(())
     }
