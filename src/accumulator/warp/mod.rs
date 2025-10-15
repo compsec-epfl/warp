@@ -1,4 +1,8 @@
-use crate::utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize};
+use crate::{
+    iors::multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
+    sumcheck::Sumcheck,
+    utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
+};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
@@ -12,7 +16,7 @@ use spongefish::{
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
-use whir::poly_utils::hypercube::BinaryHypercube;
+use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
 
@@ -76,6 +80,7 @@ impl<
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
+        assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.len(), acc_instances.len());
 
@@ -88,8 +93,9 @@ impl<
         // 1. Parsing phase
         ////////////////////////
         // a. index
-        let (m, n, _) = (pk.1, pk.2, pk.3);
+        let (m, n, k) = (pk.1, pk.2, pk.3);
         let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
+        debug_assert_eq!(instances[0].len(), n - k);
 
         // b. and c. statements and accumulators
         // d. absorb parameters
@@ -177,6 +183,11 @@ impl<
         // e. new oracle and target
         let f = vec![F::zero(); n]; // TODO placeholder
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
+        let zeta_0 = vec![F::default(); log_n];
+        let nu_0 = f_hat.fix_variables(&zeta_0)[0];
+
+        let mut zetas = vec![zeta_0.as_slice()];
+        let mut nus = vec![nu_0];
 
         // f. new commitment
         let mt_linear_comb = MerkleTree::<MT>::new(
@@ -187,7 +198,6 @@ impl<
         .unwrap();
 
         let eta = F::zero();
-        let nu_0 = F::zero();
 
         // g. absorb new commitment and target
         prover_state.add_digest(mt_linear_comb.root())?;
@@ -217,26 +227,50 @@ impl<
         prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
         prover_state.fill_challenge_scalars(&mut xi)?;
 
-        // build a vector of tuples where first element is a
-        // field element (1 or 0) and the second element equals the first, but as bool.
-        let alpha_binary_shift_indexes = bytes_shift_queries
+        // get shift queries as binary field elements
+        let binary_shift_queries = bytes_shift_queries
             .iter()
             .flat_map(|x| {
+                // TODO factor out
                 (0..8)
                     .map(|i| {
                         let val = (x >> i) & 1 == 1;
                         // return in field element and in binary
-                        (F::from(val), val)
+                        F::from(val)
                     })
                     .collect::<Vec<_>>()
             })
             .take(self.t * log_n)
-            .collect::<Vec<(F, bool)>>();
+            .collect::<Vec<F>>();
+
+        let binary_shift_queries = binary_shift_queries.chunks(log_n).collect::<Vec<&[F]>>();
+        let binary_shift_answers = binary_shift_queries
+            .iter()
+            .map(|zeta_i| f_hat.fix_variables(zeta_i)[0]);
+
+        zetas.extend(ood_samples);
+        zetas.extend(binary_shift_queries);
+
+        nus.extend(ood_answers);
+        nus.extend(binary_shift_answers);
 
         // l. sumcheck polynomials
+        // compute evaluations for xi
+        let xi_eq_evals = (0..r)
+            .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+            .collect::<Vec<_>>();
+
+        let ood_evals_vec = (0..1 + self.s)
+            .map(|i| {
+                (0..r)
+                    .map(|a| eq_poly(&ood_samples[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        // let alpha = MultilinearConstraintBatchingSumcheck::prove(prover_state, &mut (f,), log_n);
 
         // m. new target
-        let alpha = vec![F::default(); log_n];
         let mu = F::default();
 
         // n. compute authentication paths
@@ -244,8 +278,8 @@ impl<
         // chunk into log_n arrays whose elements are tuples (F, bool) --
         // F is either 1 or 0 and equals the bool
         // build an index out of it
-        let query_index: Vec<usize> = alpha_binary_shift_indexes
-            .chunks(log_n)
+        let query_index: Vec<usize> = binary_shift_queries
+            .iter()
             .map(|vals| {
                 vals.iter()
                     .rev()
