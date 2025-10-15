@@ -1,5 +1,5 @@
 use crate::{
-    iors::multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
+    iors::multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
     sumcheck::Sumcheck,
     utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
 };
@@ -55,7 +55,17 @@ impl<
     type Witness = Vec<F>;
     type AccumulatorInstance = (MT::InnerDigest, Vec<F>, F, Vec<F>, F); // (rt, \alpha, \mu, \beta, \eta)
     type AccumulatorWitness = (MerkleTree<MT>, Vec<F>, Vec<F>); // (td, f, w)
-    type Proof = F;
+
+    // (rt_0, \mu_i, \nu_0, \nu_i, auth_0, auth_j, ((f_i(x_j))))
+    type Proof = (
+        MT::InnerDigest,
+        Vec<F>,
+        F,
+        Vec<F>,
+        Vec<Path<MT>>,
+        Vec<Vec<Path<MT>>>,
+        Vec<Vec<F>>,
+    );
 
     fn index(
         prover_state: &mut ProverState,
@@ -119,22 +129,22 @@ impl<
         let code_length = self.code.code_len();
         let alpha = 0;
 
-        let mut codewords = vec![vec![F::default(); code_length]; self.l];
+        let mut codewords = vec![vec![F::default(); code_length]; l1];
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        let mut codewords_as_leaves = vec![F::default(); self.l * code_length];
-        let mut mu = vec![F::default(); self.l];
+        let mut codewords_as_leaves = vec![F::default(); l1 * code_length];
+        let mut mus = vec![F::default(); l1];
 
         // a. encode witnesses and b. evaluation claims
-        for i in 0..self.l {
+        for i in 0..self.l1 {
             let f_i = self.code.encode(&witnesses[i]);
             // stacking codewords in flat array, which we chunk below
             // [w_0[0], .., w_{N-1}[0], .., w_0[N-1], .., w_{N-1}[N-1]] // L * N elements
             for (j, value) in f_i.iter().enumerate() {
-                codewords_as_leaves[(j * self.l) + i] = *value;
+                codewords_as_leaves[(j * l1) + i] = *value;
             }
             // evaluate the dense mle for the codeword \hat{f}(alpha) == f[alpha]
-            mu[i] = f_i[alpha];
+            mus[i] = f_i[alpha];
             codewords[i] = f_i;
         }
 
@@ -151,7 +161,7 @@ impl<
 
         // d. absorb commitment and code evaluations
         prover_state.add_digest(td_0.root())?;
-        prover_state.add_scalars(&mu)?;
+        prover_state.add_scalars(&mus)?;
 
         // e. zero check randomness and f. bundled evaluations
         let mut betas = vec![(vec![F::default(); log_m], vec![F::default(); n]); l1];
@@ -218,6 +228,9 @@ impl<
         // j. absorb ood answers
         prover_state.add_scalars(&ood_answers)?;
 
+        zetas.extend(ood_samples);
+        nus.extend(ood_answers);
+
         // k. shift queries and zerocheck randomness
         let (r, log_r) = (1 + self.s + self.t, log2(1 + self.s + self.t) as usize);
         let n_shift_queries = (self.t * log_n).div_ceil(8);
@@ -244,15 +257,23 @@ impl<
             .collect::<Vec<F>>();
 
         let binary_shift_queries = binary_shift_queries.chunks(log_n).collect::<Vec<&[F]>>();
-        let binary_shift_answers = binary_shift_queries
+
+        // build indexes out of the shift queries stored
+        let shift_queries_indexes: Vec<usize> = binary_shift_queries
             .iter()
-            .map(|zeta_i| f_hat.fix_variables(zeta_i)[0]);
+            .map(|vals| {
+                vals.iter()
+                    .rev()
+                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
+            })
+            .collect();
+        let binary_shift_queries_answers = binary_shift_queries
+            .iter()
+            .map(|zeta_i| f_hat.fix_variables(zeta_i)[0])
+            .collect::<Vec<F>>();
 
-        zetas.extend(ood_samples);
         zetas.extend(binary_shift_queries);
-
-        nus.extend(ood_answers);
-        nus.extend(binary_shift_answers);
+        nus.extend(binary_shift_queries_answers);
 
         // l. sumcheck polynomials
         // compute evaluations for xi
@@ -263,31 +284,35 @@ impl<
         let ood_evals_vec = (0..1 + self.s)
             .map(|i| {
                 (0..r)
-                    .map(|a| eq_poly(&ood_samples[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                    .map(|a| eq_poly(&zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
 
-        // let alpha = MultilinearConstraintBatchingSumcheck::prove(prover_state, &mut (f,), log_n);
+        // [CBBZ23] optimization from hyperplonk
+        let mut id_non_0_eval_sums = UsizeMap::default();
+        for i in (1 + self.s)..r {
+            let a = zetas[i]
+                .iter()
+                .enumerate()
+                .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+                .sum::<usize>();
+            *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
+        }
+
+        let alpha = MultilinearConstraintBatchingSumcheck::prove(
+            prover_state,
+            &mut (f, ood_evals_vec, id_non_0_eval_sums),
+            &(),
+            log_n,
+        )
+        .unwrap();
 
         // m. new target
-        let mu = F::default();
+        let mu = f_hat.fix_variables(&alpha)[0];
 
         // n. compute authentication paths
-
-        // chunk into log_n arrays whose elements are tuples (F, bool) --
-        // F is either 1 or 0 and equals the bool
-        // build an index out of it
-        let query_index: Vec<usize> = binary_shift_queries
-            .iter()
-            .map(|vals| {
-                vals.iter()
-                    .rev()
-                    .fold(0, |acc, &b| (acc << 1) | b.1 as usize)
-            })
-            .collect();
-
-        let auth_0: Vec<Path<MT>> = query_index
+        let auth_0: Vec<Path<MT>> = shift_queries_indexes
             .iter()
             .map(|x_t| {
                 td_0.generate_proof(*x_t)
@@ -299,7 +324,7 @@ impl<
             // query index, get corresponding auth path
             .iter()
             .map(|(td, _, _)| {
-                query_index
+                shift_queries_indexes
                     .iter()
                     .map(|x_t| {
                         td.generate_proof(*x_t)
@@ -309,7 +334,26 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, ProofError>>()?;
 
-        todo!()
+        let shift_queries_answers = witnesses
+            .iter()
+            .chain(acc_witnesses.iter().map(|(_, f, _)| f))
+            .map(|f| {
+                shift_queries_indexes
+                    .iter()
+                    .map(|x_i| f[*x_i])
+                    .collect::<Vec<F>>()
+            })
+            .collect::<Vec<Vec<F>>>();
+
+        Ok((
+            td_0.root(),
+            mus,
+            nu_0,
+            nus,
+            auth_0,
+            auth,
+            shift_queries_answers,
+        ))
     }
 
     fn verify<'a>(
