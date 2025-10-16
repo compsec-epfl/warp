@@ -4,8 +4,10 @@ use ark_std::log2;
 use spongefish::{codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, Unit};
 
 use crate::{
+    accumulator::warp::WARPConfig,
     iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},
     linear_code::LinearCode,
+    relations::relation::BundledPESAT,
     utils::DigestDomainSeparator,
 };
 
@@ -13,19 +15,9 @@ use crate::{
 pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
     fn pesat_ior(self, conf: &TwinConstraintIORConfig<F, C, MT>) -> Self;
     fn pseudo_batching_ior(self, conf: &PseudoBatchingIORConfig<F, C, MT>) -> Self;
-    fn warp(
+    fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
-        C: C,
-        l1: usize,
-        l2: usize,
-        s: usize,
-        t: usize,
-        n: usize,
-        k: usize,
-        log_n: usize,
-        log_m: usize,
-        log_l: usize,
-        log_r: usize,
+        config: WARPConfig<F, P>,
     ) -> Self;
 }
 
@@ -51,47 +43,48 @@ impl<
             .challenge_bytes((conf.t * conf.log_n).div_ceil(8), "x")
     }
 
-    fn warp(
+    fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
-        code: C,
-        l1: usize,
-        l2: usize,
-        s: usize,
-        t: usize,
-        #[allow(non_snake_case)] N: usize,
-        k: usize,
-        #[allow(non_snake_case)] log_N: usize,
-        #[allow(non_snake_case)] log_M: usize,
-        log_l: usize,
-        log_r: usize,
+        config: WARPConfig<F, P>,
     ) -> Self {
-        let log_n = log2(code.code_len()) as usize;
-
+        assert!(config.n.is_power_of_two());
+        assert!(config.l.is_power_of_two());
+        let log_l = log2(config.l) as usize;
+        let log_n = log2(config.n) as usize;
+        let r = 1 + config.s + config.t;
+        assert!(r.is_power_of_two());
+        let log_r = log2(r) as usize;
+        #[allow(non_snake_case)]
+        let (M, N, k) = config.p_conf;
+        #[allow(non_snake_case)]
+        let log_M = log2(M) as usize;
+        let l2 = config.l - config.l1;
         let mut prover_state = self;
-        for _ in 0..l1 {
+        for _ in 0..config.l1 {
             prover_state = prover_state.add_scalars(N - k, "instances");
         }
 
-        for _ in 0..l2 {
+        for i in 0..l2 {
             prover_state = prover_state
-                .add_digest("digest")
-                .add_scalars(log_n, "alpha")
-                .add_scalars(log_M + N, "beta")
-                .add_scalars(2, "mu_eta");
+                .add_digest(&format!("l2_{}_digest", i))
+                .add_scalars(log_n, &format!("l2_{}_alpha", i))
+                .add_scalars(log_M + N, &format!("l2_{}_beta", i))
+                .add_scalars(2, &format!("l2_{}_mu_eta", i));
         }
 
         prover_state = prover_state.add_digest("td_0");
-        prover_state = prover_state.add_scalars(l1, "mus");
-        for _ in 0..l1 {
+        prover_state = prover_state.add_scalars(config.l1, "mus");
+        for _ in 0..config.l1 {
             prover_state = prover_state.challenge_scalars(log_M, "tau_i");
         }
         prover_state = prover_state.challenge_scalars(1, "omega");
         prover_state = prover_state.challenge_scalars(log_l, "tau");
         prover_state = prover_state.add_digest("mt_linear_comb");
         prover_state = prover_state.add_scalars(2, "eta_nu0");
-        prover_state = prover_state.challenge_scalars(s * log_n, "odd_samples");
-        prover_state = prover_state.add_scalars(s, "odd_answers");
-        prover_state = prover_state.challenge_bytes((t * log_n).div_ceil(8), "bytes_shift_queries");
+        prover_state = prover_state.challenge_scalars(config.s * log_n, "odd_samples");
+        prover_state = prover_state.add_scalars(config.s, "odd_answers");
+        prover_state =
+            prover_state.challenge_bytes((config.t * log_n).div_ceil(8), "bytes_shift_queries");
         prover_state = prover_state.challenge_scalars(log_r, "xi");
 
         // sumcheck multilinear constraints batching

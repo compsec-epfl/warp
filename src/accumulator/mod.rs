@@ -39,7 +39,10 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         instances: Vec<Self::Instance>,
         acc_instances: Vec<Self::AccumulatorInstance>,
         acc_witnesses: Vec<Self::AccumulatorWitness>,
-    ) -> ProofResult<Self::Proof>
+    ) -> ProofResult<(
+        (Self::AccumulatorInstance, Self::AccumulatorWitness),
+        Self::Proof,
+    )>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
 

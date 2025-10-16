@@ -24,18 +24,32 @@ use super::AccumulationScheme;
 
 mod accumulator;
 
-pub struct WARPConfig {
-    l: usize,
+#[derive(Clone)]
+pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
+    pub l: usize,
+    pub l1: usize,
+    pub s: usize,
+    pub t: usize,
+    pub p_conf: P::Config,
+    pub n: usize,
+}
+
+impl<F: Field, P: BundledPESAT<F>> WARPConfig<F, P> {
+    pub fn new(l: usize, l1: usize, s: usize, t: usize, p_conf: P::Config, n: usize) -> Self {
+        Self {
+            l,
+            l1,
+            s,
+            t,
+            p_conf,
+            n,
+        }
+    }
 }
 
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
     _f: PhantomData<F>,
-    l: usize,
-    l1: usize,
-    l2: usize,
-    s: usize,
-    t: usize,
-    p: P,
+    config: WARPConfig<F, P>,
     code: C,
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
     mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
@@ -49,24 +63,14 @@ impl<
     > WARP<F, P, C, MT>
 {
     pub fn new(
-        l: usize,
-        l1: usize,
-        l2: usize,
-        s: usize,
-        t: usize,
-        p: P,
+        config: WARPConfig<F, P>,
         code: C,
         mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
         mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
     ) -> WARP<F, P, C, MT> {
         Self {
             _f: PhantomData,
-            l,
-            l1,
-            l2,
-            s,
-            t,
-            p,
+            config,
             code,
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,
@@ -86,7 +90,7 @@ impl<
     type VerifierKey = (usize, usize, usize);
     type Instance = Vec<F>;
     type Witness = Vec<F>;
-    type AccumulatorInstance = (MT::InnerDigest, Vec<F>, F, Vec<F>, F); // (rt, \alpha, \mu, \beta, \eta)
+    type AccumulatorInstance = (MT::InnerDigest, Vec<F>, F, (Vec<F>, Vec<F>), F); // (rt, \alpha, \mu, \beta (\tau, x), \eta)
     type AccumulatorWitness = (MerkleTree<MT>, Vec<F>, Vec<F>); // (td, f, w)
 
     // (rt_0, \mu_i, \nu_0, \nu_i, auth_0, auth_j, ((f_i(x_j))))
@@ -120,7 +124,10 @@ impl<
         instances: Vec<Self::Instance>,
         acc_instances: Vec<Self::AccumulatorInstance>,
         acc_witnesses: Vec<Self::AccumulatorWitness>,
-    ) -> ProofResult<Self::Proof>
+    ) -> ProofResult<(
+        (Self::AccumulatorInstance, Self::AccumulatorWitness),
+        Self::Proof,
+    )>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
@@ -128,7 +135,8 @@ impl<
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.len(), acc_instances.len());
 
-        let (l1, l2, l) = (self.l1, self.l2, self.l);
+        let (l1, l) = (self.config.l1, self.config.l);
+        let l2 = l - l1;
         debug_assert_eq!(l1 + l2, l);
 
         debug_assert!(l.is_power_of_two());
@@ -155,7 +163,8 @@ impl<
             .try_for_each::<_, Result<(), ProofError>>(|x| {
                 prover_state.add_digest(x.0.clone())?; // mt root
                 prover_state.add_scalars(&x.1)?; // \alpha
-                prover_state.add_scalars(&x.3)?; // \beta
+                prover_state.add_scalars(&(x.3).0)?; // \beta.tau
+                prover_state.add_scalars(&(x.3).1)?; // \beta.x
                 prover_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
                 Ok(())
             })?;
@@ -240,6 +249,8 @@ impl<
 
         // e. new oracle and target
         let f = vec![F::one(); n]; // TODO placeholder
+        let w = vec![F::zero(); k];
+        let beta = (vec![F::zero(); log_M], vec![F::zero(); N]);
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let zeta_0 = vec![F::default(); log_n];
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
@@ -249,7 +260,7 @@ impl<
         println!("3.e done");
 
         // f. new commitment
-        let mt_linear_comb = MerkleTree::<MT>::new(
+        let td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
             &f.chunks(1).collect::<Vec<_>>(),
@@ -257,11 +268,11 @@ impl<
         .unwrap();
 
         // g. absorb new commitment and target
-        prover_state.add_digest(mt_linear_comb.root())?;
+        prover_state.add_digest(td.root())?;
         prover_state.add_scalars(&[eta, nu_0])?;
 
         // h. ood samples
-        let n_ood_samples = self.s * log_n;
+        let n_ood_samples = self.config.s * log_n;
         let mut ood_samples = vec![F::default(); n_ood_samples];
         prover_state.fill_challenge_scalars(&mut ood_samples)?;
         let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
@@ -284,8 +295,9 @@ impl<
         nus.extend(ood_answers);
 
         // k. shift queries and zerocheck randomness
-        let (r, log_r) = (1 + self.s + self.t, log2(1 + self.s + self.t) as usize);
-        let n_shift_queries = (self.t * log_n).div_ceil(8);
+        let r = 1 + self.config.s + self.config.t;
+        let log_r = log2(r) as usize;
+        let n_shift_queries = (self.config.t * log_n).div_ceil(8);
         let mut bytes_shift_queries = vec![0u8; n_shift_queries];
         let mut xi = vec![F::default(); log_r];
 
@@ -305,7 +317,7 @@ impl<
                     })
                     .collect::<Vec<_>>()
             })
-            .take(self.t * log_n)
+            .take(self.config.t * log_n)
             .collect::<Vec<F>>();
 
         let binary_shift_queries = binary_shift_queries.chunks(log_n).collect::<Vec<&[F]>>();
@@ -333,7 +345,7 @@ impl<
             .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
             .collect::<Vec<_>>();
 
-        let ood_evals_vec = (0..1 + self.s)
+        let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
                 (0..n)
                     .map(|a| eq_poly(&zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
@@ -346,7 +358,7 @@ impl<
 
         // [CBBZ23] optimization from hyperplonk
         let mut id_non_0_eval_sums = UsizeMap::default();
-        for i in 1 + self.s..r {
+        for i in 1 + self.config.s..r {
             let a = zetas[i]
                 .iter()
                 .enumerate()
@@ -360,7 +372,7 @@ impl<
 
         let alpha = MultilinearConstraintBatchingSumcheck::prove(
             prover_state,
-            &mut (f, ood_evals_vec, id_non_0_eval_sums),
+            &mut (f.clone(), ood_evals_vec, id_non_0_eval_sums),
             &(),
             log_n,
         )
@@ -417,15 +429,21 @@ impl<
         #[cfg(test)]
         println!("3. computed evaluations for f");
 
+        let acc_instance = (td.root(), alpha, mu, beta, eta);
+        let acc_witness = (td, f, w);
+
         // 4. return
         Ok((
-            td_0.root(),
-            mus,
-            nu_0,
-            nus,
-            auth_0,
-            auth,
-            shift_queries_answers,
+            (acc_instance, acc_witness),
+            (
+                td_0.root(),
+                mus,
+                nu_0,
+                nus,
+                auth_0,
+                auth,
+                shift_queries_answers,
+            ),
         ))
     }
 
@@ -448,7 +466,8 @@ impl<
         ////////////////////////
         // a. verification key
         let (m, n, k) = (vk.0, vk.1, vk.2);
-        let (l1, l2, l) = (self.l1, self.l2, self.l);
+        let (l1, l) = (self.config.l1, self.config.l);
+        let l2 = l - l1;
         let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
 
         // b. instances parsing
@@ -461,18 +480,18 @@ impl<
             .collect();
 
         // c. accumulators parsing
-        let acc_instances = (0..l2)
-            .map(|_| {
-                let mut alpha = vec![F::default(); log_n];
-                let mut beta = vec![F::default(); log_m + n];
-                let mut mu_eta = vec![F::default(); 2];
-                let rt = verifier_state.read_digest()?;
-                verifier_state.fill_next_scalars(&mut alpha)?;
-                verifier_state.fill_next_scalars(&mut beta)?;
-                verifier_state.fill_next_scalars(&mut mu_eta)?;
-                Ok((rt, alpha, mu_eta[0], beta, mu_eta[1]))
-            })
-            .collect::<Result<Vec<Self::AccumulatorInstance>, ProofError>>();
+        //let acc_instances = (0..l2)
+        //    .map(|_| {
+        //        let mut alpha = vec![F::default(); log_n];
+        //        let mut beta = vec![F::default(); log_m + n];
+        //        let mut mu_eta = vec![F::default(); 2];
+        //        let rt = verifier_state.read_digest()?;
+        //        verifier_state.fill_next_scalars(&mut alpha)?;
+        //        verifier_state.fill_next_scalars(&mut beta)?;
+        //        verifier_state.fill_next_scalars(&mut mu_eta)?;
+        //        Ok((rt, alpha, mu_eta[0], beta, mu_eta[1]))
+        //    })
+        //    .collect::<Result<Vec<Self::AccumulatorInstance>, ProofError>>();
 
         // d. final accumulator
         let (rt, alpha, mu, beta, eta) = acc_instance;
@@ -519,7 +538,7 @@ pub mod tests {
                 },
                 R1CS,
             },
-            relation::ToPolySystem,
+            relation::{BundledPESAT, ToPolySystem},
             Relation,
         },
         utils::poseidon,
@@ -527,12 +546,11 @@ pub mod tests {
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
     use ark_ff::UniformRand;
-    use ark_std::log2;
     use rand::thread_rng;
     use spongefish::DomainSeparator;
     use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
-    use super::WARP;
+    use super::{WARPConfig, WARP};
 
     #[test]
     pub fn warp_test() {
@@ -579,12 +597,14 @@ pub mod tests {
             hash_chain_size,
         ))
         .unwrap();
+
+        let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
         let hash_chain_warp = WARP::<
             BLS12_381,
             R1CS<BLS12_381>,
             _,
             Blake3MerkleTreeParams<BLS12_381>,
-        >::new(l1, l1, 0, s, t, r1cs.clone(), code.clone(), (), ());
+        >::new(warp_config.clone(), code.clone(), (), ());
 
         let domainsep = DomainSeparator::new("test::warp");
 
@@ -592,20 +612,7 @@ pub mod tests {
             BLS12_381,
             ReedSolomon<BLS12_381>,
             Blake3MerkleTreeParams<BLS12_381>,
-        >::warp(
-            domainsep,
-            code,
-            hash_chain_warp.l1,
-            hash_chain_warp.l2,
-            hash_chain_warp.s,
-            hash_chain_warp.t,
-            hash_chain_warp.p.n,
-            hash_chain_warp.p.k,
-            hash_chain_warp.p.log_n,
-            hash_chain_warp.p.log_m,
-            log2(hash_chain_warp.l) as usize,
-            log2(1 + hash_chain_warp.s + hash_chain_warp.t) as usize,
-        );
+        >::warp(domainsep, warp_config);
         let mut prover_state = domainsep.to_prover_state();
 
         let pf = hash_chain_warp
