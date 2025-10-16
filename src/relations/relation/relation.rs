@@ -27,4 +27,6 @@ pub trait BundledPESAT<F: Field> {
     fn config(&self) -> Self::Config;
 
     fn description(&self) -> Vec<u8>;
+
+    fn constraints(&self) -> &Self::Constraints;
 }

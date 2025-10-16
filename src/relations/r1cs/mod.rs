@@ -18,12 +18,14 @@ use crate::WARPError;
 
 use super::relation::BundledPESAT;
 
+pub type R1CSConstraints<F> = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
+
 #[derive(Clone)]
 pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
     // point is encoded via the n least significant bits of a usize
-    pub p: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>,
+    pub p: R1CSConstraints<F>,
     pub m: usize,
     pub n: usize,
     pub k: usize,
@@ -94,7 +96,7 @@ impl<F: Field> R1CS<F> {
 
 impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Config = (usize, usize, usize);
-    type Constraints = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
+    type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
         let mut cube = BinaryHypercube::new(self.log_m);
@@ -115,5 +117,9 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
 
     fn description(&self) -> Vec<u8> {
         todo!()
+    }
+
+    fn constraints(&self) -> &Self::Constraints {
+        &self.p
     }
 }

@@ -39,14 +39,15 @@ pub struct MultilinearConstraintBatchingSumcheck {}
 
 impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
     type Evaluations = (Vec<F>, Vec<Vec<F>>, UsizeMap<F>);
-    type Auxiliary<'a> = ();
+    type ProverAuxiliary<'a> = ();
+    type VerifierAuxiliary<'a> = ();
     type Target = F;
     type Challenge = F;
 
     fn prove_round(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         (f_evals, ood_evals_vec, id_non_0_eval_sums): &mut Self::Evaluations,
-        _aux: &Self::Auxiliary<'_>,
+        _aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
             .step_by(2)
@@ -84,6 +85,7 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
     fn verify_round(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
+        aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
         if sum_00 + sum_11 != *target {
@@ -174,6 +176,7 @@ pub fn verifier<F: Field, const R: usize, const N: usize>(
     let alpha = MultilinearConstraintBatchingSumcheck::verify(
         verifier_state,
         &mut sigma,
+        &(),
         log2(N) as usize,
     )?;
 

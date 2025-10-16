@@ -1,5 +1,9 @@
 use crate::{
-    iors::multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
+    iors::{
+        multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
+        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
+    },
+    relations::r1cs::{R1CSConstraints, R1CS},
     sumcheck::Sumcheck,
     utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
 };
@@ -51,6 +55,7 @@ pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Conf
     _f: PhantomData<F>,
     config: WARPConfig<F, P>,
     code: C,
+    p: P,
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
     mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 }
@@ -65,6 +70,7 @@ impl<
     pub fn new(
         config: WARPConfig<F, P>,
         code: C,
+        p: P,
         mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
         mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
     ) -> WARP<F, P, C, MT> {
@@ -72,6 +78,7 @@ impl<
             _f: PhantomData,
             config,
             code,
+            p,
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,
         }
@@ -80,7 +87,7 @@ impl<
 
 impl<
         F: Field,
-        P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
+        P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
     > AccumulationScheme<F, MT> for WARP<F, P, C, MT>
@@ -131,7 +138,7 @@ impl<
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
-        assert!(instances.len() > 1);
+        debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.len(), acc_instances.len());
 
@@ -199,9 +206,7 @@ impl<
             codewords[i] = f_i;
         }
 
-        println!("code len: {}", self.code.code_len());
         let codewords_as_leaves: Vec<&[F]> = codewords_as_leaves.chunks_exact(l1).collect();
-        println!("n leaves: {}", codewords_as_leaves.len());
 
         // c. commit to witnesses
         let td_0 = MerkleTree::<MT>::new(
@@ -244,6 +249,28 @@ impl<
         let tau_eq_evals = BinaryHypercube::new(log_l)
             .map(|p| eq_poly(&tau, p))
             .collect::<Vec<F>>();
+
+        // TODO: add l2 instances
+        let z_vecs = instances
+            .iter()
+            .zip(witnesses)
+            .map(|(x, w)| [&x[..], &w].concat())
+            .collect();
+        let beta_vecs = betas.into_iter().map(|(beta, _)| beta.clone()).collect();
+        let alpha_vecs = vec![vec![F::zero(); log_n]; l1];
+        let mut evals = Evals::new(
+            codewords.clone(),
+            z_vecs,
+            alpha_vecs,
+            beta_vecs,
+            tau_eq_evals,
+        );
+        TwinConstraintPseudoBatchingSumcheck::prove(
+            prover_state,
+            &mut evals,
+            &(self.p.constraints(), omega),
+            log_l,
+        );
 
         let fn_f_i = ();
 
@@ -604,7 +631,9 @@ pub mod tests {
             R1CS<BLS12_381>,
             _,
             Blake3MerkleTreeParams<BLS12_381>,
-        >::new(warp_config.clone(), code.clone(), (), ());
+        >::new(
+            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
+        );
 
         let domainsep = DomainSeparator::new("test::warp");
 

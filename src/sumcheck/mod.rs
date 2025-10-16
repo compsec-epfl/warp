@@ -42,25 +42,27 @@ pub fn protogalaxy_trick<F: Field>(
 
 pub trait Sumcheck<F: Field> {
     type Evaluations;
-    type Auxiliary<'a>;
+    type ProverAuxiliary<'a>;
+    type VerifierAuxiliary<'a>;
     type Target;
     type Challenge;
 
     fn prove_round(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
-        aux: &Self::Auxiliary<'_>,
+        aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError>;
 
     fn verify_round(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
+        aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError>;
 
     fn prove(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
-        aux: &Self::Auxiliary<'_>,
+        aux: &Self::ProverAuxiliary<'_>,
         n_rounds: usize,
     ) -> Result<Vec<Self::Challenge>, WARPError> {
         let mut challenges = Vec::with_capacity(n_rounds);
@@ -74,11 +76,12 @@ pub trait Sumcheck<F: Field> {
     fn verify(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
+        aux: &Self::VerifierAuxiliary<'_>,
         n_rounds: usize,
     ) -> Result<Vec<Self::Challenge>, WARPError> {
         let mut challenges = Vec::with_capacity(n_rounds);
         for _ in 0..n_rounds {
-            let c = Self::verify_round(verifier_state, target)?;
+            let c = Self::verify_round(verifier_state, target, aux)?;
             challenges.push(c);
         }
         Ok(challenges)
