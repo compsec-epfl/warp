@@ -46,6 +46,39 @@ impl<
         P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+    > WARP<F, P, C, MT>
+{
+    pub fn new(
+        l: usize,
+        l1: usize,
+        l2: usize,
+        s: usize,
+        t: usize,
+        p: P,
+        code: C,
+        mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
+        mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+    ) -> WARP<F, P, C, MT> {
+        Self {
+            _f: PhantomData,
+            l,
+            l1,
+            l2,
+            s,
+            t,
+            p,
+            code,
+            mt_leaf_hash_params,
+            mt_two_to_one_hash_params,
+        }
+    }
+}
+
+impl<
+        F: Field,
+        P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
+        C: LinearCode<F> + Clone,
+        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
     > AccumulationScheme<F, MT> for WARP<F, P, C, MT>
 {
     type Index = P;
@@ -73,6 +106,7 @@ impl<
     ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)> {
         let (m, n, k) = index.config();
         // initialize prover state for fs
+        // TODO for R1CS
         prover_state.add_bytes(&index.description())?;
         prover_state.add_scalars(&[F::from(m as u32), F::from(n as u32), F::from(k as u32)])?;
         Ok(((index.clone(), m, n, k), (m, n, k)))
@@ -103,9 +137,12 @@ impl<
         // 1. Parsing phase
         ////////////////////////
         // a. index
-        let (m, n, k) = (pk.1, pk.2, pk.3);
-        let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
-        debug_assert_eq!(instances[0].len(), n - k);
+        #[allow(non_snake_case)]
+        let (M, N, k) = (pk.1, pk.2, pk.3);
+        #[allow(non_snake_case)]
+        let (log_M, log_l) = (log2(M) as usize, log2(l) as usize);
+
+        debug_assert_eq!(instances[0].len(), N - k);
 
         // b. and c. statements and accumulators
         // d. absorb parameters
@@ -123,23 +160,28 @@ impl<
                 Ok(())
             })?;
 
+        #[cfg(test)]
+        println!("1. Parsing done");
+
         ////////////////////////
         // 2. PESAT Reduction
         ////////////////////////
-        let code_length = self.code.code_len();
+        let n = self.code.code_len();
+        let log_n = log2(n) as usize;
+
         let alpha = 0;
 
-        let mut codewords = vec![vec![F::default(); code_length]; l1];
+        let mut codewords = vec![vec![F::default(); n]; l1];
 
         // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        let mut codewords_as_leaves = vec![F::default(); l1 * code_length];
+        let mut codewords_as_leaves = vec![F::default(); l1 * n];
         let mut mus = vec![F::default(); l1];
 
         // a. encode witnesses and b. evaluation claims
-        for i in 0..self.l1 {
+        for i in 0..l1 {
             let f_i = self.code.encode(&witnesses[i]);
             // stacking codewords in flat array, which we chunk below
-            // [w_0[0], .., w_{N-1}[0], .., w_0[N-1], .., w_{N-1}[N-1]] // L * N elements
+            // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
             for (j, value) in f_i.iter().enumerate() {
                 codewords_as_leaves[(j * l1) + i] = *value;
             }
@@ -148,8 +190,9 @@ impl<
             codewords[i] = f_i;
         }
 
-        let codewords_as_leaves: Vec<&[F]> =
-            codewords_as_leaves.chunks_exact(code_length).collect();
+        println!("code len: {}", self.code.code_len());
+        let codewords_as_leaves: Vec<&[F]> = codewords_as_leaves.chunks_exact(l1).collect();
+        println!("n leaves: {}", codewords_as_leaves.len());
 
         // c. commit to witnesses
         let td_0 = MerkleTree::<MT>::new(
@@ -159,19 +202,25 @@ impl<
         )
         .unwrap();
 
+        #[cfg(test)]
+        println!("2.c committing to witness done");
+
         // d. absorb commitment and code evaluations
         prover_state.add_digest(td_0.root())?;
         prover_state.add_scalars(&mus)?;
 
         // e. zero check randomness and f. bundled evaluations
-        let mut betas = vec![(vec![F::default(); log_m], vec![F::default(); n]); l1];
+        let mut betas = vec![(vec![F::default(); log_M], vec![F::default(); N]); l1];
         let etas = vec![F::zero(); instances.len()];
 
         for i in 0..l1 {
-            let mut tau_i = vec![F::default(); log_m];
+            let mut tau_i = vec![F::default(); log_M];
             prover_state.fill_challenge_scalars(&mut tau_i)?;
             betas[i] = (tau_i, instances[i].clone()); // bundled evaluations
         }
+
+        #[cfg(test)]
+        println!("2. PESAT reduction done");
 
         ////////////////////////
         // 3. Constrained Code Accumulation
@@ -182,7 +231,6 @@ impl<
         prover_state.fill_challenge_scalars(&mut tau)?;
 
         // b. define [...]
-
         // c. sumcheck protocol
         let tau_eq_evals = BinaryHypercube::new(log_l)
             .map(|p| eq_poly(&tau, p))
@@ -191,13 +239,14 @@ impl<
         let fn_f_i = ();
 
         // e. new oracle and target
-        let f = vec![F::zero(); n]; // TODO placeholder
+        let f = vec![F::one(); n]; // TODO placeholder
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let zeta_0 = vec![F::default(); log_n];
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
+        let eta = F::zero();
 
-        let mut zetas = vec![zeta_0.as_slice()];
-        let mut nus = vec![nu_0];
+        #[cfg(test)]
+        println!("3.e done");
 
         // f. new commitment
         let mt_linear_comb = MerkleTree::<MT>::new(
@@ -206,8 +255,6 @@ impl<
             &f.chunks(1).collect::<Vec<_>>(),
         )
         .unwrap();
-
-        let eta = F::zero();
 
         // g. absorb new commitment and target
         prover_state.add_digest(mt_linear_comb.root())?;
@@ -225,9 +272,14 @@ impl<
             .map(|ood_p| f_hat.fix_variables(ood_p)[0])
             .collect::<Vec<F>>();
 
+        #[cfg(test)]
+        println!("3.i done");
+
         // j. absorb ood answers
         prover_state.add_scalars(&ood_answers)?;
 
+        let mut zetas = vec![zeta_0.as_slice()];
+        let mut nus = vec![nu_0];
         zetas.extend(ood_samples);
         nus.extend(ood_answers);
 
@@ -283,15 +335,18 @@ impl<
 
         let ood_evals_vec = (0..1 + self.s)
             .map(|i| {
-                (0..r)
+                (0..n)
                     .map(|a| eq_poly(&zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
 
+        #[cfg(test)]
+        println!("3.l done");
+
         // [CBBZ23] optimization from hyperplonk
         let mut id_non_0_eval_sums = UsizeMap::default();
-        for i in (1 + self.s)..r {
+        for i in 1 + self.s..r {
             let a = zetas[i]
                 .iter()
                 .enumerate()
@@ -299,6 +354,9 @@ impl<
                 .sum::<usize>();
             *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
         }
+
+        #[cfg(test)]
+        println!("3. starting sumcheck");
 
         let alpha = MultilinearConstraintBatchingSumcheck::prove(
             prover_state,
@@ -308,8 +366,14 @@ impl<
         )
         .unwrap();
 
+        #[cfg(test)]
+        println!("3.l sumcheck done");
+
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
+
+        #[cfg(test)]
+        println!("3.m new target done");
 
         // n. compute authentication paths
         let auth_0: Vec<Path<MT>> = shift_queries_indexes
@@ -319,6 +383,9 @@ impl<
                     .map_err(|_| ProofError::InvalidProof)
             })
             .collect::<Result<Vec<Path<MT>>, ProofError>>()?;
+
+        #[cfg(test)]
+        println!("3.n auth0 done");
 
         let auth: Vec<Vec<Path<MT>>> = acc_witnesses // for each accumulated witness and for each
             // query index, get corresponding auth path
@@ -334,7 +401,9 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, ProofError>>()?;
 
-        let shift_queries_answers = witnesses
+        #[cfg(test)]
+        println!("3.n auth done");
+        let shift_queries_answers = codewords
             .iter()
             .chain(acc_witnesses.iter().map(|(_, f, _)| f))
             .map(|f| {
@@ -345,6 +414,10 @@ impl<
             })
             .collect::<Vec<Vec<F>>>();
 
+        #[cfg(test)]
+        println!("3. computed evaluations for f");
+
+        // 4. return
         Ok((
             td_0.root(),
             mus,
@@ -428,5 +501,122 @@ impl<
 
     fn decide() {
         todo!()
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::marker::PhantomData;
+
+    use crate::{
+        accumulator::AccumulationScheme,
+        domainsep::WARPDomainSeparator,
+        linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
+        relations::{
+            r1cs::{
+                hashchain::{
+                    compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness,
+                },
+                R1CS,
+            },
+            relation::ToPolySystem,
+            Relation,
+        },
+        utils::poseidon,
+    };
+    use ark_bls12_381::Fr as BLS12_381;
+    use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
+    use ark_ff::UniformRand;
+    use ark_std::log2;
+    use rand::thread_rng;
+    use spongefish::DomainSeparator;
+    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
+
+    use super::WARP;
+
+    #[test]
+    pub fn warp_test() {
+        let l1 = 4;
+        let s = 8;
+        let t = 7;
+        let hash_chain_size = 10;
+        let mut rng = thread_rng();
+        let poseidon_config = poseidon::initialize_poseidon_config::<BLS12_381>();
+        let r1cs = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+            poseidon_config.clone(),
+            hash_chain_size,
+        ))
+        .unwrap();
+        let code_config =
+            ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
+        let code = ReedSolomon::new(code_config);
+
+        let instances_witnesses: (Vec<Vec<BLS12_381>>, Vec<Vec<BLS12_381>>) = (0..l1)
+            .map(|_| {
+                let preimage = vec![BLS12_381::rand(&mut rng)];
+                let instance = HashChainInstance {
+                    digest: compute_hash_chain::<BLS12_381, CRH<_>>(
+                        &poseidon_config,
+                        &preimage,
+                        hash_chain_size,
+                    ),
+                };
+                let witness = HashChainWitness {
+                    preimage,
+                    _crhs_scheme: PhantomData::<CRH<BLS12_381>>,
+                };
+                let relation = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::new(
+                    instance,
+                    witness,
+                    (poseidon_config.clone(), hash_chain_size),
+                );
+                (relation.x, relation.w)
+            })
+            .unzip();
+
+        let r1cs = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+            poseidon_config.clone(),
+            hash_chain_size,
+        ))
+        .unwrap();
+        let hash_chain_warp = WARP::<
+            BLS12_381,
+            R1CS<BLS12_381>,
+            _,
+            Blake3MerkleTreeParams<BLS12_381>,
+        >::new(l1, l1, 0, s, t, r1cs.clone(), code.clone(), (), ());
+
+        let domainsep = DomainSeparator::new("test::warp");
+
+        let domainsep = WARPDomainSeparator::<
+            BLS12_381,
+            ReedSolomon<BLS12_381>,
+            Blake3MerkleTreeParams<BLS12_381>,
+        >::warp(
+            domainsep,
+            code,
+            hash_chain_warp.l1,
+            hash_chain_warp.l2,
+            hash_chain_warp.s,
+            hash_chain_warp.t,
+            hash_chain_warp.p.n,
+            hash_chain_warp.p.k,
+            hash_chain_warp.p.log_n,
+            hash_chain_warp.p.log_m,
+            log2(hash_chain_warp.l) as usize,
+            log2(1 + hash_chain_warp.s + hash_chain_warp.t) as usize,
+        );
+        let mut prover_state = domainsep.to_prover_state();
+
+        let pf = hash_chain_warp
+            .prove(
+                (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                &mut prover_state,
+                instances_witnesses.1,
+                instances_witnesses.0,
+                vec![],
+                vec![],
+            )
+            .unwrap();
     }
 }

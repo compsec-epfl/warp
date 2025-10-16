@@ -10,6 +10,7 @@ use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
 use whir::crypto::merkle_tree::digest::GenericDigest;
 
 pub mod poly;
+pub mod poseidon;
 
 pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();
