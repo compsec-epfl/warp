@@ -74,11 +74,21 @@ impl<
 
         prover_state = prover_state.add_digest("td_0");
         prover_state = prover_state.add_scalars(config.l1, "mus");
+
         for _ in 0..config.l1 {
             prover_state = prover_state.challenge_scalars(log_M, "tau_i");
         }
+
         prover_state = prover_state.challenge_scalars(1, "omega");
         prover_state = prover_state.challenge_scalars(log_l, "tau");
+
+        // sumcheck twin constraints pseudo batching
+        for i in 0..log_l {
+            prover_state = prover_state
+                .add_scalars(2 + (log_n as usize + 1).max(log_M + 2), &format!("h_{}", i))
+                .challenge_scalars(1, &format!("challenge_{}", i));
+        }
+
         prover_state = prover_state.add_digest("mt_linear_comb");
         prover_state = prover_state.add_scalars(2, "eta_nu0");
         prover_state = prover_state.challenge_scalars(config.s * log_n, "odd_samples");

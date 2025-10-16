@@ -251,6 +251,7 @@ impl<
             .collect::<Vec<F>>();
 
         // TODO: add l2 instances
+        // TODO: remove all `clone()` calls
         let z_vecs = instances
             .iter()
             .zip(witnesses)
@@ -265,12 +266,18 @@ impl<
             beta_vecs,
             tau_eq_evals,
         );
-        TwinConstraintPseudoBatchingSumcheck::prove(
+
+        #[cfg(test)]
+        println!("starting pseudo batching sumcheck");
+        let gamma = TwinConstraintPseudoBatchingSumcheck::prove(
             prover_state,
             &mut evals,
             &(self.p.constraints(), omega),
             log_l,
-        );
+        )
+        .unwrap();
+
+        debug_assert_eq!(gamma.len(), log_l);
 
         let fn_f_i = ();
 
