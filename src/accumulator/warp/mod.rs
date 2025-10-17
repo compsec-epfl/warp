@@ -1,4 +1,5 @@
 use crate::{
+    concat_slices,
     iors::{
         multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
         twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
@@ -95,10 +96,16 @@ impl<
     type Index = P;
     type ProverKey = (P, usize, usize, usize);
     type VerifierKey = (usize, usize, usize);
-    type Instance = Vec<F>;
-    type Witness = Vec<F>;
-    type AccumulatorInstance = (MT::InnerDigest, Vec<F>, F, (Vec<F>, Vec<F>), F); // (rt, \alpha, \mu, \beta (\tau, x), \eta)
-    type AccumulatorWitness = (MerkleTree<MT>, Vec<F>, Vec<F>); // (td, f, w)
+    type Instances = Vec<Vec<F>>;
+    type Witnesses = Vec<Vec<F>>;
+    type AccumulatorInstances = (
+        Vec<MT::InnerDigest>,
+        Vec<Vec<F>>,
+        Vec<F>,
+        (Vec<Vec<F>>, Vec<Vec<F>>),
+        Vec<F>,
+    ); // (rt, \alpha, \mu, \beta (\tau, x), \eta)
+    type AccumulatorWitnesses = (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>); // (td, f, w)
 
     // (rt_0, \mu_i, \nu_0, \nu_i, auth_0, auth_j, ((f_i(x_j))))
     type Proof = (
@@ -127,12 +134,12 @@ impl<
         &self,
         pk: Self::ProverKey,
         prover_state: &mut ProverState,
-        witnesses: Vec<Self::Witness>,
-        instances: Vec<Self::Instance>,
-        acc_instances: Vec<Self::AccumulatorInstance>,
-        acc_witnesses: Vec<Self::AccumulatorWitness>,
+        witnesses: Self::Witnesses,
+        instances: Self::Instances,
+        acc_instances: Self::AccumulatorInstances,
+        acc_witnesses: Self::AccumulatorWitnesses,
     ) -> ProofResult<(
-        (Self::AccumulatorInstance, Self::AccumulatorWitness),
+        (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
         Self::Proof,
     )>
     where
@@ -140,7 +147,7 @@ impl<
     {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
-        debug_assert_eq!(acc_witnesses.len(), acc_instances.len());
+        debug_assert_eq!(acc_witnesses.0.len(), acc_instances.0.len());
 
         let (l1, l) = (self.config.l1, self.config.l);
         let l2 = l - l1;
@@ -164,17 +171,36 @@ impl<
         instances
             .iter()
             .try_for_each(|x| prover_state.add_scalars(x))?;
-
+        // roots
         acc_instances
+            .0
+            .into_iter()
+            .try_for_each(|digest| prover_state.add_digest(digest))?;
+
+        // alpha
+        acc_instances
+            .1
             .iter()
-            .try_for_each::<_, Result<(), ProofError>>(|x| {
-                prover_state.add_digest(x.0.clone())?; // mt root
-                prover_state.add_scalars(&x.1)?; // \alpha
-                prover_state.add_scalars(&(x.3).0)?; // \beta.tau
-                prover_state.add_scalars(&(x.3).1)?; // \beta.x
-                prover_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
-                Ok(())
-            })?;
+            .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
+
+        // mu
+        prover_state.add_scalars(&acc_instances.2)?;
+
+        // taus
+        acc_instances
+            .3
+             .0
+            .iter()
+            .try_for_each(|tau| prover_state.add_scalars(tau))?;
+        // xs
+        acc_instances
+            .3
+             .1
+            .iter()
+            .try_for_each(|x| prover_state.add_scalars(x))?;
+
+        // etas
+        prover_state.add_scalars(&acc_instances.4)?;
 
         #[cfg(test)]
         println!("1. Parsing done");
@@ -224,13 +250,13 @@ impl<
         prover_state.add_scalars(&mus)?;
 
         // e. zero check randomness and f. bundled evaluations
-        let mut betas = vec![(vec![F::default(); log_M], vec![F::default(); N]); l1];
+        let mut taus = vec![vec![F::default(); log_M]; l1];
         let etas = vec![F::zero(); instances.len()];
 
         for i in 0..l1 {
             let mut tau_i = vec![F::default(); log_M];
             prover_state.fill_challenge_scalars(&mut tau_i)?;
-            betas[i] = (tau_i, instances[i].clone()); // bundled evaluations
+            taus[i] = tau_i; // bundled evaluations
         }
 
         #[cfg(test)]
@@ -250,15 +276,18 @@ impl<
             .map(|p| eq_poly(&tau, p))
             .collect::<Vec<F>>();
 
-        // TODO: add l2 instances
-        // TODO: remove all `clone()` calls
-        let z_vecs = instances
+        let z_vecs = acc_instances
+            .3
+             .1
             .iter()
-            .zip(witnesses)
-            .map(|(x, w)| [&x[..], &w].concat())
+            .zip(&acc_witnesses.2)
+            .chain(instances.iter().zip(&witnesses))
+            .map(|(x, w)| concat_slices(x, w))
             .collect();
-        let beta_vecs = betas.into_iter().map(|(beta, _)| beta.clone()).collect();
-        let alpha_vecs = vec![vec![F::zero(); log_n]; l1];
+
+        let beta_vecs = acc_instances.3 .0.into_iter().chain(taus).collect();
+        let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
+
         let mut evals = Evals::new(
             codewords.clone(),
             z_vecs,
@@ -284,7 +313,7 @@ impl<
         // e. new oracle and target
         let f = vec![F::one(); n]; // TODO placeholder
         let w = vec![F::zero(); k];
-        let beta = (vec![F::zero(); log_M], vec![F::zero(); N]);
+        let beta = (vec![vec![F::zero(); log_M]], vec![vec![F::zero(); N]]);
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let zeta_0 = vec![F::default(); log_n];
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
@@ -433,10 +462,11 @@ impl<
         #[cfg(test)]
         println!("3.n auth0 done");
 
-        let auth: Vec<Vec<Path<MT>>> = acc_witnesses // for each accumulated witness and for each
+        let auth: Vec<Vec<Path<MT>>> = acc_witnesses
+            .0 // for each accumulated witness and for each
             // query index, get corresponding auth path
             .iter()
-            .map(|(td, _, _)| {
+            .map(|td| {
                 shift_queries_indexes
                     .iter()
                     .map(|x_t| {
@@ -451,7 +481,7 @@ impl<
         println!("3.n auth done");
         let shift_queries_answers = codewords
             .iter()
-            .chain(acc_witnesses.iter().map(|(_, f, _)| f))
+            .chain(&acc_witnesses.1)
             .map(|f| {
                 shift_queries_indexes
                     .iter()
@@ -463,8 +493,8 @@ impl<
         #[cfg(test)]
         println!("3. computed evaluations for f");
 
-        let acc_instance = (td.root(), alpha, mu, beta, eta);
-        let acc_witness = (td, f, w);
+        let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
+        let acc_witness = (vec![td], vec![f], vec![w]);
 
         // 4. return
         Ok((
@@ -485,7 +515,7 @@ impl<
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: Self::AccumulatorInstance,
+        acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
     ) -> ProofResult<()>
     where
@@ -657,8 +687,8 @@ pub mod tests {
                 &mut prover_state,
                 instances_witnesses.1,
                 instances_witnesses.0,
-                vec![],
-                vec![],
+                (vec![], vec![], vec![], (vec![], vec![]), vec![]),
+                (vec![], vec![], vec![]),
             )
             .unwrap();
     }

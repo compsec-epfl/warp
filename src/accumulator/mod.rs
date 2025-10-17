@@ -16,10 +16,10 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
     type Index;
     type ProverKey;
     type VerifierKey;
-    type AccumulatorInstance;
-    type AccumulatorWitness;
-    type Instance;
-    type Witness;
+    type AccumulatorInstances;
+    type AccumulatorWitnesses;
+    type Instances;
+    type Witnesses;
     type Proof;
 
     // on given index, returns prover and verifier keys
@@ -35,12 +35,12 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         &self,
         pk: Self::ProverKey,
         prover_state: &mut ProverState,
-        witnesses: Vec<Self::Witness>,
-        instances: Vec<Self::Instance>,
-        acc_instances: Vec<Self::AccumulatorInstance>,
-        acc_witnesses: Vec<Self::AccumulatorWitness>,
+        witnesses: Self::Witnesses,
+        instances: Self::Instances,
+        acc_instances: Self::AccumulatorInstances,
+        acc_witnesses: Self::AccumulatorWitnesses,
     ) -> ProofResult<(
-        (Self::AccumulatorInstance, Self::AccumulatorWitness),
+        (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
         Self::Proof,
     )>
     where
@@ -50,7 +50,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         &self,
         vk: Self::VerifierKey,
         prover_state: &mut VerifierState<'a>,
-        acc_instance: Self::AccumulatorInstance,
+        acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
     ) -> ProofResult<()>
     where

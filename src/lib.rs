@@ -3,8 +3,8 @@ pub mod domainsep;
 pub mod iors;
 pub mod linear_code;
 pub mod merkle;
-pub mod sumcheck;
 pub mod relations;
+pub mod sumcheck;
 pub mod utils;
 
 use ark_crypto_primitives::Error;
@@ -32,4 +32,11 @@ pub enum WARPError {
     CodewordSize(usize, usize),
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
+}
+
+pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
+    let mut v = Vec::<F>::with_capacity(a.len() + b.len());
+    v.extend_from_slice(a);
+    v.extend_from_slice(b);
+    v
 }
