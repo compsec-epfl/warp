@@ -64,12 +64,16 @@ impl<
             prover_state = prover_state.add_scalars(N - k, "instances");
         }
 
-        for i in 0..l2 {
-            prover_state = prover_state
-                .add_digest(&format!("l2_{}_digest", i))
-                .add_scalars(log_n, &format!("l2_{}_alpha", i))
-                .add_scalars(log_M + N, &format!("l2_{}_beta", i))
-                .add_scalars(2, &format!("l2_{}_mu_eta", i));
+        if l2 > 0 {
+            for i in 0..l2 {
+                prover_state = prover_state.add_digest(&format!("l2_{}_digest", i))
+            }
+
+            prover_state = prover_state.add_scalars(log_n * l2, "l2_alphas");
+            prover_state = prover_state.add_scalars(l2, "l2_mus");
+            prover_state = prover_state.add_scalars(log_M * l2, "l2_taus");
+            prover_state = prover_state.add_scalars((N - k) * l2, "l2_x");
+            prover_state = prover_state.add_scalars(l2, "l2_etas");
         }
 
         prover_state = prover_state.add_digest("td_0");
@@ -98,7 +102,7 @@ impl<
         prover_state = prover_state.challenge_scalars(log_r, "xi");
 
         // sumcheck multilinear constraints batching
-        for i in 0..log2(N) {
+        for i in 0..log_n {
             prover_state = prover_state
                 .add_scalars(3, &format!("h_{}", i))
                 .challenge_scalars(1, &format!("challenge_{}", i));

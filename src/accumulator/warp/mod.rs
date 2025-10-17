@@ -4,7 +4,7 @@ use crate::{
         multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
         twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
     },
-    relations::r1cs::{R1CSConstraints, R1CS},
+    relations::r1cs::R1CSConstraints,
     sumcheck::Sumcheck,
     utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
 };
@@ -171,36 +171,44 @@ impl<
         instances
             .iter()
             .try_for_each(|x| prover_state.add_scalars(x))?;
+
         // roots
         acc_instances
             .0
             .into_iter()
             .try_for_each(|digest| prover_state.add_digest(digest))?;
+        println!("absorbed acc roots");
 
         // alpha
         acc_instances
             .1
             .iter()
             .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
+        println!("absorbed acc alphas");
 
         // mu
         prover_state.add_scalars(&acc_instances.2)?;
+        println!("absorbed acc mu");
 
-        // taus
+        //// taus
         acc_instances
             .3
              .0
             .iter()
             .try_for_each(|tau| prover_state.add_scalars(tau))?;
-        // xs
+        println!("absorbed acc taus");
+
+        //// xs
         acc_instances
             .3
              .1
             .iter()
             .try_for_each(|x| prover_state.add_scalars(x))?;
+        println!("absorbed acc xs");
 
-        // etas
+        //// etas
         prover_state.add_scalars(&acc_instances.4)?;
+        println!("absorbed acc etas");
 
         #[cfg(test)]
         println!("1. Parsing done");
@@ -276,7 +284,10 @@ impl<
             .map(|p| eq_poly(&tau, p))
             .collect::<Vec<F>>();
 
-        let z_vecs = acc_instances
+        let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
+        dbg!(alpha_vecs.len());
+
+        let z_vecs: Vec<Vec<F>> = acc_instances
             .3
              .1
             .iter()
@@ -285,16 +296,19 @@ impl<
             .map(|(x, w)| concat_slices(x, w))
             .collect();
 
-        let beta_vecs = acc_instances.3 .0.into_iter().chain(taus).collect();
-        let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
+        dbg!(z_vecs.len());
+        let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
+        dbg!(beta_vecs.len());
+        let all_codewords: Vec<Vec<F>> = acc_witnesses
+            .1
+            .clone()
+            .into_iter()
+            .chain(codewords.clone().into_iter())
+            .collect();
 
-        let mut evals = Evals::new(
-            codewords.clone(),
-            z_vecs,
-            alpha_vecs,
-            beta_vecs,
-            tau_eq_evals,
-        );
+        dbg!(all_codewords.len());
+        // TODO: remove clone
+        let mut evals = Evals::new(all_codewords, z_vecs, alpha_vecs, beta_vecs, tau_eq_evals);
 
         #[cfg(test)]
         println!("starting pseudo batching sumcheck");
@@ -313,7 +327,7 @@ impl<
         // e. new oracle and target
         let f = vec![F::one(); n]; // TODO placeholder
         let w = vec![F::zero(); k];
-        let beta = (vec![vec![F::zero(); log_M]], vec![vec![F::zero(); N]]);
+        let beta = (vec![vec![F::zero(); log_M]], vec![vec![F::zero(); N - k]]);
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let zeta_0 = vec![F::default(); log_n];
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
@@ -672,23 +686,84 @@ pub mod tests {
             warp_config.clone(), code.clone(), r1cs.clone(), (), ()
         );
 
-        let domainsep = DomainSeparator::new("test::warp");
+        let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
+            (vec![], vec![], vec![], vec![], vec![], vec![]);
+        let (mut acc_tds, mut acc_f, mut acc_ws) = (vec![], vec![], vec![]);
 
+        for _ in 0..l1 {
+            let domainsep = DomainSeparator::new("test::warp");
+
+            let domainsep = WARPDomainSeparator::<
+                BLS12_381,
+                ReedSolomon<BLS12_381>,
+                Blake3MerkleTreeParams<BLS12_381>,
+            >::warp(domainsep, warp_config.clone());
+            let mut prover_state = domainsep.to_prover_state();
+            let ((acc_x, acc_w), pf) = hash_chain_warp
+                .prove(
+                    (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                    &mut prover_state,
+                    instances_witnesses.1.clone(),
+                    instances_witnesses.0.clone(),
+                    (vec![], vec![], vec![], (vec![], vec![]), vec![]),
+                    (vec![], vec![], vec![]),
+                )
+                .unwrap();
+            acc_roots.push(acc_x.0[0].clone());
+            acc_alphas.push(acc_x.1[0].clone());
+            acc_mus.push(acc_x.2[0].clone());
+            acc_taus.push(acc_x.3 .0[0].clone());
+            acc_xs.push(acc_x.3 .1[0].clone());
+            acc_eta.push(acc_x.4[0].clone());
+
+            acc_tds.push(acc_w.0[0].clone());
+            acc_f.push(acc_w.1[0].clone());
+            acc_ws.push(acc_w.2[0].clone());
+        }
+        println!("acc roots len: {}", acc_roots.len());
+        println!("acc alphas len: {}", acc_alphas.len());
+        println!("alphas len: {}", acc_alphas[0].len());
+        println!("acc mus len: {}", acc_mus.len());
+
+        println!("acc taus len: {}", acc_taus.len());
+        println!("taus len: {}", acc_taus[0].len());
+
+        println!("acc xs len: {}", acc_xs.len());
+        println!("xs len: {}", acc_xs[0].len());
+
+        println!("acc eta len: {}", acc_eta.len());
+
+        println!("acc ws len: {}", acc_ws.len());
+        println!("ws len: {}", acc_ws[0].len());
+
+        let domainsep = DomainSeparator::new("test::warp");
+        let warp_config =
+            WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
+
+        let hash_chain_warp = WARP::<
+            BLS12_381,
+            R1CS<BLS12_381>,
+            _,
+            Blake3MerkleTreeParams<BLS12_381>,
+        >::new(
+            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
+        );
         let domainsep = WARPDomainSeparator::<
             BLS12_381,
             ReedSolomon<BLS12_381>,
             Blake3MerkleTreeParams<BLS12_381>,
         >::warp(domainsep, warp_config);
-        let mut prover_state = domainsep.to_prover_state();
 
-        let pf = hash_chain_warp
+        println!("[FINAL]");
+        let mut prover_state = domainsep.to_prover_state();
+        let (acc, pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
                 &mut prover_state,
                 instances_witnesses.1,
                 instances_witnesses.0,
-                (vec![], vec![], vec![], (vec![], vec![]), vec![]),
-                (vec![], vec![], vec![]),
+                (acc_roots, acc_alphas, acc_mus, (acc_taus, acc_xs), acc_eta),
+                (acc_tds, acc_f, acc_ws),
             )
             .unwrap();
     }
