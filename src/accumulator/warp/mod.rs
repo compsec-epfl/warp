@@ -12,6 +12,7 @@ use crate::{
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
+    Error,
 };
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
@@ -179,6 +180,7 @@ impl<
         // roots
         acc_instances
             .0
+            .clone()
             .into_iter()
             .try_for_each(|digest| prover_state.add_digest(digest))?;
 
@@ -250,7 +252,6 @@ impl<
 
         // e. zero check randomness and f. bundled evaluations
         let mut taus = vec![vec![F::default(); log_M]; l1];
-        let etas = vec![F::zero(); instances.len()];
 
         for i in 0..l1 {
             let mut tau_i = vec![F::default(); log_M];
@@ -284,6 +285,8 @@ impl<
             .collect();
 
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
+
+        // TODO: remove this clone()
         let all_codewords: Vec<Vec<F>> = acc_witnesses
             .1
             .clone()
@@ -448,13 +451,10 @@ impl<
             .map(|td| {
                 shift_queries_indexes
                     .iter()
-                    .map(|x_t| {
-                        td.generate_proof(*x_t)
-                            .map_err(|_| ProofError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<Path<MT>>, ProofError>>()
+                    .map(|x_t| td.generate_proof(*x_t))
+                    .collect::<Result<Vec<Path<MT>>, Error>>()
             })
-            .collect::<Result<Vec<Vec<Path<MT>>>, ProofError>>()?;
+            .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
         let shift_queries_answers = codewords
             .iter()
@@ -491,7 +491,7 @@ impl<
         verifier_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> ProofResult<()>
+    ) -> Result<(), WARPError>
     where
         VerifierState<'a>: UnitToBytes
             + FieldToUnitDeserialize<F>
@@ -499,61 +499,120 @@ impl<
             + DigestToUnitDeserialize<MT>
             + BytesToUnitDeserialize,
     {
+        let (l1, l) = (self.config.l1, self.config.l);
+        let l2 = l - l1;
+
         ////////////////////////
         // 1. Parsing phase
         ////////////////////////
         // a. verification key
-        let (m, n, k) = (vk.0, vk.1, vk.2);
-        let (l1, l) = (self.config.l1, self.config.l);
-        let l2 = l - l1;
-        let (log_m, log_n, log_l) = (log2(m) as usize, log2(n) as usize, log2(l) as usize);
+        #[allow(non_snake_case)]
+        let (M, N, k) = (vk.0, vk.1, vk.2);
+        #[allow(non_snake_case)]
+        let (log_M, log_l) = (log2(M) as usize, log2(l) as usize);
 
-        // b. instances parsing
-        let instances: Vec<Vec<F>> = (0..l1)
-            .map(|_| {
-                let mut instance = vec![F::default(); n - k];
-                verifier_state.fill_next_scalars(&mut instance);
-                instance
-            })
-            .collect();
+        let n = self.code.code_len();
+        let log_n = log2(n) as usize;
 
-        // c. accumulators parsing
-        //let acc_instances = (0..l2)
-        //    .map(|_| {
-        //        let mut alpha = vec![F::default(); log_n];
-        //        let mut beta = vec![F::default(); log_m + n];
-        //        let mut mu_eta = vec![F::default(); 2];
-        //        let rt = verifier_state.read_digest()?;
-        //        verifier_state.fill_next_scalars(&mut alpha)?;
-        //        verifier_state.fill_next_scalars(&mut beta)?;
-        //        verifier_state.fill_next_scalars(&mut mu_eta)?;
-        //        Ok((rt, alpha, mu_eta[0], beta, mu_eta[1]))
-        //    })
-        //    .collect::<Result<Vec<Self::AccumulatorInstance>, ProofError>>();
+        // f. absorb parameters
+        let mut instances = vec![vec![F::default(); N - k]; l1];
+        instances
+            .iter_mut()
+            .try_for_each(|inst| verifier_state.fill_next_scalars(inst))?;
 
-        // d. final accumulator
-        let (rt, alpha, mu, beta, eta) = acc_instance;
+        // l2 instances
+        let l2_roots = (0..l2)
+            .map(|_| verifier_state.read_digest())
+            .collect::<Result<Vec<MT::InnerDigest>, ProofError>>()?;
 
-        // d. absorb parameters
-        //instances
-        //    .iter()
-        //    .try_for_each(|x| verifier_state.fill_next_scalars(output)?;
+        let mut l2_alphas = vec![vec![F::default(); log_n]; l2];
+        l2_alphas
+            .iter_mut()
+            .try_for_each(|alpha| verifier_state.fill_next_scalars(alpha))?;
 
-        //acc_instances
-        //    .iter()
-        //    .try_for_each::<_, Result<(), ProofError>>(|x| {
-        //        verifier_state.add_digest(x.0.clone())?; // mt root
-        //        verifier_state.add_scalars(&x.1)?; // \alpha
-        //        verifier_state.add_scalars(&x.3)?; // \beta
-        //        verifier_state.add_scalars(&[x.2, x.4])?; // [\mu, \eta]
-        //        Ok(())
-        //    })?;
+        let mut l2_mus = vec![F::default(); l2];
+        verifier_state.fill_next_scalars(&mut l2_mus)?;
+
+        let mut l2_taus = vec![vec![F::default(); log_M]; l2];
+        l2_taus
+            .iter_mut()
+            .try_for_each(|tau| verifier_state.fill_next_scalars(tau))?;
+
+        let mut l2_xs = vec![vec![F::default(); N - k]; l2];
+        l2_xs
+            .iter_mut()
+            .try_for_each(|x| verifier_state.fill_next_scalars(x))?;
+
+        let mut l2_etas = vec![F::default(); l2];
+        verifier_state.fill_next_scalars(&mut l2_etas)?;
 
         ////////////////////////
         // 2. Derive randomness
         ////////////////////////
+        let rt_0 = verifier_state.read_digest()?;
+        let mut l1_mus = vec![F::default(); l1];
+        verifier_state.fill_next_scalars(&mut l1_mus)?;
 
-        todo!()
+        let mut taus = vec![vec![F::default(); log_M]; l1];
+
+        for i in 0..l1 {
+            let mut tau_i = vec![F::default(); log_M];
+            verifier_state.fill_challenge_scalars(&mut tau_i)?;
+            taus[i] = tau_i; // bundled evaluations
+        }
+
+        let [omega] = verifier_state.challenge_scalars::<1>()?;
+        let mut tau = vec![F::default(); log_l];
+        verifier_state.fill_challenge_scalars(&mut tau)?;
+
+        // e. twin constraints sumcheck
+        let mut gamma_sumcheck = Vec::new();
+        let mut coeffs_twinc_sumcheck = Vec::new();
+        for _ in 0..log_l {
+            let mut h_coeffs = vec![F::zero(); 2 + (log_n + 1).max(log_M + 2) as usize];
+            verifier_state.fill_next_scalars(&mut h_coeffs)?;
+            let [c] = verifier_state.challenge_scalars::<1>()?;
+            gamma_sumcheck.push(c);
+            coeffs_twinc_sumcheck.push(h_coeffs);
+        }
+
+        let td = verifier_state.read_digest();
+        let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
+
+        // g. ood samples
+        let n_ood_samples = self.config.s * log_n;
+        let mut ood_samples = vec![F::default(); n_ood_samples];
+        verifier_state.fill_challenge_scalars(&mut ood_samples)?;
+        let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
+
+        // h. ood answers
+        let mut ood_answers = vec![F::default(); self.config.s];
+        verifier_state.fill_next_scalars(&mut ood_answers)?;
+
+        // i. shift queries and zero check
+        let r = 1 + self.config.s + self.config.t;
+        let log_r = log2(r) as usize;
+        let n_shift_queries = (self.config.t * log_n).div_ceil(8);
+        let mut bytes_shift_queries = vec![0u8; n_shift_queries];
+        let mut xi = vec![F::default(); log_r];
+        verifier_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
+        verifier_state.fill_challenge_scalars(&mut xi)?;
+
+        // j. batching sumcheck
+        let mut alpha_sumcheck = Vec::new();
+        let mut sums_batching_sumcheck = Vec::new();
+        for _ in 0..log_n {
+            let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
+            let [c] = verifier_state.challenge_scalars::<1>()?;
+            alpha_sumcheck.push(c);
+            sums_batching_sumcheck.push([sum_00, sum_11, sum_0110]);
+        }
+
+        ////////////////////////
+        // 3. Derive values
+        ////////////////////////
+
+        Ok(())
     }
 
     fn decide() {
@@ -680,21 +739,6 @@ pub mod tests {
             acc_f.push(acc_w.1[0].clone());
             acc_ws.push(acc_w.2[0].clone());
         }
-        println!("acc roots len: {}", acc_roots.len());
-        println!("acc alphas len: {}", acc_alphas.len());
-        println!("alphas len: {}", acc_alphas[0].len());
-        println!("acc mus len: {}", acc_mus.len());
-
-        println!("acc taus len: {}", acc_taus.len());
-        println!("taus len: {}", acc_taus[0].len());
-
-        println!("acc xs len: {}", acc_xs.len());
-        println!("xs len: {}", acc_xs[0].len());
-
-        println!("acc eta len: {}", acc_eta.len());
-
-        println!("acc ws len: {}", acc_ws.len());
-        println!("ws len: {}", acc_ws[0].len());
 
         let domainsep = DomainSeparator::new("test::warp");
         let warp_config =
@@ -714,9 +758,8 @@ pub mod tests {
             Blake3MerkleTreeParams<BLS12_381>,
         >::warp(domainsep, warp_config);
 
-        println!("[FINAL]");
         let mut prover_state = domainsep.to_prover_state();
-        let (acc, pf) = hash_chain_warp
+        let ((acc_x, acc_w), pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
                 &mut prover_state,
@@ -725,6 +768,12 @@ pub mod tests {
                 (acc_roots, acc_alphas, acc_mus, (acc_taus, acc_xs), acc_eta),
                 (acc_tds, acc_f, acc_ws),
             )
+            .unwrap();
+
+        let narg_str = prover_state.narg_string();
+        let mut verifier_state = domainsep.to_verifier_state(narg_str);
+        hash_chain_warp
+            .verify((r1cs.m, r1cs.n, r1cs.k), &mut verifier_state, acc_x, pf)
             .unwrap();
     }
 }

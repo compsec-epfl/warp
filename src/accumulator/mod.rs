@@ -58,7 +58,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         prover_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> ProofResult<()>
+    ) -> Result<(), WARPError>
     where
         VerifierState<'a>: UnitToBytes
             + FieldToUnitDeserialize<F>

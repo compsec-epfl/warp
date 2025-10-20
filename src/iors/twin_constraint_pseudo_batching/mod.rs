@@ -96,9 +96,9 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
             .zip(t_iter)
             .map(|((f, p), t)| (f + p * xi).naive_mul(&t))
             .fold(DensePolynomial::zero(), |acc, r| acc + r);
-        println!("coeffs size: {}", h.coeffs.len());
+
         prover_state.add_scalars(&h.coeffs)?;
-        println!("done");
+
         // get challenge
         let [c] = prover_state.challenge_scalars::<1>()?;
         // update evaluation tables
