@@ -181,18 +181,15 @@ impl<
             .0
             .into_iter()
             .try_for_each(|digest| prover_state.add_digest(digest))?;
-        println!("absorbed acc roots");
 
         // alpha
         acc_instances
             .1
             .iter()
             .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
-        println!("absorbed acc alphas");
 
         // mu
         prover_state.add_scalars(&acc_instances.2)?;
-        println!("absorbed acc mu");
 
         //// taus
         acc_instances
@@ -200,7 +197,6 @@ impl<
              .0
             .iter()
             .try_for_each(|tau| prover_state.add_scalars(tau))?;
-        println!("absorbed acc taus");
 
         //// xs
         acc_instances
@@ -208,14 +204,9 @@ impl<
              .1
             .iter()
             .try_for_each(|x| prover_state.add_scalars(x))?;
-        println!("absorbed acc xs");
 
         //// etas
         prover_state.add_scalars(&acc_instances.4)?;
-        println!("absorbed acc etas");
-
-        #[cfg(test)]
-        println!("1. Parsing done");
 
         ////////////////////////
         // 2. PESAT Reduction
@@ -253,9 +244,6 @@ impl<
             codewords_as_leaves,
         )?;
 
-        #[cfg(test)]
-        println!("2.c committing to witness done");
-
         // d. absorb commitment and code evaluations
         prover_state.add_digest(td_0.root())?;
         prover_state.add_scalars(&mus)?;
@@ -269,9 +257,6 @@ impl<
             prover_state.fill_challenge_scalars(&mut tau_i)?;
             taus[i] = tau_i; // bundled evaluations
         }
-
-        #[cfg(test)]
-        println!("2. PESAT reduction done");
 
         ////////////////////////
         // 3. Constrained Code Accumulation
@@ -288,7 +273,6 @@ impl<
             .collect::<Vec<F>>();
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
-        dbg!(alpha_vecs.len());
 
         let z_vecs: Vec<Vec<F>> = acc_instances
             .3
@@ -299,9 +283,7 @@ impl<
             .map(|(x, w)| concat_slices(x, w))
             .collect();
 
-        dbg!(z_vecs.len());
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
-        dbg!(beta_vecs.len());
         let all_codewords: Vec<Vec<F>> = acc_witnesses
             .1
             .clone()
@@ -309,11 +291,8 @@ impl<
             .chain(codewords.clone().into_iter())
             .collect();
 
-        dbg!(all_codewords.len());
         let mut evals = Evals::new(all_codewords, z_vecs, alpha_vecs, beta_vecs, tau_eq_evals);
 
-        #[cfg(test)]
-        println!("starting pseudo batching sumcheck");
         let gamma = TwinConstraintPseudoBatchingSumcheck::prove(
             prover_state,
             &mut evals,
@@ -341,9 +320,6 @@ impl<
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
 
-        #[cfg(test)]
-        println!("3.e done");
-
         // f. new commitment
         let td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
@@ -366,9 +342,6 @@ impl<
             .iter()
             .map(|ood_p| f_hat.fix_variables(ood_p)[0])
             .collect::<Vec<F>>();
-
-        #[cfg(test)]
-        println!("3.i done");
 
         // j. absorb ood answers
         prover_state.add_scalars(&ood_answers)?;
@@ -438,9 +411,6 @@ impl<
             })
             .collect::<Vec<_>>();
 
-        #[cfg(test)]
-        println!("3.l done");
-
         // [CBBZ23] optimization from hyperplonk
         let mut id_non_0_eval_sums = UsizeMap::default();
         for i in 1 + self.config.s..r {
@@ -452,9 +422,6 @@ impl<
             *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
         }
 
-        #[cfg(test)]
-        println!("3. starting sumcheck");
-
         let alpha = MultilinearConstraintBatchingSumcheck::prove(
             prover_state,
             &mut (f.clone(), ood_evals_vec, id_non_0_eval_sums),
@@ -462,14 +429,8 @@ impl<
             log_n,
         )?;
 
-        #[cfg(test)]
-        println!("3.l sumcheck done");
-
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
-
-        #[cfg(test)]
-        println!("3.m new target done");
 
         // n. compute authentication paths
         let auth_0: Vec<Path<MT>> = shift_queries_indexes
@@ -479,9 +440,6 @@ impl<
                     .map_err(|_| ProofError::InvalidProof)
             })
             .collect::<Result<Vec<Path<MT>>, ProofError>>()?;
-
-        #[cfg(test)]
-        println!("3.n auth0 done");
 
         let auth: Vec<Vec<Path<MT>>> = acc_witnesses
             .0 // for each accumulated witness and for each
@@ -498,8 +456,6 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, ProofError>>()?;
 
-        #[cfg(test)]
-        println!("3.n auth done");
         let shift_queries_answers = codewords
             .iter()
             .chain(&acc_witnesses.1)
@@ -510,9 +466,6 @@ impl<
                     .collect::<Vec<F>>()
             })
             .collect::<Vec<Vec<F>>>();
-
-        #[cfg(test)]
-        println!("3. computed evaluations for f");
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
         let acc_witness = (vec![td], vec![f], vec![w.to_vec()]);
