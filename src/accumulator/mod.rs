@@ -10,7 +10,10 @@ use spongefish::{
     BytesToUnitDeserialize, ProofResult, ProverState, UnitToBytes, VerifierState,
 };
 
-use crate::utils::{DigestToUnitDeserialize, DigestToUnitSerialize};
+use crate::{
+    utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+    WARPError,
+};
 
 pub trait AccumulationScheme<F: Field, MT: Config> {
     type Index;
@@ -39,10 +42,13 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         instances: Self::Instances,
         acc_instances: Self::AccumulatorInstances,
         acc_witnesses: Self::AccumulatorWitnesses,
-    ) -> ProofResult<(
-        (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
-        Self::Proof,
-    )>
+    ) -> Result<
+        (
+            (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
+            Self::Proof,
+        ),
+        WARPError,
+    >
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
 

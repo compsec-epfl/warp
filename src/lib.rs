@@ -15,6 +15,8 @@ pub enum WARPError {
     #[error("{0}")]
     SpongeFishProofError(#[from] spongefish::ProofError),
     #[error("{0}")]
+    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("{0}")]
     ArkError(#[from] Error),
     #[error("Incorrect IOR config")]
     IORConfigError,
@@ -32,6 +34,8 @@ pub enum WARPError {
     CodewordSize(usize, usize),
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
+    #[error("Expexted eval, got None")]
+    EmptyEval,
 }
 
 pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {

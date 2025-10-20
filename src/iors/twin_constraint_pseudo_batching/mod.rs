@@ -20,11 +20,11 @@ use crate::{
 };
 
 pub struct Evals<F> {
-    u: Vec<Vec<F>>,
-    z: Vec<Vec<F>>,
-    a: Vec<Vec<F>>,
-    b: Vec<Vec<F>>,
-    tau: Vec<F>,
+    pub u: Vec<Vec<F>>,
+    pub z: Vec<Vec<F>>,
+    pub a: Vec<Vec<F>>,
+    pub b: Vec<Vec<F>>,
+    pub tau: Vec<F>,
 }
 
 impl<F> Evals<F> {
@@ -36,6 +36,14 @@ impl<F> Evals<F> {
         tau: Vec<F>,
     ) -> Self {
         Self { u, z, a, b, tau }
+    }
+
+    pub fn get_last_evals(&mut self) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), WARPError> {
+        let z = self.z.pop().ok_or(WARPError::EmptyEval)?;
+        let beta_tau = self.b.pop().ok_or(WARPError::EmptyEval)?;
+        let u = self.u.pop().ok_or(WARPError::EmptyEval)?;
+        let alpha = self.a.pop().unwrap();
+        Ok((u, z, alpha, beta_tau))
     }
 }
 

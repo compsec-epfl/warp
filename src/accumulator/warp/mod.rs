@@ -7,6 +7,7 @@ use crate::{
     relations::r1cs::R1CSConstraints,
     sumcheck::Sumcheck,
     utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
+    WARPError,
 };
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -138,10 +139,13 @@ impl<
         instances: Self::Instances,
         acc_instances: Self::AccumulatorInstances,
         acc_witnesses: Self::AccumulatorWitnesses,
-    ) -> ProofResult<(
-        (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
-        Self::Proof,
-    )>
+    ) -> Result<
+        (
+            (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
+            Self::Proof,
+        ),
+        WARPError,
+    >
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
     {
@@ -247,8 +251,7 @@ impl<
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
             codewords_as_leaves,
-        )
-        .unwrap();
+        )?;
 
         #[cfg(test)]
         println!("2.c committing to witness done");
@@ -307,7 +310,6 @@ impl<
             .collect();
 
         dbg!(all_codewords.len());
-        // TODO: remove clone
         let mut evals = Evals::new(all_codewords, z_vecs, alpha_vecs, beta_vecs, tau_eq_evals);
 
         #[cfg(test)]
@@ -317,21 +319,27 @@ impl<
             &mut evals,
             &(self.p.constraints(), omega),
             log_l,
-        )
-        .unwrap();
+        )?;
 
         debug_assert_eq!(gamma.len(), log_l);
 
-        let fn_f_i = ();
-
         // e. new oracle and target
-        let f = vec![F::one(); n]; // TODO placeholder
-        let w = vec![F::zero(); k];
-        let beta = (vec![vec![F::zero(); log_M]], vec![vec![F::zero(); N - k]]);
+        let (f, z, zeta_0, beta_tau) = evals.get_last_evals()?;
+
+        // eval the bundled r1cs
+        let beta_eq_evals = (0..M)
+            .map(|i| eq_poly(&beta_tau, BinaryHypercubePoint(i)))
+            .collect::<Vec<_>>();
+
+        let eta = self
+            .p
+            .evaluate_bundled(&beta_eq_evals, &z)
+            .map_err(|_| ProofError::InvalidProof)?;
+
+        let (x, w) = z.split_at(N - k);
+        let beta = (vec![beta_tau], vec![x.to_vec()]);
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
-        let zeta_0 = vec![F::default(); log_n];
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
-        let eta = F::zero();
 
         #[cfg(test)]
         println!("3.e done");
@@ -341,8 +349,7 @@ impl<
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
             &f.chunks(1).collect::<Vec<_>>(),
-        )
-        .unwrap();
+        )?;
 
         // g. absorb new commitment and target
         prover_state.add_digest(td.root())?;
@@ -408,6 +415,7 @@ impl<
                     .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
             })
             .collect();
+
         let binary_shift_queries_answers = binary_shift_queries
             .iter()
             .map(|zeta_i| f_hat.fix_variables(zeta_i)[0])
@@ -452,8 +460,7 @@ impl<
             &mut (f.clone(), ood_evals_vec, id_non_0_eval_sums),
             &(),
             log_n,
-        )
-        .unwrap();
+        )?;
 
         #[cfg(test)]
         println!("3.l sumcheck done");
@@ -508,7 +515,7 @@ impl<
         println!("3. computed evaluations for f");
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
-        let acc_witness = (vec![td], vec![f], vec![w]);
+        let acc_witness = (vec![td], vec![f], vec![w.to_vec()]);
 
         // 4. return
         Ok((
