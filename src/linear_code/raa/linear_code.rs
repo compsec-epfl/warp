@@ -6,12 +6,14 @@ use ark_std::{
 
 use crate::linear_code::{raa::config::RAAConfig, LinearCode};
 
+// https://people.eecs.berkeley.edu/~venkatg/pubs/papers/RAA.pdf
+
 #[derive(Clone)]
 pub struct RAA<F: Field> {
     message_len: usize,
     interleaver_permutation_1: Vec<usize>,
     interleaver_permutation_2: Vec<usize>,
-    num_repetitions: usize, // >= 2, rate is roughly 1 / num_repetitions btw
+    num_repetitions: usize, // >= 2, apparently rate is roughly 1 / num_repetitions btw
     code_len: usize,
     _f: PhantomData<F>,
 }
@@ -90,7 +92,11 @@ where
         let permuted_2 = self.permute(&accumulated_1, &self.interleaver_permutation_2);
         let accumulated_2 = self.accumulate(&permuted_2);
 
-        accumulated_2
+        // return message + encoding
+        let mut codeword = Vec::with_capacity(self.message_len + accumulated_2.len());
+        codeword.extend_from_slice(message);
+        codeword.extend_from_slice(&accumulated_2);
+        codeword
     }
 }
 
@@ -102,7 +108,7 @@ mod tests {
     use crate::tests::F32;
 
     #[test]
-    fn raa_encode_basic() {
+    fn sanity() {
         let message_len = 16usize;
         let message: Vec<F32> = (0..message_len)
             .map(|i| F32::from((i + 1) as u64))
@@ -120,6 +126,6 @@ mod tests {
 
         let raa: RAA<F32> = RAA::new(config);
         let codeword = raa.encode(&message);
-        assert_eq!(codeword.len(), 3 * message_len);
+        assert_eq!(codeword.len(), 4 * message_len);
     }
 }
