@@ -27,5 +27,5 @@ spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", packa
 ark-bls12-381 = "0.5.0"
 ark-bn254 = "0.5.0"
 blake3 = "1.3"
-criterion = "0.4"
+criterion = "0.7"
 
