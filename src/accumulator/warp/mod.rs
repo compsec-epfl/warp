@@ -15,14 +15,20 @@ use ark_crypto_primitives::{
     Error,
 };
 use ark_ff::Field;
-use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
+use ark_poly::{
+    univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
+    MultilinearExtension, Polynomial,
+};
 use ark_std::log2;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
     BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
     UnitToBytes, VerifierState,
 };
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    ops::{AddAssign, MulAssign},
+};
 use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
@@ -294,7 +300,13 @@ impl<
             .chain(codewords.clone().into_iter())
             .collect();
 
-        let mut evals = Evals::new(all_codewords, z_vecs, alpha_vecs, beta_vecs, tau_eq_evals);
+        let mut evals = Evals::new(
+            all_codewords.clone(),
+            z_vecs,
+            alpha_vecs,
+            beta_vecs,
+            tau_eq_evals,
+        );
 
         let gamma = TwinConstraintPseudoBatchingSumcheck::prove(
             prover_state,
@@ -456,9 +468,8 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
-        let shift_queries_answers = codewords
+        let shift_queries_answers = all_codewords
             .iter()
-            .chain(&acc_witnesses.1)
             .map(|f| {
                 shift_queries_indexes
                     .iter()
@@ -578,6 +589,7 @@ impl<
 
         let td = verifier_state.read_digest();
         let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
+        let mut nus = vec![nu_0];
 
         // g. ood samples
         let n_ood_samples = self.config.s * log_n;
@@ -588,6 +600,7 @@ impl<
         // h. ood answers
         let mut ood_answers = vec![F::default(); self.config.s];
         verifier_state.fill_next_scalars(&mut ood_answers)?;
+        nus.extend(ood_answers);
 
         // i. shift queries and zero check
         let r = 1 + self.config.s + self.config.t;
@@ -612,12 +625,69 @@ impl<
         // 3. Derive values
         ////////////////////////
 
+        // b.
+        let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
+        let gamma_eq_evals = BinaryHypercube::new(log_l)
+            .map(|p| eq_poly(&gamma_sumcheck, p))
+            .collect::<Vec<F>>();
+        let zeta_0 = scale_and_sum(alpha_vecs, &gamma_eq_evals);
+
+        // compute \eta_{s + k}
+        let nu_s_t = scale_and_sum(proof.6, &gamma_eq_evals);
+        nus.extend(nu_s_t);
+
+        // d. set \sigma^{(1)} and \sigma^{(2)}
+        // compute eq(\tau, i) and eq(\xi, i)
+        let tau_eq_evals = BinaryHypercube::new(log_l)
+            .map(|p| eq_poly(&tau, p))
+            .collect::<Vec<F>>();
+        let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
+
+        let sigma_1 = tau_eq_evals
+            .into_iter()
+            .zip(l2_mus.into_iter().chain(l1_mus.to_vec()).zip(etas))
+            .fold(F::zero(), |acc, (eq_tau, (mu, eta))| {
+                acc + eq_tau * (mu + omega * eta)
+            });
+
+        let xi_eq_evals = BinaryHypercube::new(log_r)
+            .map(|p| eq_poly(&xi, p))
+            .collect::<Vec<F>>();
+
+        let sigma_2 = xi_eq_evals
+            .iter()
+            .zip(nus)
+            .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
+
+        ////////////////////////
+        // 4. Decision phase
+        ////////////////////////
+        // a. new code evaluation point
+        assert!(acc_instance.1[0]
+            .iter()
+            .zip(alpha_sumcheck)
+            .fold(true, |acc, (a_x, a_i)| acc & (*a_x == a_i)));
+
+        // b. new circuit evaluation point
+        let beta_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
+
         Ok(())
     }
 
     fn decide() {
         todo!()
     }
+}
+
+fn scale_and_sum<F: Field>(vectors: Vec<Vec<F>>, scalars: &[F]) -> Vec<F> {
+    let n = vectors[0].len();
+    let mut result = vec![F::default(); n];
+
+    vectors.iter().zip(scalars).for_each(|(v, &a)| {
+        result.iter_mut().zip(v).for_each(|(r, &x)| *r += a * x);
+    });
+
+    result
 }
 
 #[cfg(test)]
