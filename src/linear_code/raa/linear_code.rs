@@ -11,8 +11,8 @@ use crate::linear_code::{raa::config::RAAConfig, LinearCode};
 #[derive(Clone)]
 pub struct RAA<F: Field> {
     message_len: usize,
-    interleaver_permutation_1: Vec<usize>,
-    interleaver_permutation_2: Vec<usize>,
+    permutation_1: Vec<usize>,
+    permutation_2: Vec<usize>,
     num_repetitions: usize, // >= 2, apparently rate is roughly 1 / num_repetitions btw
     code_len: usize,
     _f: PhantomData<F>,
@@ -22,33 +22,34 @@ impl<F: Field> RAA<F> {
     #[inline]
     fn permute(&self, message: &[F], permutation: &[usize]) -> Vec<F> {
         debug_assert_eq!(message.len(), permutation.len());
-        let mut out = vec![F::zero(); message.len()];
+        let mut permuted = vec![F::zero(); message.len()];
         for (i, &j) in permutation.iter().enumerate() {
-            out[i] = message[j];
+            permuted[i] = message[j];
         }
-        out
+        permuted
     }
 
     #[inline]
     fn accumulate(&self, message: &[F]) -> Vec<F> {
-        let mut prefix_sums = Vec::with_capacity(message.len());
+        // this is also called "prefix_sum"
+        let mut accumulated = Vec::with_capacity(message.len());
         let mut sum = F::zero();
         for message in message {
             sum += message;
-            prefix_sums.push(sum);
+            accumulated.push(sum);
         }
-        prefix_sums
+        accumulated
     }
 
     #[inline]
     fn repeat(&self, msg: &[F]) -> Vec<F> {
-        let mut out = Vec::with_capacity(self.code_len);
+        let mut repeated = Vec::with_capacity(self.code_len);
         for &x in msg {
             for _ in 0..self.num_repetitions {
-                out.push(x);
+                repeated.push(x);
             }
         }
-        out
+        repeated
     }
 }
 
@@ -62,16 +63,16 @@ where
         assert!(config.num_repetitions >= 2, "num_repetitions must be >= 2");
         let code_len = config.num_repetitions * config.message_len;
 
-        let mut interleaver_permutation_1: Vec<usize> = (0..code_len).collect();
-        let mut interleaver_permutation_2: Vec<usize> = (0..code_len).collect();
+        let mut permutation_1: Vec<usize> = (0..code_len).collect();
+        let mut permutation_2: Vec<usize> = (0..code_len).collect();
         let mut rng = StdRng::from_seed(config.rng_seed);
-        interleaver_permutation_1.shuffle(&mut rng);
-        interleaver_permutation_2.shuffle(&mut rng);
+        permutation_1.shuffle(&mut rng);
+        permutation_2.shuffle(&mut rng);
 
         Self {
             message_len: config.message_len,
-            interleaver_permutation_1,
-            interleaver_permutation_2,
+            permutation_1,
+            permutation_2,
             num_repetitions: config.num_repetitions,
             code_len,
             _f: PhantomData::<F>,
@@ -87,9 +88,9 @@ where
 
         // RAA: repeat -> permute -> accumulate -> permute -> accumulate
         let repeated = self.repeat(message);
-        let permuted_1 = self.permute(&repeated, &self.interleaver_permutation_1);
+        let permuted_1 = self.permute(&repeated, &self.permutation_1);
         let accumulated_1 = self.accumulate(&permuted_1);
-        let permuted_2 = self.permute(&accumulated_1, &self.interleaver_permutation_2);
+        let permuted_2 = self.permute(&accumulated_1, &self.permutation_2);
         let accumulated_2 = self.accumulate(&permuted_2);
 
         // return message + encoding
