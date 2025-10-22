@@ -14,7 +14,7 @@ use ark_crypto_primitives::{
     merkle_tree::{Config, MerkleTree, Path},
     Error,
 };
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_poly::{
     univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
     MultilinearExtension, Polynomial,
@@ -95,7 +95,7 @@ impl<
 }
 
 impl<
-        F: Field,
+        F: Field + PrimeField,
         P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
@@ -468,14 +468,9 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
-        let shift_queries_answers = all_codewords
+        let shift_queries_answers = shift_queries_indexes
             .iter()
-            .map(|f| {
-                shift_queries_indexes
-                    .iter()
-                    .map(|x_i| f[*x_i])
-                    .collect::<Vec<F>>()
-            })
+            .map(|idx| all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>())
             .collect::<Vec<Vec<F>>>();
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
@@ -526,8 +521,8 @@ impl<
         let log_n = log2(n) as usize;
 
         // f. absorb parameters
-        let mut instances = vec![vec![F::default(); N - k]; l1];
-        instances
+        let mut l1_xs = vec![vec![F::default(); N - k]; l1];
+        l1_xs
             .iter_mut()
             .try_for_each(|inst| verifier_state.fill_next_scalars(inst))?;
 
@@ -564,12 +559,12 @@ impl<
         let mut l1_mus = vec![F::default(); l1];
         verifier_state.fill_next_scalars(&mut l1_mus)?;
 
-        let mut taus = vec![vec![F::default(); log_M]; l1];
+        let mut l1_taus = vec![vec![F::default(); log_M]; l1];
 
         for i in 0..l1 {
             let mut tau_i = vec![F::default(); log_M];
             verifier_state.fill_challenge_scalars(&mut tau_i)?;
-            taus[i] = tau_i; // bundled evaluations
+            l1_taus[i] = tau_i; // bundled evaluations
         }
 
         let [omega] = verifier_state.challenge_scalars::<1>()?;
@@ -630,10 +625,18 @@ impl<
         let gamma_eq_evals = BinaryHypercube::new(log_l)
             .map(|p| eq_poly(&gamma_sumcheck, p))
             .collect::<Vec<F>>();
-        let zeta_0 = scale_and_sum(alpha_vecs, &gamma_eq_evals);
+        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
         // compute \eta_{s + k}
-        let nu_s_t = scale_and_sum(proof.6, &gamma_eq_evals);
+        let mut nu_s_t = vec![F::default(); self.config.t];
+        for (i, v_jk) in proof.6.iter().enumerate() {
+            let res = v_jk
+                .iter()
+                .zip(&gamma_eq_evals)
+                .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
+            nu_s_t[i] = res;
+        }
+
         nus.extend(nu_s_t);
 
         // d. set \sigma^{(1)} and \sigma^{(2)}
@@ -669,8 +672,75 @@ impl<
             .fold(true, |acc, (a_x, a_i)| acc & (*a_x == a_i)));
 
         // b. new circuit evaluation point
-        let beta_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
+        let betas = l2_taus
+            .into_iter()
+            .chain(l1_taus)
+            .zip(l2_xs.clone().into_iter().chain(l1_xs))
+            .map(|(tau, x)| concat_slices(&tau, &x))
+            .collect::<Vec<Vec<F>>>();
+        let beta = scale_and_sum(&betas, &gamma_eq_evals);
 
+        // c. check auth paths
+        let binary_shift_queries = bytes_shift_queries
+            .iter()
+            .flat_map(|x| {
+                // TODO factor out
+                (0..8)
+                    .map(|i| {
+                        let val = (x >> i) & 1 == 1;
+                        // return in field element and in binary
+                        F::from(val)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .take(self.config.t * log_n)
+            .collect::<Vec<F>>();
+
+        let binary_shift_queries = binary_shift_queries.chunks(log_n).collect::<Vec<&[F]>>();
+
+        let shift_queries_indexes: Vec<usize> = binary_shift_queries
+            .iter()
+            .map(|vals| {
+                vals.iter()
+                    .rev()
+                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
+            })
+            .collect();
+
+        // check:
+        // that the leaf index corresponds to the shift query
+        // that the path is correct
+        assert_eq!(proof.6.len(), self.config.t);
+        // proof.4 is auth_0
+        for (i, path) in proof.4.iter().enumerate() {
+            assert_eq!(path.leaf_index, shift_queries_indexes[i]);
+            let is_valid = path.verify(
+                &self.mt_leaf_hash_params,
+                &self.mt_two_to_one_hash_params,
+                &rt_0,
+                &proof.6[i][l2..], // leaves are evaluations of the l1 codewords
+            )?;
+            assert!(is_valid);
+        }
+
+        // proof.5 holds merkle proofs for l2 accumulated instances
+        assert_eq!(proof.5.len(), l2);
+        for (i, paths) in proof.5.iter().enumerate() {
+            assert_eq!(paths.len(), self.config.t);
+            let root = &l2_roots[i];
+            for (j, path) in paths.iter().enumerate() {
+                assert_eq!(path.leaf_index, shift_queries_indexes[j]);
+                let is_valid = path.verify(
+                    &self.mt_leaf_hash_params,
+                    &self.mt_two_to_one_hash_params,
+                    root,
+                    [proof.6[j][i]], // proof.6[j][i] holds f_i(x_j)
+                )?;
+                assert!(is_valid);
+            }
+        }
+
+        // d. sumcheck decisions
         Ok(())
     }
 
@@ -679,7 +749,7 @@ impl<
     }
 }
 
-fn scale_and_sum<F: Field>(vectors: Vec<Vec<F>>, scalars: &[F]) -> Vec<F> {
+fn scale_and_sum<F: Field>(vectors: &Vec<Vec<F>>, scalars: &[F]) -> Vec<F> {
     let n = vectors[0].len();
     let mut result = vec![F::default(); n];
 
