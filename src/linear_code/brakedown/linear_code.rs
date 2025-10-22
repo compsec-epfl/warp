@@ -51,6 +51,10 @@ where
         >>::encode(&message, &self.params)
         .unwrap()
     }
+
+    fn message_len(&self) -> usize {
+        self.message_len
+    }
 }
 
 #[cfg(test)]

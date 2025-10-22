@@ -1,10 +1,22 @@
+use ark_crypto_primitives::{
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::Config,
+};
 use ark_ff::{Field, PrimeField};
+use spongefish::{ByteDomainSeparator, BytesToUnitSerialize, DomainSeparator};
+use spongefish::{ProofError, ProofResult, ProverState};
+use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
+
+use whir::crypto::merkle_tree::digest::GenericDigest;
+
+pub mod poly;
+pub mod poseidon;
 
 pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();
     F::zero().serialize_uncompressed(&mut buf).unwrap();
-    let chunk_size = buf.len();
-    chunk_size
+
+    buf.len()
 }
 
 pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
@@ -19,4 +31,22 @@ pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
             // F::deserialize_uncompressed(&mut reader).unwrap()
         })
         .collect()
+}
+
+// we copy instead of import from whir since we would like to implement the `DigestDomainSeparator` trait
+// as well on `DomainSeparator`
+// https://github.com/WizardOfMenlo/whir/blob/22c675807fc9295fef68a11945713dc3e184e1c1/src/whir/domainsep.rs#L11
+pub trait DigestDomainSeparator<MerkleConfig: Config> {
+    #[must_use]
+    fn add_digest(self, label: &str) -> Self;
+}
+
+// from whir
+pub trait DigestToUnitSerialize<MerkleConfig: Config> {
+    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
+}
+
+// from whir
+pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
+    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }

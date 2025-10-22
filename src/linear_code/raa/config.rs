@@ -1,4 +1,6 @@
-#[derive(Clone)]
+use ark_serialize::CanonicalSerialize;
+
+#[derive(Clone, CanonicalSerialize)]
 pub struct RAAConfig {
     pub message_len: usize,
     pub num_repetitions: usize,

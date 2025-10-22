@@ -1,4 +1,4 @@
 pub mod r1cs;
-mod relation;
+pub mod relation;
 
 pub use relation::{Relation, SerializableConstraintMatrices};

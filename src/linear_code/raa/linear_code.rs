@@ -1,4 +1,5 @@
 use ark_ff::{Field, PrimeField};
+use ark_serialize::CanonicalSerialize;
 use ark_std::{
     marker::PhantomData,
     rand::{prelude::SliceRandom, rngs::StdRng, SeedableRng},
@@ -8,7 +9,7 @@ use crate::linear_code::{raa::config::RAAConfig, LinearCode};
 
 // https://people.eecs.berkeley.edu/~venkatg/pubs/papers/RAA.pdf
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize)]
 pub struct RAA<F: Field> {
     message_len: usize,
     permutation_1: Vec<usize>,
@@ -98,6 +99,13 @@ where
         codeword.extend_from_slice(message);
         codeword.extend_from_slice(&accumulated_2);
         codeword
+    }
+
+    fn message_len(&self) -> usize {
+        self.message_len
+    }
+    fn code_len(&self) -> usize {
+        self.code_len
     }
 }
 

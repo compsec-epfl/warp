@@ -15,6 +15,8 @@ where
     MG: ConfigGadget<M, F, Leaf = [FpVar<F>]>,
     MG: Clone,
 {
+    pub leaf_len: usize,
+    pub height: usize,
     pub leaf_hash_param: LeafParam<M>,
     pub two_to_one_hash_param: TwoToOneParam<M>,
     pub _merkle_config_gadget: PhantomData<MG>,
