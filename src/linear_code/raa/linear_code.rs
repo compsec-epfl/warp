@@ -21,7 +21,7 @@ pub struct RAA<F: Field> {
 impl<F: Field> RAA<F> {
     #[inline]
     fn permute(&self, message: &[F], permutation: &[usize]) -> Vec<F> {
-        debug_assert_eq!(message.len(), permutation.len());
+        assert_eq!(message.len(), permutation.len());
         let mut permuted = vec![F::zero(); message.len()];
         for (i, &j) in permutation.iter().enumerate() {
             permuted[i] = message[j];
@@ -65,7 +65,7 @@ where
 
         let mut permutation_1: Vec<usize> = (0..code_len).collect();
         let mut permutation_2: Vec<usize> = (0..code_len).collect();
-        let mut rng = StdRng::from_seed(config.rng_seed);
+        let mut rng = StdRng::from_seed(config.seed);
         permutation_1.shuffle(&mut rng);
         permutation_2.shuffle(&mut rng);
 
@@ -116,13 +116,13 @@ mod tests {
             .collect();
 
         let mut rng = test_rng();
-        let mut rng_seed = [0u8; 32];
-        rng.fill_bytes(&mut rng_seed);
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
 
         let config = RAAConfig {
             message_len,
             num_repetitions: 3,
-            rng_seed,
+            seed,
         };
 
         let raa: RAA<F32> = RAA::new(config);
