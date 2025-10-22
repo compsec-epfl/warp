@@ -40,13 +40,14 @@ where
         let tmp_message = vec![F::zero(); config.message_len];
 
         // TODO (z-tech): fix this
-        let tmp_code = <MultilinearBrakedown<F, M, DenseMultilinearExtension<F>, H> as LinearEncode<
-            F,
-            M,
-            DenseMultilinearExtension<F>,
-            H,
-        >>::encode(&tmp_message, &params)
-        .unwrap();
+        let tmp_code =
+            <MultilinearBrakedown<F, M, DenseMultilinearExtension<F>, H> as LinearEncode<
+                F,
+                M,
+                DenseMultilinearExtension<F>,
+                H,
+            >>::encode(&tmp_message, &params)
+            .unwrap();
         // using this to get code_len
 
         Self {

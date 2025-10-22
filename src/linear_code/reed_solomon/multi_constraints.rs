@@ -7,7 +7,7 @@ use ark_std::log2;
 use whir::poly_utils::hypercube::BinaryHypercube;
 
 use crate::{
-    linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode, ReedSolomon},
+    linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode},
     relations::relation::BundledPESAT,
     utils::poly::eq_poly,
     WARPError,
