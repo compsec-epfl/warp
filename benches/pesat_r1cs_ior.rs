@@ -33,13 +33,14 @@ pub fn bench_rs_pesat_r1cs_ior_hashchain(c: &mut Criterion) {
     let log_m = r1cs.log_m;
     let code_config = ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
 
-    let code = ReedSolomon::new(code_config);
+    let code = ReedSolomon::new(code_config.clone());
 
     // initialize IOR
 
     for l in [32, 64, 128, 256, 512] {
         let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<BLS12_381>>::new(
             code.clone(),
+            code_config.clone(),
             (),
             (),
             l,

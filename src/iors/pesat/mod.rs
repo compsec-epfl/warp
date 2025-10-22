@@ -14,6 +14,7 @@ pub mod r1cs;
 #[derive(Clone)]
 pub struct TwinConstraintIORConfig<F: Field + Unit, C: LinearCode<F>, MT: Config> {
     code: C,
+    code_config: C::Config,
     pub l: usize,
     pub log_m: usize,
     _f: PhantomData<F>,
@@ -24,6 +25,7 @@ pub struct TwinConstraintIORConfig<F: Field + Unit, C: LinearCode<F>, MT: Config
 impl<F: Field + Unit, C: LinearCode<F>, MT: Config> TwinConstraintIORConfig<F, C, MT> {
     pub fn new(
         code: C,
+        code_config: C::Config,
         mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
         mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
         l: usize,
@@ -31,6 +33,7 @@ impl<F: Field + Unit, C: LinearCode<F>, MT: Config> TwinConstraintIORConfig<F, C
     ) -> Self {
         Self {
             code,
+            code_config,
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,
             l,

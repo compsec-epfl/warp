@@ -19,8 +19,9 @@ use crate::{
 
 use spongefish::UnitToBytes;
 
-pub struct PseudoBatchingIORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
-    code: C,
+pub struct PseudoBatchingIORConfig<F: Field + SpongefishUnit, C: LinearCode<F> + Clone, MT: Config>
+{
+    code_config: C::Config,
     pub log_n: usize,
     pub l: usize,
     pub t: usize,
@@ -30,9 +31,11 @@ pub struct PseudoBatchingIORConfig<F: Field + SpongefishUnit, C: LinearCode<F>, 
     _f: PhantomData<F>,
 }
 
-impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> PseudoBatchingIORConfig<F, C, MT> {
+impl<F: Field + SpongefishUnit, C: LinearCode<F> + Clone, MT: Config>
+    PseudoBatchingIORConfig<F, C, MT>
+{
     pub fn new(
-        code: C,
+        code_config: C::Config,
         log_n: usize,
         l: usize,
         t: usize,
@@ -41,7 +44,7 @@ impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> PseudoBatchingIORC
         mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
     ) -> Self {
         Self {
-            code,
+            code_config,
             log_n,
             l,
             t,
@@ -55,7 +58,7 @@ impl<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> PseudoBatchingIORC
 
 pub struct PseudoBatchingIOR<
     F: Field + SpongefishUnit,
-    C: LinearCode<F>,
+    C: LinearCode<F> + Clone,
     P: BundledPESAT<F>,
     MC: MultiConstrainedLinearCode<F, C, P>,
     MT: Config,
@@ -68,7 +71,7 @@ pub struct PseudoBatchingIOR<
 
 impl<
         F: Field + SpongefishUnit,
-        C: LinearCode<F>,
+        C: LinearCode<F> + Clone,
         P: BundledPESAT<F>,
         MC: MultiConstrainedLinearCode<F, C, P>,
         MT: Config,
@@ -85,7 +88,7 @@ impl<
 
 impl<
         F: Field + SpongefishUnit,
-        C: LinearCode<F>,
+        C: LinearCode<F> + Clone,
         P: BundledPESAT<F>,
         MC: MultiConstrainedLinearCode<F, C, P>,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
@@ -220,7 +223,7 @@ impl<
         Ok((
             // NOTE: this is recomputing the eq_evaluation table
             MC::new_with_constraint(
-                self.config.code.config(),
+                self.config.code_config.clone(),
                 multilinear_evals,
                 beta.clone(),
                 eta,
@@ -285,7 +288,7 @@ mod tests {
         let (mt_config, leaves, mt) = get_test_merkle_tree(height);
         let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
         let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
-        let code = ReedSolomon::new(code_config);
+        let code = ReedSolomon::new(code_config.clone());
 
         let (l, s, t) = (4, 5, 5);
         let log_l = log2(l) as usize;
@@ -293,6 +296,7 @@ mod tests {
         // initialize pesat ior config
         let pesat_ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
             code.clone(),
+            code_config.clone(),
             (),
             (),
             l,
@@ -398,23 +402,25 @@ mod tests {
             .collect::<Vec<Fr>>();
 
         let mut z = rlc_beta.1.clone();
-        z.extend(rlc_w);
+        z.extend(rlc_w.clone());
 
         let eta = r1cs.evaluate_bundled(&zero_evader, &z).unwrap();
 
         let mc_instance =
             MultiConstrainedReedSolomon::<_, ReedSolomon<Fr>, R1CS<Fr>>::new_with_constraint(
-                code.config(),
+                code_config.clone(),
                 vec![(rlc_alpha, upsilon)],
                 rlc_beta,
                 eta,
             );
 
         // check that the built multi constrained codeword instance is correct
-        mc_instance.check_constraints(&rlc_f, &r1cs).unwrap();
+        mc_instance
+            .check_constraints(&rlc_w, &rlc_f, &r1cs)
+            .unwrap();
 
         let config = PseudoBatchingIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
-            code.clone(),
+            code_config,
             log2(code.code_len()).try_into().unwrap(),
             l,
             t,
@@ -427,6 +433,16 @@ mod tests {
             DomainSeparator::new("test::ior::codeword_batching").pseudo_batching_ior(&config);
 
         let mut prover_state = domainsep.to_prover_state();
+
+        let k = r1cs.k; // message length for RS
+        let mut rlc_w = vec![Fr::zero(); k];
+
+        for (i, w_i) in witnesses.iter().enumerate() {
+            let w = gamma_eq_evals[i];
+            for (j, &wj) in w_i.iter().enumerate() {
+                rlc_w[j] += w * wj;
+            }
+        }
 
         let pseudo_batching_ior = PseudoBatchingIOR::<
             Fr,
@@ -444,6 +460,6 @@ mod tests {
             )
             .unwrap();
 
-        new_mc.check_constraints(&wtns, &r1cs).unwrap();
+        new_mc.check_constraints(&rlc_w, &wtns, &r1cs).unwrap();
     }
 }

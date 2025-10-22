@@ -68,12 +68,14 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
         }
     }
 
-    fn check_constraints(&self, f: &Vec<F>, p: &P) -> Result<(), WARPError> {
-        let rs = ReedSolomon::new(self.config.clone());
+    fn check_constraints(&self, w: &Vec<F>, f: &Vec<F>, p: &P) -> Result<(), WARPError> {
+        // let rs = ReedSolomon::new(self.config.clone());
 
-        // contains instance vector x
+        // // contains instance vector x
+        // let mut z = self.beta.1.clone();
+        // let w = rs.decode(f).ok_or(WARPError::DecodeFailed)?;
+        // z.extend_from_slice(&w);
         let mut z = self.beta.1.clone();
-        let w = rs.decode(f).ok_or(WARPError::DecodeFailed)?;
         z.extend_from_slice(&w);
 
         // evaluate bundled constraints

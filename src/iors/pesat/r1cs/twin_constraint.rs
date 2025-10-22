@@ -132,7 +132,7 @@ impl<
             prover_state.fill_challenge_scalars(&mut tau_i)?;
 
             output_instance.push(MC::new_with_constraint(
-                self.config.code.config(),
+                self.config.code_config.clone(),
                 vec![(vec![F::zero(); num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
                 F::zero(),
@@ -186,12 +186,13 @@ pub mod tests {
         let (mt_config, leaves, mt) = get_test_merkle_tree(height);
         let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
         let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
-        let code = ReedSolomon::new(code_config);
+        let code = ReedSolomon::new(code_config.clone());
         let log_m = r1cs.log_m;
 
         // initialize ior
         let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
             code,
+            code_config.clone(),
             (),
             (),
             l,
@@ -239,12 +240,12 @@ pub mod tests {
         }
 
         let (new_instances, new_witnesses) = r1cs_twinrs_ior
-            .prove(&mut prover_state, instances, witnesses)
+            .prove(&mut prover_state, instances, witnesses.clone())
             .unwrap();
 
         // check multicodewords constraints
-        for (mc, c) in new_instances.iter().zip(new_witnesses) {
-            mc.check_constraints(&c, &r1cs).unwrap();
+        for (i, p) in new_instances.iter().zip(new_witnesses).enumerate() {
+            p.0.check_constraints(&witnesses[i], &p.1, &r1cs).unwrap();
         }
     }
 }
