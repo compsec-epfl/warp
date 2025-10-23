@@ -51,6 +51,7 @@ where
     R: Relation<F>,
     S: DuplexSpongeInterface<F>,
     C: LinearCode<F> + CanonicalSerialize,
+    C::Config: Clone + CanonicalSerialize,
 {
     code_config: C::Config,
     circuit_description: Vec<u8>,
@@ -66,7 +67,7 @@ impl<F, H, HG, R, S, C> RelationAccumulator<F> for PreimageRelationAccumulator<F
 where
     F: Field + PrimeField + SpongefishUnit,
     H: CRHScheme<Input = [F], Output = F>,
-    H::Parameters: CanonicalSerialize,
+    H::Parameters: Clone + CanonicalSerialize,
     HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
     R: Relation<F>,
     S: DuplexSpongeInterface<F>,
@@ -133,20 +134,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_std::marker::PhantomData;
-
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
     use ark_crypto_primitives::crh::CRHScheme;
     use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
     use ark_ff::UniformRand;
-    use ark_std::{rand::Rng, test_rng};
+    use ark_std::{
+        marker::PhantomData,
+        rand::{Rng, RngCore},
+        test_rng,
+    };
     use spongefish::duplex_sponge::DuplexSponge;
     use spongefish_poseidon::PoseidonPermutation;
 
     use super::{PreimageRelationAccumulator, PreimageRelationAccumulatorConfig};
     use crate::accumulator::RelationAccumulator;
-    use crate::linear_code::{ReedSolomon, ReedSolomonConfig};
+    use crate::linear_code::{RAAConfig, RAA};
     use crate::merkle::poseidon::poseidon_test_params;
     use crate::relations::{
         r1cs::{PreimageInstance, PreimageRelation, PreimageWitness},
@@ -163,7 +166,7 @@ mod tests {
         TestCRHSchemeGadget,
         TestRelation,
         TestSponge,
-        ReedSolomon<BLS12_381>,
+        RAA<BLS12_381>,
     >;
 
     fn next_power_of_two(n: usize) -> usize {
@@ -193,22 +196,30 @@ mod tests {
         // derive sizes
         let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
         let message_len = next_power_of_two(relation.private_inputs().len());
-        let code_len = next_power_of_two(message_len);
 
-        // config
-        let config: PreimageRelationAccumulatorConfig<
-            BLS12_381,
-            TestCRHScheme,
-            ReedSolomon<BLS12_381>,
-        > = PreimageRelationAccumulatorConfig {
-            code_config: ReedSolomonConfig::<BLS12_381>::default(message_len, code_len),
-            hash_parameters: poseidon_test_params(), // CRH parameters
-            initialization_vector: test_rng().gen::<[u8; 32]>(),
-            max_num_constraints,
-            previous_accumulations: vec![],
+        // generate seed
+        let mut rng = ark_std::test_rng();
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
+
+        let brakedown_config = RAAConfig {
+            message_len,
+            num_repetitions: 3,
+            seed,
         };
 
+        // config
+        let config: PreimageRelationAccumulatorConfig<BLS12_381, TestCRHScheme, RAA<BLS12_381>> =
+            PreimageRelationAccumulatorConfig {
+                code_config: brakedown_config,
+                hash_parameters: poseidon_test_params(), // CRH parameters
+                initialization_vector: test_rng().gen::<[u8; 32]>(),
+                max_num_constraints,
+                previous_accumulations: vec![],
+            };
+
         // commit
-        let _accumulator: TestAccumulator = TestAccumulator::commit(&config, &[relation]);
+        let _accumulator =
+            <TestAccumulator as RelationAccumulator<BLS12_381>>::commit(&config, &[relation]);
     }
 }

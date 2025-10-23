@@ -132,7 +132,7 @@ impl<
             prover_state.fill_challenge_scalars(&mut tau_i)?;
 
             output_instance.push(MC::new_with_constraint(
-                self.config.code.config(),
+                self.config.code_config.clone(),
                 vec![(vec![F::zero(); num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
                 F::zero(),
@@ -152,19 +152,18 @@ pub mod tests {
     use crate::domainsep::WARPDomainSeparator;
     use crate::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
     use crate::iors::IOR;
-    use crate::linear_code::linear_code::LinearCode;
+    use crate::linear_code::LinearCode;
     use crate::linear_code::MultiConstrainedLinearCode;
-    use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon};
+    use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon, ReedSolomonConfig};
     use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
     use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
     use crate::relations::r1cs::MerkleInclusionWitness;
     use crate::relations::r1cs::R1CS;
+    use crate::relations::r1cs::{
+        merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation,
+    };
     use crate::relations::relation::ToPolySystem;
     use crate::relations::Relation;
-    use crate::{
-        linear_code::ReedSolomonConfig,
-        relations::r1cs::{merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation},
-    };
     use spongefish::DomainSeparator;
     use std::marker::PhantomData;
     use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
@@ -186,12 +185,13 @@ pub mod tests {
         let (mt_config, leaves, mt) = get_test_merkle_tree(height);
         let r1cs = MerkleInclusionRelation::into_r1cs(&mt_config).unwrap();
         let code_config = ReedSolomonConfig::<Fr>::default(r1cs.k, r1cs.k.next_power_of_two());
-        let code = ReedSolomon::new(code_config);
+        let code = ReedSolomon::new(code_config.clone());
         let log_m = r1cs.log_m;
 
         // initialize ior
         let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
             code,
+            code_config.clone(),
             (),
             (),
             l,
@@ -239,12 +239,12 @@ pub mod tests {
         }
 
         let (new_instances, new_witnesses) = r1cs_twinrs_ior
-            .prove(&mut prover_state, instances, witnesses)
+            .prove(&mut prover_state, instances, witnesses.clone())
             .unwrap();
 
         // check multicodewords constraints
-        for (mc, c) in new_instances.iter().zip(new_witnesses) {
-            mc.check_constraints(&c, &r1cs).unwrap();
+        for (i, p) in new_instances.iter().zip(new_witnesses).enumerate() {
+            p.0.check_constraints(&witnesses[i], &p.1, &r1cs).unwrap();
         }
     }
 }

@@ -1,3 +1,6 @@
+#[doc(hidden)]
+pub mod tests;
+
 pub mod accumulator;
 pub mod domainsep;
 pub mod iors;
