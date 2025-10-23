@@ -1,1 +1,1 @@
-mod accumulator;
+pub mod warp_accumulator;

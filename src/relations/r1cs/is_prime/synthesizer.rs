@@ -21,7 +21,7 @@ impl<F: Field + PrimeField> ConstraintSynthesizer<F> for IsPrimeSynthesizer<F> {
         // there should be more than zero certificates
         // certificates must be in increasing order
         // the last certificate should be for the instance
-        let len_zero: Boolean<F> = Boolean::Constant(self.witness.pratt_certificates.len() < 1);
+        let len_zero: Boolean<F> = Boolean::Constant(self.witness.pratt_certificates.is_empty());
         len_zero.enforce_equal(&Boolean::FALSE).unwrap();
 
         let mut verified_primes: Vec<FpVar<F>> =
@@ -94,7 +94,7 @@ fn is_verified_prime<F: Field + PrimeField>(
     let mut comparisons = Vec::with_capacity(verified_primes.len());
     // NOTE: this can be optimized --> we're just looking up if we processed this prime before
     for verified_prime in verified_primes {
-        comparisons.push(verified_prime.is_eq(&candidate).unwrap());
+        comparisons.push(verified_prime.is_eq(candidate).unwrap());
     }
     Boolean::kary_or(&comparisons).unwrap()
 }
