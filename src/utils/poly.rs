@@ -17,3 +17,11 @@ pub fn eq_poly<F: Field>(tau: &[F], mut point: BinaryHypercubePoint) -> F {
 
     acc
 }
+
+pub fn eq_poly_non_binary<F: Field>(x: &[F], y: &[F]) -> F {
+    assert_eq!(x.len(), y.len());
+    let res = x.into_iter().zip(y).fold(F::one(), |acc, (x_i, y_i)| {
+        acc * (*x_i * *y_i + (F::one() - x_i) * (F::one() - y_i))
+    });
+    res
+}

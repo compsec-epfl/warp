@@ -6,7 +6,10 @@ use crate::{
     },
     relations::r1cs::R1CSConstraints,
     sumcheck::Sumcheck,
-    utils::{poly::eq_poly, DigestToUnitDeserialize, DigestToUnitSerialize},
+    utils::{
+        poly::{eq_poly, eq_poly_non_binary},
+        DigestToUnitDeserialize, DigestToUnitSerialize,
+    },
     WARPError,
 };
 use ark_crypto_primitives::{
@@ -619,7 +622,6 @@ impl<
         ////////////////////////
         // 3. Derive values
         ////////////////////////
-
         // b.
         let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
         let gamma_eq_evals = BinaryHypercube::new(log_l)
@@ -659,7 +661,7 @@ impl<
 
         let sigma_2 = xi_eq_evals
             .iter()
-            .zip(nus)
+            .zip(&nus)
             .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
 
         ////////////////////////
@@ -668,7 +670,7 @@ impl<
         // a. new code evaluation point
         assert!(acc_instance.1[0]
             .iter()
-            .zip(alpha_sumcheck)
+            .zip(alpha_sumcheck.clone())
             .fold(true, |acc, (a_x, a_i)| acc & (*a_x == a_i)));
 
         // b. new circuit evaluation point
@@ -741,6 +743,60 @@ impl<
         }
 
         // d. sumcheck decisions
+        // twin constraints sumcheck
+        assert_eq!(coeffs_twinc_sumcheck.len(), log_l);
+        let mut target_1 = sigma_1;
+        for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
+            let h = DensePolynomial::from_coefficients_vec(coeffs);
+            assert_eq!(h.evaluate(&F::one()) + h.evaluate(&F::zero()), target_1);
+            target_1 = h.evaluate(&gamma);
+        }
+
+        // multilinear batching sumcheck
+        assert_eq!(sums_batching_sumcheck.len(), log_n);
+        let mut target_2 = sigma_2;
+        for ([sum_00, sum_11, sum_0110], alpha) in
+            sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck)
+        {
+            assert_eq!(sum_00 + sum_11, target_2);
+            target_2 = (target_2 - sum_0110) * alpha.square()
+                + sum_00 * (F::one() - alpha.double())
+                + sum_0110 * alpha;
+        }
+
+        // e. new target decision
+        assert_eq!(
+            eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta),
+            target_1
+        );
+
+        // eq^{\star}(\alpha)
+        let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
+
+        zeta_eqs.extend(
+            ood_samples
+                .into_iter()
+                .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
+                .collect::<Vec<F>>(),
+        );
+        zeta_eqs.extend(
+            binary_shift_queries
+                .iter()
+                .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
+                .collect::<Vec<F>>(),
+        );
+        assert_eq!(zeta_eqs.len(), r);
+
+        assert_eq!(
+            acc_instance.2[0]
+                * zeta_eqs
+                    .into_iter()
+                    .zip(xi_eq_evals)
+                    .fold(F::zero(), |acc, (a, b)| acc + a * b),
+            target_2
+        );
+        // [zeta_0, ood_samples, binary_shift_queries].concat();
+
         Ok(())
     }
 
