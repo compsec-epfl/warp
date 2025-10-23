@@ -66,5 +66,9 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
             + DigestToUnitDeserialize<MT>
             + BytesToUnitDeserialize;
 
-    fn decide();
+    fn decide(
+        &self,
+        acc_witness: Self::AccumulatorWitnesses,
+        acc_instance: Self::AccumulatorInstances,
+    ) -> Result<(), WARPError>;
 }

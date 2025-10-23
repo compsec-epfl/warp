@@ -28,10 +28,7 @@ use spongefish::{
     BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
     UnitToBytes, VerifierState,
 };
-use std::{
-    marker::PhantomData,
-    ops::{AddAssign, MulAssign},
-};
+use std::marker::PhantomData;
 use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
@@ -765,12 +762,12 @@ impl<
         }
 
         // e. new target decision
+        // build eq^{\star}(\alpha)
         assert_eq!(
             eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta),
             target_1
         );
 
-        // eq^{\star}(\alpha)
         let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
 
         zeta_eqs.extend(
@@ -787,6 +784,7 @@ impl<
         );
         assert_eq!(zeta_eqs.len(), r);
 
+        // mul by \mu and compare to target_2
         assert_eq!(
             acc_instance.2[0]
                 * zeta_eqs
@@ -795,13 +793,47 @@ impl<
                     .fold(F::zero(), |acc, (a, b)| acc + a * b),
             target_2
         );
-        // [zeta_0, ood_samples, binary_shift_queries].concat();
 
         Ok(())
     }
 
-    fn decide() {
-        todo!()
+    fn decide(
+        &self,
+        acc_witness: Self::AccumulatorWitnesses,
+        acc_instance: Self::AccumulatorInstances,
+    ) -> Result<(), WARPError> {
+        let (td, f, w) = acc_witness;
+        let (rt, alpha, mu, beta, eta) = acc_instance;
+
+        let computed_td = MerkleTree::<MT>::new(
+            &self.mt_leaf_hash_params,
+            &self.mt_two_to_one_hash_params,
+            &f[0].chunks(1).collect::<Vec<_>>(),
+        )?;
+        assert_eq!(rt[0], computed_td.root());
+        // TODO? assert_eq!(td[0], computed_td);
+
+        let f_hat = DenseMultilinearExtension::from_evaluations_slice(
+            log2(self.code.code_len()) as usize,
+            &f[0],
+        );
+        assert_eq!(f_hat.evaluate(&alpha[0]), mu[0]);
+
+        let tau = &beta.0[0];
+
+        let tau_zero_evader = BinaryHypercube::new(tau.len())
+            .map(|p| eq_poly(tau, p))
+            .collect::<Vec<F>>();
+
+        let mut z = beta.1[0].clone();
+        z.extend(w[0].clone());
+        let computed_eta = self.p.evaluate_bundled(&tau_zero_evader, &z).unwrap();
+        assert_eq!(computed_eta, eta[0]);
+
+        let computed_f = self.code.encode(&w[0]);
+        assert_eq!(f[0], computed_f);
+
+        Ok(())
     }
 }
 
@@ -969,7 +1001,13 @@ pub mod tests {
         let narg_str = prover_state.narg_string();
         let mut verifier_state = domainsep.to_verifier_state(narg_str);
         hash_chain_warp
-            .verify((r1cs.m, r1cs.n, r1cs.k), &mut verifier_state, acc_x, pf)
+            .verify(
+                (r1cs.m, r1cs.n, r1cs.k),
+                &mut verifier_state,
+                acc_x.clone(),
+                pf,
+            )
             .unwrap();
+        hash_chain_warp.decide(acc_w, acc_x).unwrap();
     }
 }
