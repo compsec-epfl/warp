@@ -3,8 +3,8 @@ use ark_ff::{Field, PrimeField};
 pub fn chunk_size<F: Field + PrimeField>() -> usize {
     let mut buf = Vec::new();
     F::zero().serialize_uncompressed(&mut buf).unwrap();
-    let chunk_size = buf.len();
-    chunk_size
+
+    buf.len()
 }
 
 pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
