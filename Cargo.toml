@@ -22,6 +22,7 @@ serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", branch = "main" }
 spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", package = "spongefish-poseidon", branch = "main", features = ["bls12-381"] }
+efficient-sumcheck = { path = "../space-efficient-sumcheck" }
 thiserror = "2.0.16"
 whir = { git = "https://github.com/WizardOfMenlo/whir", rev = "3d627d3" }
 zeroize = { version = "1.5", features = ["derive"] }
