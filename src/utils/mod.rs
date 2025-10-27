@@ -1,13 +1,7 @@
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::Config,
-};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
-use spongefish::{ByteDomainSeparator, BytesToUnitSerialize, DomainSeparator};
-use spongefish::{ProofError, ProofResult, ProverState};
-use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
+use spongefish::ProofResult;
 
-use whir::crypto::merkle_tree::digest::GenericDigest;
 
 pub mod poly;
 pub mod poseidon;

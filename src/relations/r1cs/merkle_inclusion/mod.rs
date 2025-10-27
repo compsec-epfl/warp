@@ -187,7 +187,7 @@ pub(crate) mod tests {
                     break;
                 }
             }
-            assert_eq!(is_0, false);
+            assert!(!is_0);
         }
     }
 }

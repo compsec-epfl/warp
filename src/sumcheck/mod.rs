@@ -67,7 +67,7 @@ pub trait Sumcheck<F: Field> {
     ) -> Result<Vec<Self::Challenge>, WARPError> {
         let mut challenges = Vec::with_capacity(n_rounds);
         for _ in 0..n_rounds {
-            let c = Self::prove_round(prover_state, evals, &aux)?;
+            let c = Self::prove_round(prover_state, evals, aux)?;
             challenges.push(c);
         }
         Ok(challenges)

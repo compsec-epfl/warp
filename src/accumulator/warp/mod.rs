@@ -297,7 +297,7 @@ impl<
             .1
             .clone()
             .into_iter()
-            .chain(codewords.clone().into_iter())
+            .chain(codewords.clone())
             .collect();
 
         let mut evals = Evals::new(
@@ -339,7 +339,7 @@ impl<
         let td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            &f.chunks(1).collect::<Vec<_>>(),
+            f.chunks(1).collect::<Vec<_>>(),
         )?;
 
         // g. absorb new commitment and target
@@ -421,7 +421,7 @@ impl<
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
                 (0..n)
-                    .map(|a| eq_poly(&zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                    .map(|a| eq_poly(zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -746,7 +746,7 @@ impl<
         for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
             let h = DensePolynomial::from_coefficients_vec(coeffs);
             assert_eq!(h.evaluate(&F::one()) + h.evaluate(&F::zero()), target_1);
-            target_1 = h.evaluate(&gamma);
+            target_1 = h.evaluate(gamma);
         }
 
         // multilinear batching sumcheck
@@ -808,7 +808,7 @@ impl<
         let computed_td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            &f[0].chunks(1).collect::<Vec<_>>(),
+            f[0].chunks(1).collect::<Vec<_>>(),
         )?;
         assert_eq!(rt[0], computed_td.root());
         // TODO? assert_eq!(td[0], computed_td);
@@ -958,10 +958,10 @@ pub mod tests {
                 .unwrap();
             acc_roots.push(acc_x.0[0].clone());
             acc_alphas.push(acc_x.1[0].clone());
-            acc_mus.push(acc_x.2[0].clone());
+            acc_mus.push(acc_x.2[0]);
             acc_taus.push(acc_x.3 .0[0].clone());
             acc_xs.push(acc_x.3 .1[0].clone());
-            acc_eta.push(acc_x.4[0].clone());
+            acc_eta.push(acc_x.4[0]);
 
             acc_tds.push(acc_w.0[0].clone());
             acc_f.push(acc_w.1[0].clone());

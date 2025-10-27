@@ -131,7 +131,7 @@ impl<
         let mt = MerkleTree::<MT>::new(
             &self.config.mt_leaf_hash_params,
             &self.config.mt_two_to_one_hash_params,
-            &witness.chunks(1).collect::<Vec<_>>(),
+            witness.chunks(1).collect::<Vec<_>>(),
         )
         .unwrap();
 

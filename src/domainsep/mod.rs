@@ -38,7 +38,7 @@ impl<
         self.add_scalars(1, "root")
             .add_scalars(1, "mu")
             .add_scalars(1, "eta")
-            .challenge_scalars(conf.s * conf.log_n as usize, "alpha")
+            .challenge_scalars(conf.s * conf.log_n, "alpha")
             .add_scalars(conf.s, "mus")
             .challenge_bytes((conf.t * conf.log_n).div_ceil(8), "x")
     }
@@ -66,7 +66,7 @@ impl<
 
         if l2 > 0 {
             for i in 0..l2 {
-                prover_state = prover_state.add_digest(&format!("l2_{}_digest", i))
+                prover_state = prover_state.add_digest(&format!("l2_{i}_digest"))
             }
 
             prover_state = prover_state.add_scalars(log_n * l2, "l2_alphas");
@@ -89,8 +89,8 @@ impl<
         // sumcheck twin constraints pseudo batching
         for i in 0..log_l {
             prover_state = prover_state
-                .add_scalars(2 + (log_n as usize + 1).max(log_M + 2), &format!("h_{}", i))
-                .challenge_scalars(1, &format!("challenge_{}", i));
+                .add_scalars(2 + (log_n as usize + 1).max(log_M + 2), &format!("h_{i}"))
+                .challenge_scalars(1, &format!("challenge_{i}"));
         }
 
         prover_state = prover_state.add_digest("mt_linear_comb");
@@ -104,8 +104,8 @@ impl<
         // sumcheck multilinear constraints batching
         for i in 0..log_n {
             prover_state = prover_state
-                .add_scalars(3, &format!("h_{}", i))
-                .challenge_scalars(1, &format!("challenge_{}", i));
+                .add_scalars(3, &format!("h_{i}"))
+                .challenge_scalars(1, &format!("challenge_{i}"));
         }
 
         prover_state

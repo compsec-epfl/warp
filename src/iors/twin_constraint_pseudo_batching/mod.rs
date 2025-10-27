@@ -115,7 +115,7 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
-        let mut h_coeffs = vec![F::zero(); 2 + (aux.1 + 1).max(aux.0 + 2) as usize];
+        let mut h_coeffs = vec![F::zero(); 2 + (aux.1 + 1).max(aux.0 + 2)];
         verifier_state.fill_next_scalars(&mut h_coeffs)?;
         let h = DensePolynomial::from_coefficients_vec(h_coeffs);
         if h.evaluate(&F::zero()) + h.evaluate(&F::one()) != *target {
@@ -223,14 +223,14 @@ pub fn verifier<F: Field, const L: usize>(
     )?;
 
     // 6.1 step 3, compute new instance and witness for pseudo-batching accumulation relation
-    let alpha = (0..log_n as usize)
+    let alpha = (0..log_n)
         .map(|j| {
             (0..L)
                 .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * alpha_vec[i][j])
                 .sum::<F>()
         })
         .collect();
-    let beta = (0..log_m as usize)
+    let beta = (0..log_m)
         .map(|j| {
             (0..L)
                 .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * beta_vec[i][j])
@@ -386,9 +386,9 @@ mod tests {
             domain_separator = domain_separator
                 .absorb(
                     2 + (log2(N) as usize + 1).max(r1cs.log_m + 2),
-                    &format!("h_{}", i),
+                    &format!("h_{i}"),
                 )
-                .squeeze(1, &format!("challenge_{}", i));
+                .squeeze(1, &format!("challenge_{i}"));
         }
         domain_separator = domain_separator.absorb(1, "mu").absorb(1, "eta");
 

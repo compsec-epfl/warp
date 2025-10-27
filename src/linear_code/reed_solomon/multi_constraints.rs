@@ -76,14 +76,14 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
         // let w = rs.decode(f).ok_or(WARPError::DecodeFailed)?;
         // z.extend_from_slice(&w);
         let mut z = self.beta.1.clone();
-        z.extend_from_slice(&w);
+        z.extend_from_slice(w);
 
         // evaluate bundled constraints
         let eval_bundled = p.evaluate_bundled(&self.tau_eq_evals, &z)?;
         let is_correct_bundled_eval = eval_bundled == self.eta;
 
         // evaluate multilinear points
-        let is_correct_multilinear_evals = if self.evaluations.len() > 0 {
+        let is_correct_multilinear_evals = if !self.evaluations.is_empty() {
             let num_vars = log2(self.config.code_length) as usize;
             let f_hat = Self::as_multilinear_extension(num_vars, f);
             self.evaluations.iter().fold(true, |acc, (point, eval)| {
