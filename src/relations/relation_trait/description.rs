@@ -13,7 +13,7 @@ pub struct SerializableConstraintMatrices {
 }
 
 impl SerializableConstraintMatrices {
-    fn serialize_nested_field<F: Field>(
+    pub fn serialize_nested_field<F: Field>(
         original: Vec<Vec<(F, usize)>>,
     ) -> Vec<Vec<(Vec<u8>, usize)>> {
         original

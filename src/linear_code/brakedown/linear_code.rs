@@ -14,6 +14,7 @@ where
     M: MerkleConfig,
     H: CRHScheme,
 {
+    code_len: usize,
     message_len: usize,
     params: BrakedownPCParams<F, M, H>, // NOTE: generated in calls to ::new(...)
 }
@@ -36,8 +37,22 @@ where
             config.one_two_hash_param,
             config.column_hash_param,
         );
+        let tmp_message = vec![F::zero(); config.message_len];
+
+        // TODO (z-tech): fix this
+        let tmp_code =
+            <MultilinearBrakedown<F, M, DenseMultilinearExtension<F>, H> as LinearEncode<
+                F,
+                M,
+                DenseMultilinearExtension<F>,
+                H,
+            >>::encode(&tmp_message, &params)
+            .unwrap();
+        // using this to get code_len
+
         Self {
             message_len: config.message_len,
+            code_len: tmp_code.len(),
             params,
         }
     }
@@ -50,6 +65,14 @@ where
             H,
         >>::encode(message, &self.params)
         .unwrap()
+    }
+
+    fn message_len(&self) -> usize {
+        self.message_len
+    }
+
+    fn code_len(&self) -> usize {
+        self.code_len
     }
 }
 

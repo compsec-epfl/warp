@@ -1,5 +1,7 @@
 use ark_ff::Field;
 
+use crate::WARPError;
+
 pub trait Relation<F: Field> {
     type Instance;
     type Witness;
@@ -13,4 +15,18 @@ pub trait Relation<F: Field> {
     fn private_inputs(&self) -> Vec<u8>;
     fn verify(&self) -> bool;
     fn witness(&self) -> Self::Witness;
+}
+
+pub trait BundledPESAT<F: Field> {
+    type Config;
+    type Constraints;
+
+    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError>;
+
+    // returns (M, N, k)
+    fn config(&self) -> Self::Config;
+
+    fn description(&self) -> Vec<u8>;
+
+    fn constraints(&self) -> &Self::Constraints;
 }

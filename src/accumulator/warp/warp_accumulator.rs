@@ -150,9 +150,8 @@ mod tests {
 
     use super::{PreimageRelationAccumulator, PreimageRelationAccumulatorConfig};
     use crate::accumulator::RelationAccumulator;
-    use crate::linear_code::{Brakedown, BrakedownConfig};
-    use crate::merkle::poseidon::PoseidonMerkleConfig;
-    use crate::merkle::poseidon_test_params;
+    use crate::linear_code::{RAAConfig, RAA};
+    use crate::merkle::poseidon::poseidon_test_params;
     use crate::relations::{
         r1cs::{PreimageInstance, PreimageRelation, PreimageWitness},
         Relation,
@@ -169,7 +168,7 @@ mod tests {
         TestCRHSchemeGadget,
         TestRelation,
         TestSponge,
-        Brakedown<BLS12_381, TestMerkleTreeConfig, TestCRHScheme>,
+        RAA<BLS12_381>,
     >;
 
     fn next_power_of_two(n: usize) -> usize {
@@ -200,38 +199,26 @@ mod tests {
         let max_num_constraints = next_power_of_two(relation.constraints()) as u64;
         let message_len = next_power_of_two(relation.private_inputs().len());
 
-        // TODO (z-tech): works like this, but probably these can be optimized
-        let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let one_two_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let column_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-
         // generate seed
         let mut rng = ark_std::test_rng();
-        let mut rng_seed = [0u8; 32];
-        rng.fill_bytes(&mut rng_seed);
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
 
-        let brakedown_config =
-            BrakedownConfig::<BLS12_381, PoseidonMerkleConfig<BLS12_381>, TestCRHScheme> {
-                message_len,
-                leaf_hash_param,
-                one_two_hash_param,
-                column_hash_param,
-                rng_seed,
-                _f: PhantomData::<BLS12_381>,
-            };
+        let brakedown_config = RAAConfig {
+            message_len,
+            num_repetitions: 3,
+            seed,
+     };
 
         // config
-        let config: PreimageRelationAccumulatorConfig<
-            BLS12_381,
-            TestCRHScheme,
-            Brakedown<BLS12_381, PoseidonMerkleConfig<BLS12_381>, TestCRHScheme>,
-        > = PreimageRelationAccumulatorConfig {
-            code_config: brakedown_config,
-            hash_parameters: poseidon_test_params(), // CRH parameters
-            initialization_vector: test_rng().gen::<[u8; 32]>(),
-            max_num_constraints,
-            previous_accumulations: vec![],
-        };
+        let config: PreimageRelationAccumulatorConfig<BLS12_381, TestCRHScheme, RAA<BLS12_381>> =
+            PreimageRelationAccumulatorConfig {
+                code_config: brakedown_config,
+                hash_parameters: poseidon_test_params(), // CRH parameters
+                initialization_vector: test_rng().gen::<[u8; 32]>(),
+                max_num_constraints,
+                previous_accumulations: vec![],
+            };
 
         // commit
         let _accumulator =

@@ -6,9 +6,12 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 
 use crate::relations::{
-    r1cs::merkle_inclusion::{
-        synthesizer::MerkleInclusionSynthesizer, MerkleInclusionConfig, MerkleInclusionInstance,
-        MerkleInclusionWitness,
+    r1cs::{
+        merkle_inclusion::{
+            synthesizer::MerkleInclusionSynthesizer, MerkleInclusionConfig,
+            MerkleInclusionInstance, MerkleInclusionWitness,
+        },
+        R1CS,
     },
     Relation, SerializableConstraintMatrices,
 };
@@ -25,6 +28,9 @@ where
     config: MerkleInclusionConfig<F, M, MG>,
     instance: MerkleInclusionInstance<F, M, MG>,
     witness: MerkleInclusionWitness<F, M, MG>,
+    pub w: Vec<F>,
+    pub x: Vec<F>,
+    pub r1cs: R1CS<F>,
     _merkle_config: PhantomData<M>,
     _merkle_config_gadget: PhantomData<MG>,
 }
@@ -57,6 +63,8 @@ where
             _merkle_config_gadget: PhantomData,
         };
         let zero_config = MerkleInclusionConfig::<F, M, MG> {
+            leaf_len: config.leaf_len,
+            height: config.height,
             leaf_hash_param: config.leaf_hash_param.clone(),
             two_to_one_hash_param: config.two_to_one_hash_param.clone(),
             _merkle_config_gadget: PhantomData,
@@ -83,11 +91,22 @@ where
         constraint_synthesizer
             .generate_constraints(constraint_system.clone())
             .unwrap();
+
+        // compute z
+        constraint_system.finalize();
+        let cs = constraint_system.into_inner().unwrap();
+        let x = cs.instance_assignment.clone();
+        let w = cs.witness_assignment.clone();
+        let r1cs = R1CS::try_from(ConstraintSystemRef::new(cs.clone())).unwrap();
+
         Self {
-            constraint_system,
+            constraint_system: ConstraintSystemRef::new(cs),
             instance,
             witness,
             config,
+            w,
+            x,
+            r1cs,
             _merkle_config: PhantomData,
             _merkle_config_gadget: PhantomData,
         }
@@ -141,6 +160,9 @@ mod tests {
 
     #[test]
     fn relation_sanity() {
+        let height = 2;
+        let leaf_len = 2;
+
         // Create some leaves
         let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
         let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
@@ -184,6 +206,8 @@ mod tests {
             PoseidonMerkleConfig<BLS12_381>,
             PoseidonMerkleConfigGadget<BLS12_381>,
         > {
+            leaf_len,
+            height,
             leaf_hash_param,
             two_to_one_hash_param,
             _merkle_config_gadget: PhantomData,

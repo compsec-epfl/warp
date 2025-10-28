@@ -1,16 +1,13 @@
 [package]
 name = "warp"
 version = "0.0.1"
-authors = ["TODO"]
-description = "TODO"
-repository = "TODO"
 include = ["Cargo.toml", "src", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 edition = "2021"
 
 [dependencies]
 ark-crypto-primitives = { version = "0.5.0", features = ["merkle_tree", "crh", "r1cs", "sponge"] }
 ark-ec = "0.5.0" # can remove later
-ark-ff = "0.5"
+ark-ff = "0.5.0"
 ark-groth16 = "0.5.0" # can remove later
 ark-poly = "0.5.0"
 ark-poly-commit = "0.5.0"
@@ -18,10 +15,17 @@ ark-r1cs-std = "0.5.0"
 ark-relations = "0.5.0"
 ark-serialize = "0.5.0"
 ark-std = "0.5.0"
+blake3 = "1.5.0"
+rand = "0.8"
+rayon = { version = "1.11.0" }
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", branch = "main" }
 spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", package = "spongefish-poseidon", branch = "main", features = ["bls12-381"] }
+thiserror = "2.0.16"
+whir = { git = "https://github.com/WizardOfMenlo/whir", rev = "3d627d3" }
+zeroize = { version = "1.5", features = ["derive"] }
+
 
 [dev-dependencies]
 ark-bls12-381 = "0.5.0"
@@ -34,3 +38,6 @@ default = ["asm"]
 
 asm = ["ark-ff/asm"] 
 
+[[bench]]
+name = "warp_rs"
+harness = false

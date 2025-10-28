@@ -101,6 +101,8 @@ mod tests {
 
     #[test]
     fn sanity() {
+        let height = 2;
+        let leaf_len = 2;
         // create some leaves
         let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
         let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
@@ -147,6 +149,8 @@ mod tests {
                 PoseidonMerkleConfig<BLS12_381>,
                 PoseidonMerkleConfigGadget<BLS12_381>,
             > {
+                leaf_len,
+                height,
                 leaf_hash_param,
                 two_to_one_hash_param,
                 _merkle_config_gadget: PhantomData,
