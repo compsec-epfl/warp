@@ -1,5 +1,6 @@
 use crate::{
     concat_slices,
+    domainsep::{absorb_accumulated_instances, absorb_instances},
     iors::{
         multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
         twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
@@ -180,42 +181,8 @@ impl<
 
         // b. and c. statements and accumulators
         // d. absorb parameters
-        instances
-            .iter()
-            .try_for_each(|x| prover_state.add_scalars(x))?;
-
-        // roots
-        acc_instances
-            .0
-            .clone()
-            .into_iter()
-            .try_for_each(|digest| prover_state.add_digest(digest))?;
-
-        // alpha
-        acc_instances
-            .1
-            .iter()
-            .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
-
-        // mu
-        prover_state.add_scalars(&acc_instances.2)?;
-
-        //// taus
-        acc_instances
-            .3
-             .0
-            .iter()
-            .try_for_each(|tau| prover_state.add_scalars(tau))?;
-
-        //// xs
-        acc_instances
-            .3
-             .1
-            .iter()
-            .try_for_each(|x| prover_state.add_scalars(x))?;
-
-        //// etas
-        prover_state.add_scalars(&acc_instances.4)?;
+        absorb_instances(prover_state, &instances)?;
+        absorb_accumulated_instances(prover_state, &acc_instances)?;
 
         ////////////////////////
         // 2. PESAT Reduction

@@ -1,14 +1,18 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use ark_std::log2;
-use spongefish::{codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, Unit};
+use spongefish::codecs::arkworks_algebra::FieldToUnitSerialize;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldDomainSeparator, UnitToField},
+    ByteDomainSeparator, ProofError, ProverState, Unit, UnitToBytes,
+};
 
 use crate::{
     accumulator::warp::WARPConfig,
     iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},
     linear_code::LinearCode,
     relations::BundledPESAT,
-    utils::DigestDomainSeparator,
+    utils::{DigestDomainSeparator, DigestToUnitSerialize},
 };
 
 // TODO
@@ -110,4 +114,61 @@ impl<
 
         prover_state
     }
+}
+
+pub fn absorb_instances<F: Field>(
+    prover_state: &mut ProverState,
+    instances: &Vec<Vec<F>>,
+) -> Result<(), ProofError> {
+    instances
+        .iter()
+        .try_for_each(|x| prover_state.add_scalars(x))
+}
+
+pub fn absorb_accumulated_instances<F: Field, MT: Config>(
+    prover_state: &mut ProverState,
+    acc_instances: &(
+        Vec<MT::InnerDigest>,
+        Vec<Vec<F>>,
+        Vec<F>,
+        (Vec<Vec<F>>, Vec<Vec<F>>),
+        Vec<F>,
+    ), // (rt, \alpha, \mu, \beta (\tau, x), \eta)
+) -> Result<(), ProofError>
+where
+    ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+{
+    acc_instances
+        .0
+        .clone()
+        .into_iter()
+        .try_for_each(|digest| prover_state.add_digest(digest))?;
+
+    // alpha
+    acc_instances
+        .1
+        .iter()
+        .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
+
+    // mu
+    prover_state.add_scalars(&acc_instances.2)?;
+
+    //// taus
+    acc_instances
+        .3
+         .0
+        .iter()
+        .try_for_each(|tau| prover_state.add_scalars(tau))?;
+
+    //// xs
+    acc_instances
+        .3
+         .1
+        .iter()
+        .try_for_each(|x| prover_state.add_scalars(x))?;
+
+    //// etas
+    prover_state.add_scalars(&acc_instances.4)?;
+
+    Ok(())
 }
