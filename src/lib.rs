@@ -15,11 +15,11 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WARPError {
-    #[error("{0}")]
+    #[error(transparent)]
     SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error("{0}")]
+    #[error(transparent)]
     SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
-    #[error("{0}")]
+    #[error(transparent)]
     ArkError(#[from] Error),
     #[error("Incorrect IOR config")]
     IORConfigError,
@@ -35,10 +35,46 @@ pub enum WARPError {
     UnsatisfiedMultiConstraints(bool, bool),
     #[error("f.len() is {0}, but tried accessing at {1}")]
     CodewordSize(usize, usize),
-    #[error("Verification failed: {0}")]
-    VerificationFailed(String),
-    #[error("Expexted eval, got None")]
+    #[error("Expected eval, got None")]
     EmptyEval,
+    #[error("{0}")]
+    VerificationFailed(String),
+    #[error(transparent)]
+    VerifierError(#[from] WARPVerifierError),
+    #[error(transparent)]
+    DeciderError(#[from] WARPDeciderError),
+}
+
+#[derive(Error, Debug)]
+pub enum WARPVerifierError {
+    #[error("Invalid new code evaluation point")]
+    CodeEvaluationPoint,
+    #[error("Found invalid number of shift queries points")]
+    NumShiftQueries,
+    #[error("Found invalid shift query index")]
+    ShiftQueryIndex,
+    #[error("Couldn't verify shift query")]
+    ShiftQuery,
+    #[error("Found invalid number of l2 accumulated instances")]
+    NumL2Instances,
+    #[error("Found invalid number of sumcheck rounds")]
+    NumSumcheckRounds,
+    #[error("Sumcheck round verification failed")]
+    SumcheckRound,
+    #[error("Incorrect target")]
+    Target,
+}
+
+#[derive(Error, Debug)]
+pub enum WARPDeciderError {
+    #[error("Invalid merkle root")]
+    MerkleRoot,
+    #[error("Invalid multilinear extension evaluation")]
+    MLExtensionEvaluation,
+    #[error("Invalid bundled evaluation")]
+    BundledEvaluation,
+    #[error("Invalid encoded witness")]
+    EncodedWitness,
 }
 
 pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
