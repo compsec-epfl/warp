@@ -2,7 +2,6 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
 use spongefish::ProofResult;
 
-
 pub mod poly;
 pub mod poseidon;
 

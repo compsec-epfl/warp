@@ -85,7 +85,7 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
     fn verify_round(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
-        aux: &Self::VerifierAuxiliary<'_>,
+        _aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
         if sum_00 + sum_11 != *target {
@@ -227,7 +227,7 @@ mod tests {
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
-        relations::{r1cs::R1CS, relation::BundledPESAT},
+        relations::{r1cs::R1CS, BundledPESAT},
         utils::poly::eq_poly,
     };
 

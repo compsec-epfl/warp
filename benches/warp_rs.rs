@@ -18,8 +18,8 @@ use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
 use warp::relations::r1cs::hashchain::{
     compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness,
 };
-use warp::relations::relation::{BundledPESAT, ToPolySystem};
 use warp::relations::Relation;
+use warp::relations::{BundledPESAT, ToPolySystem};
 
 pub fn bench_rs_warp(c: &mut Criterion) {
     let hash_chain_size = 160;

@@ -31,11 +31,9 @@ use spongefish::{
 use std::marker::PhantomData;
 use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
-use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
+use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
 use super::AccumulationScheme;
-
-mod accumulator;
 
 #[derive(Clone)]
 pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
@@ -259,10 +257,10 @@ impl<
         // e. zero check randomness and f. bundled evaluations
         let mut taus = vec![vec![F::default(); log_M]; l1];
 
-        for i in 0..l1 {
+        for tau in taus.iter_mut().take(l1) {
             let mut tau_i = vec![F::default(); log_M];
             prover_state.fill_challenge_scalars(&mut tau_i)?;
-            taus[i] = tau_i; // bundled evaluations
+            *tau = tau_i; // bundled evaluations
         }
 
         ////////////////////////
@@ -561,10 +559,10 @@ impl<
 
         let mut l1_taus = vec![vec![F::default(); log_M]; l1];
 
-        for i in 0..l1 {
+        for l1_tau in l1_taus.iter_mut().take(l1) {
             let mut tau_i = vec![F::default(); log_M];
             verifier_state.fill_challenge_scalars(&mut tau_i)?;
-            l1_taus[i] = tau_i; // bundled evaluations
+            *l1_tau = tau_i; // bundled evaluations
         }
 
         let [omega] = verifier_state.challenge_scalars::<1>()?;
@@ -582,7 +580,7 @@ impl<
             coeffs_twinc_sumcheck.push(h_coeffs);
         }
 
-        let td = verifier_state.read_digest();
+        let _td = verifier_state.read_digest();
         let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
         let mut nus = vec![nu_0];
 
@@ -677,7 +675,7 @@ impl<
             .zip(l2_xs.clone().into_iter().chain(l1_xs))
             .map(|(tau, x)| concat_slices(&tau, &x))
             .collect::<Vec<Vec<F>>>();
-        let beta = scale_and_sum(&betas, &gamma_eq_evals);
+        let _beta = scale_and_sum(&betas, &gamma_eq_evals);
 
         // c. check auth paths
         let binary_shift_queries = bytes_shift_queries
@@ -802,7 +800,7 @@ impl<
         acc_witness: Self::AccumulatorWitnesses,
         acc_instance: Self::AccumulatorInstances,
     ) -> Result<(), WARPError> {
-        let (td, f, w) = acc_witness;
+        let (_td, f, w) = acc_witness;
         let (rt, alpha, mu, beta, eta) = acc_instance;
 
         let computed_td = MerkleTree::<MT>::new(
@@ -837,7 +835,7 @@ impl<
     }
 }
 
-fn scale_and_sum<F: Field>(vectors: &Vec<Vec<F>>, scalars: &[F]) -> Vec<F> {
+fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     let n = vectors[0].len();
     let mut result = vec![F::default(); n];
 
@@ -863,8 +861,7 @@ pub mod tests {
                 },
                 R1CS,
             },
-            relation::{BundledPESAT, ToPolySystem},
-            Relation,
+            BundledPESAT, Relation, ToPolySystem,
         },
         utils::poseidon,
     };

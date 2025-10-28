@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 use crate::{
     iors::IOR,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
-    relations::relation::BundledPESAT,
+    relations::BundledPESAT,
 };
 
 use spongefish::UnitToBytes;
@@ -194,7 +194,7 @@ impl<
             .chunks(self.config.log_n)
             .map(|array_tuples| {
                 let (alpha_as_field_elements, alpha_as_bool): (Vec<F>, Vec<bool>) =
-                    array_tuples.to_vec().into_iter().unzip();
+                    array_tuples.iter().copied().unzip();
 
                 // compute x_k as usize from binary representation
                 // we need to rev for the mle evaluation routine of arkworks
@@ -254,8 +254,7 @@ mod tests {
                 merkle_inclusion::{tests::get_test_merkle_tree, MerkleInclusionInstance},
                 MerkleInclusionRelation, MerkleInclusionWitness,
             },
-            relation::{BundledPESAT, ToPolySystem},
-            Relation,
+            BundledPESAT, Relation, ToPolySystem,
         },
         utils::poly::eq_poly,
     };

@@ -12,7 +12,7 @@ use whir::poly_utils::hypercube::BinaryHypercubePoint;
 use crate::{
     relations::{
         r1cs::{R1CSConstraints, R1CS},
-        relation::BundledPESAT,
+        BundledPESAT,
     },
     sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
     utils::poly::eq_poly,
@@ -277,7 +277,7 @@ mod tests {
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
-        relations::{r1cs::R1CS, relation::BundledPESAT},
+        relations::{r1cs::R1CS, BundledPESAT},
         utils::poly::eq_poly,
     };
 

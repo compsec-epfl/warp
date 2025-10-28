@@ -43,6 +43,7 @@ where
 //     opened_values: Vec<F>,
 // }
 
+#[allow(dead_code)] // this is WIP anyway
 pub struct PreimageRelationAccumulator<F, H, HG, R, S, C>
 where
     F: Field + PrimeField + SpongefishUnit,
@@ -88,7 +89,7 @@ where
         spongefish.absorb_unchecked(&bytes_to_vec_f(&circuit_description));
         let mut public_config: Vec<u8> = Vec::new();
         config.serialize_uncompressed(&mut public_config).unwrap();
-        spongefish.absorb_unchecked(&bytes_to_vec_f(&mut public_config));
+        spongefish.absorb_unchecked(&bytes_to_vec_f(&public_config));
 
         // now we have the keys:
         // pk_ACC = (st_FS, p, M, N, k)
@@ -122,10 +123,10 @@ where
     }
 
     fn verify(
-        config: &Self::Config,
-        commitment: &Self::Commitment,
-        instance: &Self::Instance,
-        proof: &Self::Proof,
+        _config: &Self::Config,
+        _commitment: &Self::Commitment,
+        _instance: &Self::Instance,
+        _proof: &Self::Proof,
     ) -> bool {
         // TODO(z-tech)
         false
@@ -158,6 +159,7 @@ mod tests {
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
+    type TestMerkleTreeConfig = PoseidonMerkleConfig<BLS12_381>;
     type TestRelation = PreimageRelation<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>;
     type TestSponge = DuplexSponge<PoseidonPermutation<255, BLS12_381, 2, 3>>;
     type TestAccumulator = PreimageRelationAccumulator<
@@ -206,7 +208,7 @@ mod tests {
             message_len,
             num_repetitions: 3,
             seed,
-        };
+     };
 
         // config
         let config: PreimageRelationAccumulatorConfig<BLS12_381, TestCRHScheme, RAA<BLS12_381>> =

@@ -1,4 +1,4 @@
 pub mod r1cs;
-pub mod relation;
+mod relation_trait;
 
-pub use relation::{Relation, SerializableConstraintMatrices};
+pub use relation_trait::{BundledPESAT, Relation, SerializableConstraintMatrices, ToPolySystem};

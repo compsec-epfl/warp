@@ -162,8 +162,8 @@ pub mod tests {
     use crate::relations::r1cs::{
         merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation,
     };
-    use crate::relations::relation::ToPolySystem;
     use crate::relations::Relation;
+    use crate::relations::ToPolySystem;
     use spongefish::DomainSeparator;
     use std::marker::PhantomData;
     use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;

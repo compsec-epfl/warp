@@ -7,7 +7,7 @@ use crate::{
     accumulator::warp::WARPConfig,
     iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},
     linear_code::LinearCode,
-    relations::relation::BundledPESAT,
+    relations::BundledPESAT,
     utils::DigestDomainSeparator,
 };
 
