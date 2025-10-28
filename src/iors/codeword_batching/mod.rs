@@ -1,4 +1,4 @@
-use crate::utils::DigestToUnitSerialize;
+use crate::{linear_code::MultiConstraints, utils::DigestToUnitSerialize};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree},
@@ -11,11 +11,7 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-use crate::{
-    iors::IOR,
-    linear_code::{LinearCode, MultiConstrainedLinearCode},
-    relations::BundledPESAT,
-};
+use crate::{iors::IOR, linear_code::LinearCode, relations::BundledPESAT};
 
 use spongefish::UnitToBytes;
 
@@ -57,27 +53,19 @@ pub struct PseudoBatchingIOR<
     F: Field + SpongefishUnit,
     C: LinearCode<F> + Clone,
     P: BundledPESAT<F>,
-    MC: MultiConstrainedLinearCode<F, C, P>,
     MT: Config,
 > {
     // note that R is one by def and is provided as a constant
     config: PseudoBatchingIORConfig<F, C, MT>,
-    _mc: PhantomData<MC>,
     _p: PhantomData<P>,
 }
 
-impl<
-        F: Field + SpongefishUnit,
-        C: LinearCode<F> + Clone,
-        P: BundledPESAT<F>,
-        MC: MultiConstrainedLinearCode<F, C, P>,
-        MT: Config,
-    > PseudoBatchingIOR<F, C, P, MC, MT>
+impl<F: Field + SpongefishUnit, C: LinearCode<F> + Clone, P: BundledPESAT<F>, MT: Config>
+    PseudoBatchingIOR<F, C, P, MT>
 {
     pub fn new(config: PseudoBatchingIORConfig<F, C, MT>) -> Self {
         Self {
             config,
-            _mc: PhantomData,
             _p: PhantomData,
         }
     }
@@ -87,20 +75,19 @@ impl<
         F: Field + SpongefishUnit,
         C: LinearCode<F> + Clone,
         P: BundledPESAT<F>,
-        MC: MultiConstrainedLinearCode<F, C, P>,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-    > IOR<F, C, MT> for PseudoBatchingIOR<F, C, P, MC, MT>
+    > IOR<F, C, MT> for PseudoBatchingIOR<F, C, P, MT>
 {
     // instance is a vector \gamma, an twin constraint and corresponding codewords
     // (\gamma, (\alpha, \mu), \beta, \eta, (u_1, \dots, u_l))
-    type Instance = (Vec<F>, MC, Vec<Vec<F>>);
+    type Instance = (Vec<F>, MultiConstraints<F>, Vec<Vec<F>>);
 
     // witness is the RLC of the above codewords
     // \Sigma_{i \in l}( \gamma_i \cdot u_{i})
     type Witness = Vec<F>;
 
     // output instance is multi constraint codeword with 1 + s + t multilinear evaluation claims
-    type OutputInstance = MC;
+    type OutputInstance = MultiConstraints<F>;
 
     // output witness is a codeword, which is an RLC of the above codeword
     type OutputWitness = Vec<F>;
@@ -119,9 +106,11 @@ impl<
 
         debug_assert!(gamma.len() == codewords.len());
 
-        let constraints = multi_constraints.get_constraints();
-        let (mut multilinear_evals, beta, eta) =
-            (constraints.0.to_vec(), constraints.1, constraints.2);
+        let (mut multilinear_evals, beta, eta) = (
+            multi_constraints.evaluations,
+            multi_constraints.beta,
+            multi_constraints.eta,
+        );
         let mu = multilinear_evals[0].1;
 
         let u_mle = DenseMultilinearExtension::from_evaluations_slice(self.config.log_n, &witness);
@@ -219,12 +208,7 @@ impl<
 
         Ok((
             // NOTE: this is recomputing the eq_evaluation table
-            MC::new_with_constraint(
-                self.config.code_config.clone(),
-                multilinear_evals,
-                beta.clone(),
-                eta,
-            ),
+            MultiConstraints::new(multilinear_evals, beta, eta),
             witness,
         ))
     }
@@ -241,18 +225,15 @@ mod tests {
     use crate::{
         domainsep::WARPDomainSeparator,
         iors::{
-            pesat::{
-                r1cs::twin_constraint::{tests::TwinConstraintRS, R1CSTwinConstraintIOR},
-                TwinConstraintIORConfig,
-            },
+            pesat::{r1cs::twin_constraint::R1CSTwinConstraintIOR, TwinConstraintIORConfig},
             IOR,
         },
-        linear_code::MultiConstrainedLinearCode,
+        linear_code::{MultiConstraintChecker, MultiConstraints},
         merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
         relations::{
             r1cs::{
                 merkle_inclusion::{tests::get_test_merkle_tree, MerkleInclusionInstance},
-                MerkleInclusionRelation, MerkleInclusionWitness,
+                MerkleInclusionRelation, MerkleInclusionWitness, R1CS,
             },
             BundledPESAT, Relation, ToPolySystem,
         },
@@ -260,7 +241,7 @@ mod tests {
     };
     use ark_bls12_381::Fr;
     use ark_ff::{UniformRand, Zero};
-    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_std::{log2, test_rng};
     use spongefish::DomainSeparator;
     use whir::{
@@ -269,8 +250,7 @@ mod tests {
 
     use crate::{
         iors::codeword_batching::PseudoBatchingIOR,
-        linear_code::{LinearCode, MultiConstrainedReedSolomon, ReedSolomon, ReedSolomonConfig},
-        relations::r1cs::R1CS,
+        linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
     };
 
     use super::PseudoBatchingIORConfig;
@@ -299,10 +279,7 @@ mod tests {
             r1cs.log_m,
         );
 
-        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _>::new(
-            r1cs.clone(),
-            pesat_ior_config.clone(),
-        );
+        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::new(r1cs.clone(), pesat_ior_config.clone());
 
         let mut witnesses = vec![];
         let mut instances = vec![];
@@ -402,17 +379,8 @@ mod tests {
 
         let eta = r1cs.evaluate_bundled(&zero_evader, &z).unwrap();
 
-        let mc_instance =
-            MultiConstrainedReedSolomon::<_, ReedSolomon<Fr>, R1CS<Fr>>::new_with_constraint(
-                code_config.clone(),
-                vec![(rlc_alpha, upsilon)],
-                rlc_beta,
-                eta,
-            );
-
-        // check that the built multi constrained codeword instance is correct
-        mc_instance
-            .check_constraints(&rlc_w, &rlc_f, &r1cs)
+        let mc_instance = MultiConstraints::new(vec![(rlc_alpha, upsilon)], rlc_beta, eta);
+        code.check_constraints(&mc_instance, &rlc_w, &rlc_f, &r1cs)
             .unwrap();
 
         let config = PseudoBatchingIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
@@ -440,13 +408,10 @@ mod tests {
             }
         }
 
-        let pseudo_batching_ior = PseudoBatchingIOR::<
-            Fr,
-            ReedSolomon<Fr>,
-            R1CS<Fr>,
-            MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>>,
-            Blake3MerkleTreeParams<Fr>,
-        >::new(config);
+        let pseudo_batching_ior =
+            PseudoBatchingIOR::<Fr, ReedSolomon<Fr>, R1CS<Fr>, Blake3MerkleTreeParams<Fr>>::new(
+                config,
+            );
 
         let (new_mc, wtns) = pseudo_batching_ior
             .prove(
@@ -456,6 +421,7 @@ mod tests {
             )
             .unwrap();
 
-        new_mc.check_constraints(&rlc_w, &wtns, &r1cs).unwrap();
+        code.check_constraints(&new_mc, &rlc_w, &wtns, &r1cs)
+            .unwrap();
     }
 }

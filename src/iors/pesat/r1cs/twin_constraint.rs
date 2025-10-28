@@ -1,11 +1,9 @@
-use std::marker::PhantomData;
-
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
 
 use crate::{
     iors::pesat::TwinConstraintIORConfig,
-    linear_code::{LinearCode, MultiConstrainedLinearCode},
+    linear_code::{LinearCode, MultiConstraints},
     relations::r1cs::R1CS,
     utils::DigestToUnitSerialize,
 };
@@ -19,39 +17,24 @@ use crate::iors::IOR;
 // L should be a power of 2
 // we have L incoming (instance, witness) pairs (noted l1 when in WARP context)
 // a twin constraint code is the code for which R = 1
-pub struct R1CSTwinConstraintIOR<
-    F: Field + SpongefishUnit,
-    C: LinearCode<F>,
-    MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
-    MT: Config,
-> {
+pub struct R1CSTwinConstraintIOR<F: Field + SpongefishUnit, C: LinearCode<F>, MT: Config> {
     // NOTE: when proving we only need log(M), not the R1CS itself
     r1cs: R1CS<F>,
     pub config: TwinConstraintIORConfig<F, C, MT>,
-    _mc: PhantomData<MC>,
 }
-impl<
-        F: Field + SpongefishUnit,
-        C: LinearCode<F> + Clone,
-        MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
-        MT: Config,
-    > R1CSTwinConstraintIOR<F, C, MC, MT>
+impl<F: Field + SpongefishUnit, C: LinearCode<F> + Clone, MT: Config>
+    R1CSTwinConstraintIOR<F, C, MT>
 {
     pub fn new(r1cs: R1CS<F>, config: TwinConstraintIORConfig<F, C, MT>) -> Self {
-        Self {
-            r1cs,
-            config,
-            _mc: PhantomData,
-        }
+        Self { r1cs, config }
     }
 }
 
 impl<
         F: FftField + SpongefishUnit,
         C: LinearCode<F>,
-        MC: MultiConstrainedLinearCode<F, C, R1CS<F>>,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-    > IOR<F, C, MT> for R1CSTwinConstraintIOR<F, C, MC, MT>
+    > IOR<F, C, MT> for R1CSTwinConstraintIOR<F, C, MT>
 {
     // we have L incoming (instance, witness) pairs
     // (x, w) s.t. R1CS(x, w) = 0
@@ -59,7 +42,7 @@ impl<
     type Witness = Vec<Vec<F>>;
 
     // L twin constraint codes
-    type OutputInstance = Vec<MC>;
+    type OutputInstance = Vec<MultiConstraints<F>>;
 
     // L corresponding codewords
     type OutputWitness = Vec<Vec<F>>;
@@ -79,7 +62,7 @@ impl<
 
         let code_length = self.config.code.code_len();
         let mut output_witness = vec![vec![F::default(); code_length]; self.config.l];
-        let mut output_instance = Vec::<MC>::with_capacity(self.config.l);
+        let mut output_instance = Vec::<MultiConstraints<F>>::with_capacity(self.config.l);
 
         // TODO: let user provide alpha (?)
         let num_vars = code_length.ilog2() as usize;
@@ -131,8 +114,7 @@ impl<
             let mut tau_i = vec![F::default(); tau_len];
             prover_state.fill_challenge_scalars(&mut tau_i)?;
 
-            output_instance.push(MC::new_with_constraint(
-                self.config.code_config.clone(),
+            output_instance.push(MultiConstraints::new(
                 vec![(vec![F::zero(); num_vars], mu[i])],
                 (tau_i, instance[i].clone()),
                 F::zero(),
@@ -153,12 +135,11 @@ pub mod tests {
     use crate::iors::pesat::r1cs::twin_constraint::R1CSTwinConstraintIOR;
     use crate::iors::IOR;
     use crate::linear_code::LinearCode;
-    use crate::linear_code::MultiConstrainedLinearCode;
-    use crate::linear_code::{MultiConstrainedReedSolomon, ReedSolomon, ReedSolomonConfig};
+    use crate::linear_code::MultiConstraintChecker;
+    use crate::linear_code::{ReedSolomon, ReedSolomonConfig};
     use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
     use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
     use crate::relations::r1cs::MerkleInclusionWitness;
-    use crate::relations::r1cs::R1CS;
     use crate::relations::r1cs::{
         merkle_inclusion::tests::get_test_merkle_tree, MerkleInclusionRelation,
     };
@@ -171,8 +152,6 @@ pub mod tests {
     use ark_bls12_381::Fr;
 
     use super::TwinConstraintIORConfig;
-
-    pub type TwinConstraintRS = MultiConstrainedReedSolomon<Fr, ReedSolomon<Fr>, R1CS<Fr>>;
 
     #[test]
     pub fn test_ior_twin_constraints() {
@@ -190,7 +169,7 @@ pub mod tests {
 
         // initialize ior
         let ior_config = TwinConstraintIORConfig::<_, _, Blake3MerkleTreeParams<Fr>>::new(
-            code,
+            code.clone(),
             code_config.clone(),
             (),
             (),
@@ -198,10 +177,9 @@ pub mod tests {
             log_m,
         );
 
-        let r1cs_twinrs_ior = R1CSTwinConstraintIOR::<_, _, TwinConstraintRS, _> {
+        let r1cs_twinrs_ior = R1CSTwinConstraintIOR {
             r1cs: r1cs.clone(),
             config: ior_config,
-            _mc: std::marker::PhantomData,
         };
 
         // intialize prover state
@@ -244,7 +222,7 @@ pub mod tests {
 
         // check multicodewords constraints
         for (i, p) in new_instances.iter().zip(new_witnesses).enumerate() {
-            p.0.check_constraints(&witnesses[i], &p.1, &r1cs).unwrap();
+            code.check_constraints(&p.0, &witnesses[i], &p.1, &r1cs);
         }
     }
 }
