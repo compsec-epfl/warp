@@ -1,13 +1,14 @@
+use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
 use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use crate::{
     concat_slices,
     domainsep::{absorb_accumulated_instances, absorb_instances},
-    iors::{
-        multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
-        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
-    },
     relations::r1cs::R1CSConstraints,
-    sumcheck::Sumcheck,
+    sumcheck::{
+        multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
+        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
+        Sumcheck,
+    },
     utils::{
         poly::{eq_poly, eq_poly_non_binary},
         DigestToUnitDeserialize, DigestToUnitSerialize,

@@ -3,7 +3,6 @@ pub mod tests;
 
 pub mod accumulator;
 pub mod domainsep;
-pub mod iors;
 pub mod linear_code;
 pub mod merkle;
 pub mod relations;

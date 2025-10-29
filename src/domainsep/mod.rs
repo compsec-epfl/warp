@@ -9,16 +9,12 @@ use spongefish::{
 
 use crate::{
     accumulator::warp::WARPConfig,
-    iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},
     linear_code::LinearCode,
     relations::BundledPESAT,
     utils::{DigestDomainSeparator, DigestToUnitSerialize},
 };
 
-// TODO
 pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
-    fn pesat_ior(self, conf: &TwinConstraintIORConfig<F, C, MT>) -> Self;
-    fn pseudo_batching_ior(self, conf: &PseudoBatchingIORConfig<F, C, MT>) -> Self;
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
         config: WARPConfig<F, P>,
@@ -32,21 +28,6 @@ impl<
         DomainSeparator: ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MT>,
     > WARPDomainSeparator<F, C, MT> for DomainSeparator
 {
-    fn pesat_ior(self, conf: &TwinConstraintIORConfig<F, C, MT>) -> Self {
-        self.add_digest("root")
-            .add_scalars(conf.l, "mu")
-            .challenge_scalars(conf.log_m * conf.l, "tau")
-    }
-
-    fn pseudo_batching_ior(self, conf: &PseudoBatchingIORConfig<F, C, MT>) -> Self {
-        self.add_scalars(1, "root")
-            .add_scalars(1, "mu")
-            .add_scalars(1, "eta")
-            .challenge_scalars(conf.s * conf.log_n, "alpha")
-            .add_scalars(conf.s, "mus")
-            .challenge_bytes((conf.t * conf.log_n).div_ceil(8), "x")
-    }
-
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
         config: WARPConfig<F, P>,
