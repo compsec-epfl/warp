@@ -1,3 +1,5 @@
+// {blake3, digest, parameters, mod}.rs have been copied from whir
+// https://github.com/WizardOfMenlo/whir
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ark_crypto_primitives::{merkle_tree::DigestConverter, Error};

@@ -54,8 +54,7 @@ where
     type LeafHash = LeafH;
     type TwoToOneHash = CompressH;
 }
-// from whir
-// https://github.com/WizardOfMenlo/whir/blob/3d627d31cec7d73a470a31a913229dd3128ee0cf/src/crypto/merkle_tree/parameters.rs#L63
+
 impl<F: Field, LeafH, CompressH, const N: usize>
     DigestDomainSeparator<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
     for DomainSeparator
@@ -68,8 +67,6 @@ where
     }
 }
 
-// from whir
-// https://github.com/WizardOfMenlo/whir/blob/3d627d31cec7d73a470a31a913229dd3128ee0cf/src/crypto/merkle_tree/parameters.rs#L76
 impl<F: Field, LeafH, CompressH, const N: usize>
     DigestToUnitSerialize<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>> for ProverState
 where
