@@ -30,14 +30,15 @@ use spongefish::{
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
-use verifier::check_code_evaluation_point;
 use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
-use super::AccumulationScheme;
+mod traits;
 
-mod verifier;
+use traits::BoolResult;
+
+use super::AccumulationScheme;
 
 #[derive(Clone)]
 pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
@@ -260,16 +261,8 @@ impl<
 
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
 
-        // TODO: remove this clone()
-        let all_codewords: Vec<Vec<F>> = acc_witnesses
-            .1
-            .clone()
-            .into_iter()
-            .chain(codewords.clone())
-            .collect();
-
         let mut evals = Evals::new(
-            all_codewords.clone(),
+            concat_slices(&acc_witnesses.1, &codewords),
             z_vecs,
             alpha_vecs,
             beta_vecs,
@@ -436,10 +429,17 @@ impl<
             })
             .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
-        let shift_queries_answers = shift_queries_indexes
-            .iter()
-            .map(|idx| all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>())
-            .collect::<Vec<Vec<F>>>();
+        let all_codewords = acc_witnesses
+            .1
+            .into_iter()
+            .chain(codewords)
+            .collect::<Vec<_>>();
+        let mut shift_queries_answers =
+            vec![vec![F::default(); all_codewords.len()]; shift_queries_indexes.len()];
+        for (i, idx) in shift_queries_indexes.iter().enumerate() {
+            let answers = all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>();
+            shift_queries_answers[i] = answers;
+        }
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
         let acc_witness = (vec![td], vec![f], vec![w.to_vec()]);
@@ -633,7 +633,8 @@ impl<
         // 4. Decision phase
         ////////////////////////
         // a. new code evaluation point
-        check_code_evaluation_point(&acc_instance.1[0], &alpha_sumcheck)?;
+        (&acc_instance.1[0] == &alpha_sumcheck)
+            .ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
 
         // b. new circuit evaluation point
         let betas = l2_taus
@@ -674,15 +675,12 @@ impl<
         // check:
         // that the leaf index corresponds to the shift query
         // that the path is correct
-        (proof.6.len() == self.config.t)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::NumShiftQueries)?;
+        (proof.6.len() == self.config.t).ok_or_err(WARPVerifierError::NumShiftQueries)?;
 
         // proof.4 is auth_0
         for (i, path) in proof.4.iter().enumerate() {
             (path.leaf_index == shift_queries_indexes[i])
-                .then_some(())
-                .ok_or_else(|| WARPVerifierError::ShiftQueryIndex)?;
+                .ok_or_err(WARPVerifierError::ShiftQueryIndex)?;
 
             let is_valid = path.verify(
                 &self.mt_leaf_hash_params,
@@ -690,24 +688,17 @@ impl<
                 &rt_0,
                 &proof.6[i][l2..], // leaves are evaluations of the l1 codewords
             )?;
-            is_valid
-                .then_some(())
-                .ok_or_else(|| WARPVerifierError::ShiftQuery)?
+            is_valid.ok_or_err(WARPVerifierError::ShiftQuery)?
         }
 
         // proof.5 holds merkle proofs for l2 accumulated instances
-        (proof.5.len() == l2)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::NumL2Instances)?;
+        (proof.5.len() == l2).ok_or_err(WARPVerifierError::NumL2Instances)?;
         for (i, paths) in proof.5.iter().enumerate() {
-            (paths.len() == self.config.t)
-                .then_some(())
-                .ok_or_else(|| WARPVerifierError::NumShiftQueries)?;
+            (paths.len() == self.config.t).ok_or_err(WARPVerifierError::NumShiftQueries)?;
             let root = &l2_roots[i];
             for (j, path) in paths.iter().enumerate() {
                 (path.leaf_index == shift_queries_indexes[j])
-                    .then_some(())
-                    .ok_or_else(|| WARPVerifierError::ShiftQueryIndex)?;
+                    .ok_or_err(WARPVerifierError::ShiftQueryIndex)?;
                 let is_valid = path.verify(
                     &self.mt_leaf_hash_params,
                     &self.mt_two_to_one_hash_params,
@@ -715,38 +706,29 @@ impl<
                     [proof.6[j][i]], // proof.6[j][i] holds f_i(x_j)
                 )?;
 
-                is_valid
-                    .then_some(())
-                    .ok_or_else(|| WARPVerifierError::ShiftQuery)?
+                is_valid.ok_or_err(WARPVerifierError::ShiftQuery)?
             }
         }
 
         // d. sumcheck decisions
         // twin constraints sumcheck
-        (coeffs_twinc_sumcheck.len() == log_l)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::NumSumcheckRounds)?;
+        (coeffs_twinc_sumcheck.len() == log_l).ok_or_err(WARPVerifierError::NumSumcheckRounds)?;
 
         let mut target_1 = sigma_1;
         for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
             let h = DensePolynomial::from_coefficients_vec(coeffs);
             (h.evaluate(&F::one()) + h.evaluate(&F::zero()) == target_1)
-                .then_some(())
-                .ok_or_else(|| WARPVerifierError::SumcheckRound)?;
+                .ok_or_err(WARPVerifierError::SumcheckRound)?;
             target_1 = h.evaluate(gamma);
         }
 
         // multilinear batching sumcheck
-        (sums_batching_sumcheck.len() == log_n)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::NumSumcheckRounds)?;
+        (sums_batching_sumcheck.len() == log_n).ok_or_err(WARPVerifierError::NumSumcheckRounds)?;
         let mut target_2 = sigma_2;
         for ([sum_00, sum_11, sum_0110], alpha) in
             sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck)
         {
-            (sum_00 + sum_11 == target_2)
-                .then_some(())
-                .ok_or_else(|| WARPVerifierError::SumcheckRound)?;
+            (sum_00 + sum_11 == target_2).ok_or_err(WARPVerifierError::SumcheckRound)?;
             target_2 = (target_2 - sum_0110) * alpha.square()
                 + sum_00 * (F::one() - alpha.double())
                 + sum_0110 * alpha;
@@ -755,8 +737,7 @@ impl<
         // e. new target decision
         // build eq^{\star}(\alpha)
         (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta) == target_1)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::Target)?;
+            .ok_or_err(WARPVerifierError::Target)?;
 
         let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
 
@@ -772,9 +753,7 @@ impl<
                 .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
                 .collect::<Vec<F>>(),
         );
-        (zeta_eqs.len() == r)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::NumShiftQueries)?;
+        (zeta_eqs.len() == r).ok_or_err(WARPVerifierError::NumShiftQueries)?;
 
         // mul by \mu and compare to target_2
         (acc_instance.2[0]
@@ -783,8 +762,7 @@ impl<
                 .zip(xi_eq_evals)
                 .fold(F::zero(), |acc, (a, b)| acc + a * b)
             == target_2)
-            .then_some(())
-            .ok_or_else(|| WARPVerifierError::Target)?;
+            .ok_or_err(WARPVerifierError::Target)?;
 
         Ok(())
     }
@@ -802,18 +780,14 @@ impl<
             &self.mt_two_to_one_hash_params,
             f[0].chunks(1).collect::<Vec<_>>(),
         )?;
-        (rt[0] == computed_td.root())
-            .then_some(())
-            .ok_or_else(|| WARPDeciderError::MerkleRoot)?;
-        // TODO? assert_eq!(td[0], computed_td);
+        (rt[0] == computed_td.root()).ok_or_err(WARPDeciderError::MerkleRoot)?;
+        // TODO? assert_err[0], computed_td);
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.code.code_len()) as usize,
             &f[0],
         );
-        (f_hat.evaluate(&alpha[0]) == mu[0])
-            .then_some(())
-            .ok_or_else(|| WARPDeciderError::MLExtensionEvaluation)?;
+        (f_hat.evaluate(&alpha[0]) == mu[0]).ok_or_err(WARPDeciderError::MLExtensionEvaluation)?;
 
         let tau = &beta.0[0];
 
@@ -824,14 +798,10 @@ impl<
         let mut z = beta.1[0].clone();
         z.extend(w[0].clone());
         let computed_eta = self.p.evaluate_bundled(&tau_zero_evader, &z).unwrap();
-        (computed_eta == eta[0])
-            .then_some(())
-            .ok_or_else(|| WARPDeciderError::BundledEvaluation)?;
+        (computed_eta == eta[0]).ok_or_err(WARPDeciderError::BundledEvaluation)?;
 
         let computed_f = self.code.encode(&w[0]);
-        (f[0] == computed_f)
-            .then_some(())
-            .ok_or_else(|| WARPDeciderError::EncodedWitness)?;
+        (f[0] == computed_f).ok_or_err(WARPDeciderError::EncodedWitness)?;
 
         Ok(())
     }
