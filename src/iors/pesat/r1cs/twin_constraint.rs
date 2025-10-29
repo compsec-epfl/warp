@@ -137,6 +137,7 @@ pub mod tests {
     use crate::linear_code::LinearCode;
     use crate::linear_code::MultiConstraintChecker;
     use crate::linear_code::{ReedSolomon, ReedSolomonConfig};
+    use crate::merkle::blake3::Blake3MerkleTreeParams;
     use crate::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget};
     use crate::relations::r1cs::merkle_inclusion::MerkleInclusionInstance;
     use crate::relations::r1cs::MerkleInclusionWitness;
@@ -147,7 +148,6 @@ pub mod tests {
     use crate::relations::ToPolySystem;
     use spongefish::DomainSeparator;
     use std::marker::PhantomData;
-    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
     use ark_bls12_381::Fr;
 

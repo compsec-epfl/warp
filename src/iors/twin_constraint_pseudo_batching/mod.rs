@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
 use crate::{
     relations::{
@@ -15,6 +14,7 @@ use crate::{
         BundledPESAT,
     },
     sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
+    utils::hypercube::BinaryHypercubePoint,
     utils::poly::eq_poly,
     WARPError,
 };
@@ -273,11 +273,11 @@ mod tests {
     use ark_std::{log2, test_rng};
     use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
         relations::{r1cs::R1CS, BundledPESAT},
+        utils::hypercube::BinaryHypercube,
         utils::poly::eq_poly,
     };
 

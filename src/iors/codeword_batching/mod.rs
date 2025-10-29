@@ -222,6 +222,7 @@ impl<
 mod tests {
     use std::marker::PhantomData;
 
+    use crate::merkle::blake3::Blake3MerkleTreeParams;
     use crate::{
         domainsep::WARPDomainSeparator,
         iors::{
@@ -237,16 +238,13 @@ mod tests {
             },
             BundledPESAT, Relation, ToPolySystem,
         },
-        utils::poly::eq_poly,
+        utils::{hypercube::BinaryHypercube, poly::eq_poly},
     };
     use ark_bls12_381::Fr;
     use ark_ff::{UniformRand, Zero};
     use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_std::{log2, test_rng};
     use spongefish::DomainSeparator;
-    use whir::{
-        crypto::merkle_tree::blake3::Blake3MerkleTreeParams, poly_utils::hypercube::BinaryHypercube,
-    };
 
     use crate::{
         iors::codeword_batching::PseudoBatchingIOR,

@@ -1,3 +1,4 @@
+use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::{
@@ -8,7 +9,6 @@ use ark_std::{
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
 use crate::{
     sumcheck::{vsbw_reduce_evaluations, Sumcheck},
@@ -221,13 +221,13 @@ mod tests {
     use ark_std::{log2, test_rng};
     use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use super::*;
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
         relations::{r1cs::R1CS, BundledPESAT},
+        utils::hypercube::BinaryHypercubePoint,
         utils::poly::eq_poly,
     };
 

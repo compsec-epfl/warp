@@ -1,5 +1,5 @@
+use crate::utils::hypercube::BinaryHypercubePoint;
 use ark_ff::Field;
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
 // from whir
 // https://github.com/WizardOfMenlo/whir/blob/22c675807fc9295fef68a11945713dc3e184e1c1/src/poly_utils/multilinear.rs#L105

@@ -1,8 +1,8 @@
+use crate::utils::hypercube::BinaryHypercube;
 use ark_ff::Field;
 use ark_poly::DenseMultilinearExtension;
 use ark_poly::Polynomial;
 use ark_std::log2;
-use whir::poly_utils::hypercube::BinaryHypercube;
 
 use crate::utils::poly::eq_poly;
 use crate::{relations::BundledPESAT, WARPError};

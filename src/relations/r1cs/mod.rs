@@ -4,6 +4,7 @@ pub mod is_prime;
 pub mod merkle_inclusion;
 pub mod preimage;
 
+use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
 pub use identity::{IdentityInstance, IdentityRelation, IdentitySynthesizer, IdentityWitness};
@@ -12,7 +13,6 @@ pub use is_prime::{
 };
 pub use merkle_inclusion::{MerkleInclusionRelation, MerkleInclusionWitness};
 pub use preimage::{PreimageConfig, PreimageInstance, PreimageRelation, PreimageWitness};
-use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::WARPError;
 

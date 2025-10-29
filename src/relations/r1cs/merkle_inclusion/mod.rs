@@ -73,12 +73,12 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::relations::ToPolySystem;
+    use crate::utils::hypercube::BinaryHypercube;
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
     use ark_ec::AdditiveGroup;
     use ark_ff::UniformRand;
     use ark_std::{marker::PhantomData, test_rng};
-    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use crate::{
         merkle::poseidon::{

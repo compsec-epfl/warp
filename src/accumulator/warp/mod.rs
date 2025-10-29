@@ -1,3 +1,4 @@
+use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use crate::{
     concat_slices,
     domainsep::{absorb_accumulated_instances, absorb_instances},
@@ -30,7 +31,6 @@ use spongefish::{
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
-use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
@@ -835,6 +835,7 @@ fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) 
 pub mod tests {
     use std::marker::PhantomData;
 
+    use crate::merkle::blake3::Blake3MerkleTreeParams;
     use crate::{
         accumulator::AccumulationScheme,
         domainsep::WARPDomainSeparator,
@@ -855,7 +856,6 @@ pub mod tests {
     use ark_ff::UniformRand;
     use rand::thread_rng;
     use spongefish::DomainSeparator;
-    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
     use super::{WARPConfig, WARP};
 

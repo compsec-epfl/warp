@@ -1,13 +1,59 @@
-use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
+use crate::merkle::digest::GenericDigest;
+use ark_crypto_primitives::{
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::{Config, IdentityDigestConverter},
+    sponge::Absorb,
+};
 use ark_ff::Field;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::{
     ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
     ProofResult, ProverState, VerifierState,
 };
-use whir::crypto::merkle_tree::{digest::GenericDigest, parameters::MerkleTreeParams};
+use std::{hash::Hash, marker::PhantomData};
 
 use crate::utils::{DigestDomainSeparator, DigestToUnitDeserialize, DigestToUnitSerialize};
+use serde::{Deserialize, Serialize};
 
+/// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
+///
+/// # Type Parameters:
+/// - `F`: Field element used in the leaves
+/// - `LeafH`: Leaf hash function
+/// - `CompressH`: Internal node hasher
+/// - `Digest`: Digest type
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct MerkleTreeParams<F, LeafH, CompressH, Digest> {
+    #[serde(skip)]
+    _marker: PhantomData<(F, LeafH, CompressH, Digest)>,
+}
+
+impl<F, LeafH, CompressH, Digest> Config for MerkleTreeParams<F, LeafH, CompressH, Digest>
+where
+    F: CanonicalSerialize + Send,
+    LeafH: CRHScheme<Input = [F], Output = Digest>,
+    CompressH: TwoToOneCRHScheme<Input = Digest, Output = Digest>,
+    Digest: Clone
+        + std::fmt::Debug
+        + Default
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + Eq
+        + PartialEq
+        + Hash
+        + Send
+        + Absorb,
+{
+    type Leaf = [F];
+
+    type LeafDigest = Digest;
+    type LeafInnerDigestConverter = IdentityDigestConverter<Digest>;
+    type InnerDigest = Digest;
+
+    type LeafHash = LeafH;
+    type TwoToOneHash = CompressH;
+}
 // from whir
 // https://github.com/WizardOfMenlo/whir/blob/3d627d31cec7d73a470a31a913229dd3128ee0cf/src/crypto/merkle_tree/parameters.rs#L63
 impl<F: Field, LeafH, CompressH, const N: usize>
