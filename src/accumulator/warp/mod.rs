@@ -191,34 +191,17 @@ impl<
         let n = self.code.code_len();
         let log_n = log2(n) as usize;
 
-        let alpha = 0;
+        // a. encode witnesses
+        let (codewords, leaves) = build_codeword_leaves(&self.code, &witnesses, l1);
 
-        let mut codewords = vec![vec![F::default(); n]; l1];
-
-        // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        let mut codewords_as_leaves = vec![F::default(); l1 * n];
-        let mut mus = vec![F::default(); l1];
-
-        // a. encode witnesses and b. evaluation claims
-        for i in 0..l1 {
-            let f_i = self.code.encode(&witnesses[i]);
-            // stacking codewords in flat array, which we chunk below
-            // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
-            for (j, value) in f_i.iter().enumerate() {
-                codewords_as_leaves[(j * l1) + i] = *value;
-            }
-            // evaluate the dense mle for the codeword \hat{f}(alpha) == f[alpha]
-            mus[i] = f_i[alpha];
-            codewords[i] = f_i;
-        }
-
-        let codewords_as_leaves: Vec<&[F]> = codewords_as_leaves.chunks_exact(l1).collect();
+        // b. evaluation claims
+        let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
 
         // c. commit to witnesses
         let td_0 = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            codewords_as_leaves,
+            leaves.chunks_exact(l1).collect::<Vec<_>>(),
         )?;
 
         // d. absorb commitment and code evaluations
@@ -250,6 +233,7 @@ impl<
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
 
+        // build the z (x, w) vectors
         let z_vecs: Vec<Vec<F>> = acc_instances
             .3
              .1
@@ -332,24 +316,15 @@ impl<
         let log_r = log2(r) as usize;
         let n_shift_queries = (self.config.t * log_n).div_ceil(8);
         let mut bytes_shift_queries = vec![0u8; n_shift_queries];
-        let mut xi = vec![F::default(); log_r];
+        let mut xis = vec![F::default(); log_r];
 
         prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
-        prover_state.fill_challenge_scalars(&mut xi)?;
+        prover_state.fill_challenge_scalars(&mut xis)?;
 
         // get shift queries as binary field elements
         let binary_shift_queries = bytes_shift_queries
             .iter()
-            .flat_map(|x| {
-                // TODO factor out
-                (0..8)
-                    .map(|i| {
-                        let val = (x >> i) & 1 == 1;
-                        // return in field element and in binary
-                        F::from(val)
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(byte_to_binary_field_array)
             .take(self.config.t * log_n)
             .collect::<Vec<F>>();
 
@@ -358,11 +333,7 @@ impl<
         // build indexes out of the shift queries stored
         let shift_queries_indexes: Vec<usize> = binary_shift_queries
             .iter()
-            .map(|vals| {
-                vals.iter()
-                    .rev()
-                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
-            })
+            .map(|vals| binary_field_elements_to_usize(vals))
             .collect();
 
         let binary_shift_queries_answers = binary_shift_queries
@@ -376,7 +347,7 @@ impl<
         // l. sumcheck polynomials
         // compute evaluations for xi
         let xi_eq_evals = (0..r)
-            .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+            .map(|i| eq_poly(&xis, BinaryHypercubePoint(i)))
             .collect::<Vec<_>>();
 
         let ood_evals_vec = (0..1 + self.config.s)
@@ -388,15 +359,7 @@ impl<
             .collect::<Vec<_>>();
 
         // [CBBZ23] optimization from hyperplonk
-        let mut id_non_0_eval_sums = UsizeMap::default();
-        for i in 1 + self.config.s..r {
-            let a = zetas[i]
-                .iter()
-                .enumerate()
-                .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
-                .sum::<usize>();
-            *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
-        }
+        let id_non_0_eval_sums = cbbz23(zetas, xi_eq_evals, self.config.s, r);
 
         let alpha = MultilinearConstraintBatchingSumcheck::prove(
             prover_state,
@@ -409,24 +372,12 @@ impl<
         let mu = f_hat.fix_variables(&alpha)[0];
 
         // n. compute authentication paths
-        let auth_0: Vec<Path<MT>> = shift_queries_indexes
-            .iter()
-            .map(|x_t| {
-                td_0.generate_proof(*x_t)
-                    .map_err(|_| ProofError::InvalidProof)
-            })
-            .collect::<Result<Vec<Path<MT>>, ProofError>>()?;
+        let auth_0 = compute_auth_paths(&td_0, &shift_queries_indexes)?;
 
-        let auth: Vec<Vec<Path<MT>>> = acc_witnesses
+        let auth = acc_witnesses
             .0 // for each accumulated witness and for each
-            // query index, get corresponding auth path
             .iter()
-            .map(|td| {
-                shift_queries_indexes
-                    .iter()
-                    .map(|x_t| td.generate_proof(*x_t))
-                    .collect::<Result<Vec<Path<MT>>, Error>>()
-            })
+            .map(|td| compute_auth_paths(td, &shift_queries_indexes))
             .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
         let all_codewords = acc_witnesses
@@ -434,6 +385,7 @@ impl<
             .into_iter()
             .chain(codewords)
             .collect::<Vec<_>>();
+
         let mut shift_queries_answers =
             vec![vec![F::default(); all_codewords.len()]; shift_queries_indexes.len()];
         for (i, idx) in shift_queries_indexes.iter().enumerate() {
@@ -816,6 +768,67 @@ fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     });
 
     result
+}
+
+fn byte_to_binary_field_array<F: Field>(byte: &u8) -> Vec<F> {
+    (0..8)
+        .map(|i| {
+            let val = (byte >> i) & 1 == 1;
+            // return in field element and in binary
+            F::from(val)
+        })
+        .collect::<Vec<_>>()
+}
+
+fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
+    elements
+        .iter()
+        .rev()
+        .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
+}
+
+fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
+    code: &C,
+    witnesses: &[Vec<F>],
+    l1: usize,
+) -> (Vec<Vec<F>>, Vec<F>) {
+    let mut leaves = vec![F::default(); l1 * code.code_len()];
+    let mut codewords = vec![vec![F::default(); code.code_len()]; l1];
+    for (i, w) in witnesses.iter().enumerate() {
+        let f_i = code.encode(w);
+        // stacking codewords in flat array, which we chunk below
+        // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
+        for (j, value) in f_i.iter().enumerate() {
+            leaves[(j * l1) + i] = *value;
+        }
+        codewords[i] = f_i;
+    }
+    (codewords, leaves)
+}
+
+fn compute_auth_paths<P: Config>(
+    td: &MerkleTree<P>,
+    indexes: &Vec<usize>,
+) -> Result<Vec<Path<P>>, Error> {
+    let paths = indexes
+        .iter()
+        .map(|x_t| td.generate_proof(*x_t))
+        .collect::<Result<Vec<Path<P>>, Error>>()?;
+    Ok(paths)
+}
+
+// [CBBZ23] hyperplonk optimization
+fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> UsizeMap<F> {
+    let mut id_non_0_eval_sums = UsizeMap::default();
+    for i in 1 + s..r {
+        let a = zetas[i]
+            .iter()
+            .enumerate()
+            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+            .sum::<usize>();
+        *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
+    }
+    id_non_0_eval_sums
 }
 
 #[cfg(test)]
