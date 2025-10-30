@@ -8,8 +8,10 @@ use spongefish::codecs::arkworks_algebra::{
 use crate::{
     relations::r1cs::R1CSConstraints,
     sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
-    WARPError,
+    utils::errs::WARPProverError,
 };
+
+use super::{WARPSumcheckProverError, WARPSumcheckVerifierError};
 
 pub struct Evals<F> {
     pub u: Vec<Vec<F>>,
@@ -30,10 +32,10 @@ impl<F> Evals<F> {
         Self { u, z, a, b, tau }
     }
 
-    pub fn get_last_evals(&mut self) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), WARPError> {
-        let z = self.z.pop().ok_or(WARPError::EmptyEval)?;
-        let beta_tau = self.b.pop().ok_or(WARPError::EmptyEval)?;
-        let u = self.u.pop().ok_or(WARPError::EmptyEval)?;
+    pub fn get_last_evals(&mut self) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), WARPProverError> {
+        let z = self.z.pop().ok_or(WARPProverError::EmptyEval)?;
+        let beta_tau = self.b.pop().ok_or(WARPProverError::EmptyEval)?;
+        let u = self.u.pop().ok_or(WARPProverError::EmptyEval)?;
         let alpha = self.a.pop().unwrap();
         Ok((u, z, alpha, beta_tau))
     }
@@ -52,7 +54,7 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         Evals { u, z, a, b, tau }: &mut Self::Evaluations,
         &(r1cs, xi): &Self::ProverAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError> {
+    ) -> Result<Self::Challenge, WARPSumcheckProverError> {
         // compute prover message `h`
         let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
             protogalaxy_trick(
@@ -106,14 +108,12 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError> {
+    ) -> Result<Self::Challenge, WARPSumcheckVerifierError> {
         let mut h_coeffs = vec![F::zero(); 2 + (aux.1 + 1).max(aux.0 + 2)];
         verifier_state.fill_next_scalars(&mut h_coeffs)?;
         let h = DensePolynomial::from_coefficients_vec(h_coeffs);
         if h.evaluate(&F::zero()) + h.evaluate(&F::one()) != *target {
-            return Err(WARPError::VerificationFailed(
-                "Evaluations of the claimed polynomial do not sum to the target".to_string(),
-            ));
+            return Err(WARPSumcheckVerifierError::SumcheckRound);
         }
 
         // get challenge

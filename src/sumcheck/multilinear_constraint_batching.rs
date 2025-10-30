@@ -27,8 +27,9 @@ impl Hasher for IdentityHasher {
     }
 }
 
-use super::{vsbw_reduce_evaluations, Sumcheck};
-use crate::WARPError;
+use super::{
+    vsbw_reduce_evaluations, Sumcheck, WARPSumcheckProverError, WARPSumcheckVerifierError,
+};
 
 pub struct MultilinearConstraintBatchingSumcheck {}
 
@@ -43,7 +44,7 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         (f_evals, ood_evals_vec, id_non_0_eval_sums): &mut Self::Evaluations,
         _aux: &Self::ProverAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError> {
+    ) -> Result<Self::Challenge, WARPSumcheckProverError> {
         let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
             .step_by(2)
             .map(|a| {
@@ -81,12 +82,10 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
         _aux: &Self::VerifierAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError> {
+    ) -> Result<Self::Challenge, WARPSumcheckVerifierError> {
         let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
         if sum_00 + sum_11 != *target {
-            return Err(WARPError::VerificationFailed(
-                "Evaluations of the claimed polynomial do not sum to the target".to_string(),
-            ));
+            return Err(WARPSumcheckVerifierError::SumcheckRound);
         }
 
         // get challenge

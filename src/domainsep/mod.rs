@@ -8,7 +8,7 @@ use spongefish::{
 };
 
 use crate::{
-    accumulator::warp::WARPConfig,
+    accumulator::warp::config::WARPConfig,
     linear_code::LinearCode,
     relations::BundledPESAT,
     utils::{DigestDomainSeparator, DigestToUnitSerialize},

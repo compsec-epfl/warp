@@ -1,7 +1,8 @@
 use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
+use crate::sumcheck::WARPSumcheckVerifierError;
 use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
+use crate::WARPProverError;
 use crate::{
-    concat_slices,
     domainsep::{absorb_accumulated_instances, absorb_instances},
     relations::r1cs::R1CSConstraints,
     sumcheck::{
@@ -10,6 +11,7 @@ use crate::{
         Sumcheck,
     },
     utils::{
+        concat_slices,
         poly::{eq_poly, eq_poly_non_binary},
         DigestToUnitDeserialize, DigestToUnitSerialize,
     },
@@ -35,34 +37,13 @@ use std::marker::PhantomData;
 
 use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
+pub mod config;
 mod traits;
 
+use config::WARPConfig;
 use traits::BoolResult;
 
 use super::AccumulationScheme;
-
-#[derive(Clone)]
-pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
-    pub l: usize,
-    pub l1: usize,
-    pub s: usize,
-    pub t: usize,
-    pub p_conf: P::Config,
-    pub n: usize,
-}
-
-impl<F: Field, P: BundledPESAT<F>> WARPConfig<F, P> {
-    pub fn new(l: usize, l1: usize, s: usize, t: usize, p_conf: P::Config, n: usize) -> Self {
-        Self {
-            l,
-            l1,
-            s,
-            t,
-            p_conf,
-            n,
-        }
-    }
-}
 
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
     _f: PhantomData<F>,
@@ -155,7 +136,7 @@ impl<
             (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
             Self::Proof,
         ),
-        WARPError,
+        WARPProverError,
     >
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
@@ -418,7 +399,7 @@ impl<
         verifier_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> Result<(), WARPError>
+    ) -> Result<(), WARPVerifierError>
     where
         VerifierState<'a>: UnitToBytes
             + FieldToUnitDeserialize<F>
@@ -665,23 +646,25 @@ impl<
 
         // d. sumcheck decisions
         // twin constraints sumcheck
-        (coeffs_twinc_sumcheck.len() == log_l).ok_or_err(WARPVerifierError::NumSumcheckRounds)?;
+        (coeffs_twinc_sumcheck.len() == log_l)
+            .ok_or_err(WARPSumcheckVerifierError::NumSumcheckRounds)?;
 
         let mut target_1 = sigma_1;
         for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
             let h = DensePolynomial::from_coefficients_vec(coeffs);
             (h.evaluate(&F::one()) + h.evaluate(&F::zero()) == target_1)
-                .ok_or_err(WARPVerifierError::SumcheckRound)?;
+                .ok_or_err(WARPSumcheckVerifierError::SumcheckRound)?;
             target_1 = h.evaluate(gamma);
         }
 
         // multilinear batching sumcheck
-        (sums_batching_sumcheck.len() == log_n).ok_or_err(WARPVerifierError::NumSumcheckRounds)?;
+        (sums_batching_sumcheck.len() == log_n)
+            .ok_or_err(WARPSumcheckVerifierError::NumSumcheckRounds)?;
         let mut target_2 = sigma_2;
         for ([sum_00, sum_11, sum_0110], alpha) in
             sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck)
         {
-            (sum_00 + sum_11 == target_2).ok_or_err(WARPVerifierError::SumcheckRound)?;
+            (sum_00 + sum_11 == target_2).ok_or_err(WARPSumcheckVerifierError::SumcheckRound)?;
             target_2 = (target_2 - sum_0110) * alpha.square()
                 + sum_00 * (F::one() - alpha.double())
                 + sum_0110 * alpha;
@@ -690,7 +673,7 @@ impl<
         // e. new target decision
         // build eq^{\star}(\alpha)
         (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta) == target_1)
-            .ok_or_err(WARPVerifierError::Target)?;
+            .ok_or_err(WARPSumcheckVerifierError::Target)?;
 
         let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
 
@@ -715,7 +698,7 @@ impl<
                 .zip(xi_eq_evals)
                 .fold(F::zero(), |acc, (a, b)| acc + a * b)
             == target_2)
-            .ok_or_err(WARPVerifierError::Target)?;
+            .ok_or_err(WARPSumcheckVerifierError::Target)?;
 
         Ok(())
     }
