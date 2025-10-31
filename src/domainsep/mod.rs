@@ -1,12 +1,14 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use ark_std::log2;
-use spongefish::codecs::arkworks_algebra::FieldToUnitSerialize;
+use spongefish::codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize};
 use spongefish::{
     codecs::arkworks_algebra::{FieldDomainSeparator, UnitToField},
     ByteDomainSeparator, ProofError, ProverState, Unit, UnitToBytes,
 };
+use spongefish::{BytesToUnitDeserialize, VerifierState};
 
+use crate::utils::DigestToUnitDeserialize;
 use crate::{
     accumulator::warp::config::WARPConfig,
     linear_code::LinearCode,
@@ -152,4 +154,193 @@ where
     prover_state.add_scalars(&acc_instances.4)?;
 
     Ok(())
+}
+
+pub fn parse_statement<
+    'a,
+    F: Field,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+>(
+    verifier_state: &mut VerifierState<'a>,
+    l1: usize,
+    l2: usize,
+    instance_len: usize,
+    log_n: usize,
+    #[allow(non_snake_case)] log_M: usize,
+) -> Result<
+    (
+        Vec<Vec<F>>,
+        (
+            Vec<<MT as Config>::InnerDigest>,
+            Vec<Vec<F>>,
+            Vec<F>,
+            (Vec<Vec<F>>, Vec<Vec<F>>),
+            Vec<F>,
+        ),
+    ),
+    ProofError,
+>
+where
+    VerifierState<'a>: UnitToBytes
+        + FieldToUnitDeserialize<F>
+        + UnitToField<F>
+        + DigestToUnitDeserialize<MT>
+        + BytesToUnitDeserialize,
+{
+    // f. absorb parameters
+    let mut l1_xs = vec![vec![F::default(); instance_len]; l1];
+    l1_xs
+        .iter_mut()
+        .try_for_each(|inst| verifier_state.fill_next_scalars(inst))?;
+
+    // l2 instances
+    let l2_roots = (0..l2)
+        .map(|_| verifier_state.read_digest())
+        .collect::<Result<Vec<MT::InnerDigest>, ProofError>>()?;
+
+    let mut l2_alphas = vec![vec![F::default(); log_n]; l2];
+    l2_alphas
+        .iter_mut()
+        .try_for_each(|alpha| verifier_state.fill_next_scalars(alpha))?;
+
+    let mut l2_mus = vec![F::default(); l2];
+    verifier_state.fill_next_scalars(&mut l2_mus)?;
+
+    let mut l2_taus = vec![vec![F::default(); log_M]; l2];
+    l2_taus
+        .iter_mut()
+        .try_for_each(|tau| verifier_state.fill_next_scalars(tau))?;
+
+    let mut l2_xs = vec![vec![F::default(); instance_len]; l2];
+    l2_xs
+        .iter_mut()
+        .try_for_each(|x| verifier_state.fill_next_scalars(x))?;
+
+    let mut l2_etas = vec![F::default(); l2];
+    verifier_state.fill_next_scalars(&mut l2_etas)?;
+
+    Ok((
+        l1_xs,
+        (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas),
+    ))
+}
+
+pub fn derive_randomness<
+    'a,
+    F: Field,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+>(
+    verifier_state: &mut VerifierState<'a>,
+    l1: usize,
+    l2: usize,
+    instance_len: usize,
+    log_n: usize,
+    log_l: usize,
+    s: usize,
+    t: usize,
+    #[allow(non_snake_case)] log_M: usize,
+) -> Result<
+    (
+        <MT as Config>::InnerDigest,
+        Vec<F>,
+        Vec<Vec<F>>,
+        F,
+        Vec<F>,
+        Vec<F>,
+        Vec<Vec<F>>,
+        <MT as Config>::InnerDigest,
+        F,
+        Vec<F>,
+        Vec<F>,
+        Vec<u8>,
+        Vec<F>,
+        Vec<F>,
+        Vec<[F; 3]>,
+    ),
+    ProofError,
+>
+where
+    VerifierState<'a>: UnitToBytes
+        + FieldToUnitDeserialize<F>
+        + UnitToField<F>
+        + DigestToUnitDeserialize<MT>
+        + BytesToUnitDeserialize,
+{
+    let rt_0 = verifier_state.read_digest()?;
+    let mut l1_mus = vec![F::default(); l1];
+    verifier_state.fill_next_scalars(&mut l1_mus)?;
+
+    let mut l1_taus = vec![vec![F::default(); log_M]; l1];
+
+    for l1_tau in l1_taus.iter_mut().take(l1) {
+        let mut tau_i = vec![F::default(); log_M];
+        verifier_state.fill_challenge_scalars(&mut tau_i)?;
+        *l1_tau = tau_i; // bundled evaluations
+    }
+
+    let [omega] = verifier_state.challenge_scalars::<1>()?;
+    let mut tau = vec![F::default(); log_l];
+    verifier_state.fill_challenge_scalars(&mut tau)?;
+
+    // e. twin constraints sumcheck
+    let mut gamma_sumcheck = Vec::new();
+    let mut coeffs_twinc_sumcheck = Vec::new();
+    for _ in 0..log_l {
+        let mut h_coeffs = vec![F::zero(); 2 + (log_n + 1).max(log_M + 2) as usize];
+        verifier_state.fill_next_scalars(&mut h_coeffs)?;
+        let [c] = verifier_state.challenge_scalars::<1>()?;
+        gamma_sumcheck.push(c);
+        coeffs_twinc_sumcheck.push(h_coeffs);
+    }
+
+    let _td = verifier_state.read_digest()?;
+    let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
+    let mut nus = vec![nu_0];
+
+    // g. ood samples
+    let n_ood_samples = s * log_n;
+    let mut ood_samples = vec![F::default(); n_ood_samples];
+    verifier_state.fill_challenge_scalars(&mut ood_samples)?;
+
+    // h. ood answers
+    let mut ood_answers = vec![F::default(); s];
+    verifier_state.fill_next_scalars(&mut ood_answers)?;
+    nus.extend(ood_answers);
+
+    // i. shift queries and zero check
+    let r = 1 + s + t;
+    let log_r = log2(r) as usize;
+    let n_shift_queries = (t * log_n).div_ceil(8);
+    let mut bytes_shift_queries = vec![0u8; n_shift_queries];
+    let mut xi = vec![F::default(); log_r];
+    verifier_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
+    verifier_state.fill_challenge_scalars(&mut xi)?;
+
+    // j. batching sumcheck
+    let mut alpha_sumcheck = Vec::new();
+    let mut sums_batching_sumcheck = Vec::new();
+    for _ in 0..log_n {
+        let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
+        let [c] = verifier_state.challenge_scalars::<1>()?;
+        alpha_sumcheck.push(c);
+        sums_batching_sumcheck.push([sum_00, sum_11, sum_0110]);
+    }
+
+    Ok((
+        rt_0,
+        l1_mus,
+        l1_taus,
+        omega,
+        tau,
+        gamma_sumcheck,
+        coeffs_twinc_sumcheck,
+        _td,
+        eta,
+        nus,
+        ood_samples,
+        bytes_shift_queries,
+        xi,
+        alpha_sumcheck,
+        sums_batching_sumcheck,
+    ))
 }
