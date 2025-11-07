@@ -7,22 +7,6 @@ use spongefish::codecs::arkworks_algebra::{
 
 use crate::WARPError;
 
-pub fn vsbw_reduce_evaluations<F: Field>(evals: &[F], c: F) -> Vec<F> {
-    evals.chunks(2).map(|e| e[0] + c * (e[1] - e[0])).collect()
-}
-
-pub fn vsbw_reduce_vec_evaluations<F: Field>(evals: &[Vec<F>], c: F) -> Vec<Vec<F>> {
-    evals
-        .chunks(2)
-        .map(|e| {
-            e[0].par_iter()
-                .zip(&e[1])
-                .map(|(&a, &b)| a + c * (b - a))
-                .collect()
-        })
-        .collect()
-}
-
 pub fn protogalaxy_trick<F: Field>(
     c: impl Iterator<Item = (F, F)>,
     mut q: Vec<DensePolynomial<F>>,
@@ -93,12 +77,16 @@ mod tests {
     use super::*;
     use ark_bls12_381::Fr;
     use efficient_sumcheck::{
-        multilinear::{TimeProver, TimeProverConfig},
+        multilinear::{ReduceMode, TimeProver, TimeProverConfig},
         prover::Prover,
-        streams::{multivariate_claim, MemoryStream},
+        streams::MemoryStream,
         tests::polynomials::three_variable_polynomial_evaluations,
         Sumcheck,
     };
+
+    pub fn vsbw_reduce_evaluations<F: Field>(evals: &[F], c: F) -> Vec<F> {
+        evals.chunks(2).map(|e| e[0] + c * (e[1] - e[0])).collect()
+    }
 
     #[test]
     fn test_equivalence_with_efficient_sumcheck() {
@@ -106,11 +94,11 @@ mod tests {
 
         // run the protocol using efficient sumcheck
         let f_memory_stream = MemoryStream::new(f.clone());
-        let mut time_prover = TimeProver::<Fr, MemoryStream<Fr>>::new(TimeProverConfig {
-            num_variables: 3,
-            claim: multivariate_claim(f_memory_stream.clone()),
-            stream: f_memory_stream,
-        });
+        let mut time_prover = TimeProver::<Fr, MemoryStream<Fr>>::new(TimeProverConfig::new(
+            3,
+            f_memory_stream,
+            ReduceMode::Pairwise,
+        ));
         let transcript = Sumcheck::<Fr>::prove::<MemoryStream<Fr>, _>(
             &mut time_prover,
             &mut ark_std::test_rng(),

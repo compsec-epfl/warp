@@ -5,16 +5,13 @@ use ark_std::{
     hash::{BuildHasherDefault, Hasher},
     log2,
 };
+use efficient_sumcheck::multilinear::reductions::pairwise;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
 use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
-use crate::{
-    sumcheck::{vsbw_reduce_evaluations, Sumcheck},
-    utils::poly::eq_poly,
-    WARPError,
-};
+use crate::{sumcheck::Sumcheck, utils::poly::eq_poly, WARPError};
 
 pub type UsizeMap<V> = HashMap<usize, V, BuildHasherDefault<IdentityHasher>>;
 
@@ -35,6 +32,19 @@ impl Hasher for IdentityHasher {
     }
 }
 
+fn sum_columns<F: Field>(matrix: &Vec<Vec<F>>) -> Vec<F> {
+    if matrix.is_empty() {
+        return vec![];
+    }
+    let mut result = vec![F::ZERO; matrix[0].len()];
+    for row in matrix {
+        for (i, &val) in row.iter().enumerate() {
+            result[i] += val;
+        }
+    }
+    result
+}
+
 pub struct MultilinearConstraintBatchingSumcheck {}
 
 impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
@@ -49,29 +59,33 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         (f_evals, ood_evals_vec, id_non_0_eval_sums): &mut Self::Evaluations,
         _aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
+        // preprocess g so that we get a product sumcheck f * g
+        let mut g = sum_columns(ood_evals_vec);
+        for (i, v) in g.iter_mut().enumerate() {
+            *v += id_non_0_eval_sums.get(&i).unwrap_or(&F::ZERO);
+        }
         let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
             .step_by(2)
             .map(|a| {
                 let p0 = f_evals[a];
                 let p1 = f_evals[a + 1];
-                let q0 = ood_evals_vec.iter().map(|v| v[a]).sum::<F>()
-                    + id_non_0_eval_sums.get(&a).unwrap_or(&F::zero());
-                let q1 = ood_evals_vec.iter().map(|v| v[a + 1]).sum::<F>()
-                    + id_non_0_eval_sums.get(&(a + 1)).unwrap_or(&F::zero());
+                let q0 = g[a];
+                let q1 = g[a + 1];
                 (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
             })
             .fold((F::zero(), F::zero(), F::zero()), |acc, x| {
                 (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
             });
 
+        // absorb
         prover_state.add_scalars(&[sum_00, sum_11, sum_0110])?;
         // get challenge
         let [c] = prover_state.challenge_scalars::<1>()?;
 
         // update evaluation tables
-        *f_evals = vsbw_reduce_evaluations(f_evals, c);
+        pairwise::reduce_evaluations(f_evals, c);
         ood_evals_vec.iter_mut().for_each(|e| {
-            *e = vsbw_reduce_evaluations(e, c);
+            pairwise::reduce_evaluations(e, c);
         });
         let mut map = UsizeMap::default();
         for (&i, &eval) in id_non_0_eval_sums.iter() {
@@ -140,6 +154,9 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
         *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
     }
 
+    // TODO (z-tech): we can preprocess ood_evals_vec, id_non_0_eval_sums to g and then we have
+    // product sumcheck f * g
+    // can probably pass sponge state to function in efficient-sumcheck and return new sponge state?
     // 8.1 step 2, sumcheck starts
     let alpha = MultilinearConstraintBatchingSumcheck::prove(
         prover_state,

@@ -14,10 +14,12 @@ use crate::{
         r1cs::{R1CSConstraints, R1CS},
         relation::BundledPESAT,
     },
-    sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
+    sumcheck::{protogalaxy_trick, Sumcheck},
     utils::poly::eq_poly,
     WARPError,
 };
+
+use efficient_sumcheck::multilinear::reductions::{pairwise, tablewise};
 
 pub struct Evals<F> {
     pub u: Vec<Vec<F>>,
@@ -102,11 +104,11 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         // get challenge
         let [c] = prover_state.challenge_scalars::<1>()?;
         // update evaluation tables
-        *u = vsbw_reduce_vec_evaluations(u, c);
-        *z = vsbw_reduce_vec_evaluations(z, c);
-        *a = vsbw_reduce_vec_evaluations(a, c);
-        *b = vsbw_reduce_vec_evaluations(b, c);
-        *tau = vsbw_reduce_evaluations(tau, c);
+        tablewise::reduce_evaluations(u, c);
+        tablewise::reduce_evaluations(z, c);
+        tablewise::reduce_evaluations(a, c);
+        tablewise::reduce_evaluations(b, c);
+        pairwise::reduce_evaluations(tau, c);
         Ok(c)
     }
 
