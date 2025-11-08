@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
 use crate::{
     relations::{
@@ -117,7 +116,7 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
-        let mut h_coeffs = vec![F::zero(); 2 + (aux.1 + 1).max(aux.0 + 2) as usize];
+        let mut h_coeffs = vec![F::zero(); 2 + (aux.1 + 1).max(aux.0 + 2)];
         verifier_state.fill_next_scalars(&mut h_coeffs)?;
         let h = DensePolynomial::from_coefficients_vec(h_coeffs);
         if h.evaluate(&F::zero()) + h.evaluate(&F::one()) != *target {
@@ -152,7 +151,7 @@ pub fn prover<F: Field, const L: usize>(
     let mut tau = vec![F::zero(); log2(L) as usize];
     prover_state.fill_challenge_scalars(&mut tau)?;
     let tau_eq_evals = (0..L)
-        .map(|i| eq_poly(&tau, BinaryHypercubePoint(i)))
+        .map(|i| eq_poly(&tau, i))
         .collect::<Vec<_>>();
     let [xi] = prover_state.challenge_scalars::<1>()?;
 
@@ -185,7 +184,7 @@ pub fn prover<F: Field, const L: usize>(
     let z = evals.z.pop().unwrap();
 
     let beta_eq_evals = (0..m)
-        .map(|i| eq_poly(&beta, BinaryHypercubePoint(i)))
+        .map(|i| eq_poly(&beta, i))
         .collect::<Vec<_>>();
 
     let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
@@ -209,7 +208,7 @@ pub fn verifier<F: Field, const L: usize>(
     let mut tau = vec![F::zero(); log2(L) as usize];
     verifier_state.fill_challenge_scalars(&mut tau)?;
     let tau_eq_evals = (0..L)
-        .map(|i| eq_poly(&tau, BinaryHypercubePoint(i)))
+        .map(|i| eq_poly(&tau, i))
         .collect::<Vec<_>>();
     let [xi] = verifier_state.challenge_scalars::<1>()?;
 
@@ -225,17 +224,17 @@ pub fn verifier<F: Field, const L: usize>(
     )?;
 
     // 6.1 step 3, compute new instance and witness for pseudo-batching accumulation relation
-    let alpha = (0..log_n as usize)
+    let alpha = (0..log_n)
         .map(|j| {
             (0..L)
-                .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * alpha_vec[i][j])
+                .map(|i| eq_poly(&gamma, i) * alpha_vec[i][j])
                 .sum::<F>()
         })
         .collect();
-    let beta = (0..log_m as usize)
+    let beta = (0..log_m)
         .map(|j| {
             (0..L)
-                .map(|i| eq_poly(&gamma, BinaryHypercubePoint(i)) * beta_vec[i][j])
+                .map(|i| eq_poly(&gamma, i) * beta_vec[i][j])
                 .sum::<F>()
         })
         .collect();
@@ -273,9 +272,9 @@ mod tests {
         ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
     };
     use ark_std::{log2, test_rng};
+    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
     use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
@@ -356,10 +355,10 @@ mod tests {
             let beta = (0..r1cs.log_m).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
 
             let mut beta_eq_evals = Vec::<Fr>::new();
-            let hypercube = BinaryHypercube::new(r1cs.log_m);
+            let hypercube = Hypercube::<AscendingOrder>::new(r1cs.log_m);
 
-            for point in hypercube {
-                beta_eq_evals.push(eq_poly(&beta, point));
+            for (index, point) in hypercube {
+                beta_eq_evals.push(eq_poly(&beta, index));
             }
 
             let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;

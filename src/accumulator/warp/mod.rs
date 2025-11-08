@@ -23,13 +23,13 @@ use ark_poly::{
     MultilinearExtension, Polynomial,
 };
 use ark_std::log2;
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
     BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
-use whir::poly_utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 
 use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
 
@@ -275,8 +275,8 @@ impl<
 
         // b. define [...]
         // c. sumcheck protocol
-        let tau_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&tau, p))
+        let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
+            .map(|(index, _point)| eq_poly(&tau, index))
             .collect::<Vec<F>>();
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
@@ -297,7 +297,7 @@ impl<
             .1
             .clone()
             .into_iter()
-            .chain(codewords.clone().into_iter())
+            .chain(codewords.clone())
             .collect();
 
         let mut evals = Evals::new(
@@ -322,7 +322,7 @@ impl<
 
         // eval the bundled r1cs
         let beta_eq_evals = (0..M)
-            .map(|i| eq_poly(&beta_tau, BinaryHypercubePoint(i)))
+            .map(|i| eq_poly(&beta_tau, i))
             .collect::<Vec<_>>();
 
         let eta = self
@@ -339,7 +339,7 @@ impl<
         let td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            &f.chunks(1).collect::<Vec<_>>(),
+            f.chunks(1).collect::<Vec<_>>(),
         )?;
 
         // g. absorb new commitment and target
@@ -415,13 +415,13 @@ impl<
         // l. sumcheck polynomials
         // compute evaluations for xi
         let xi_eq_evals = (0..r)
-            .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+            .map(|i| eq_poly(&xi, i))
             .collect::<Vec<_>>();
 
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
                 (0..n)
-                    .map(|a| eq_poly(&zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                    .map(|a| eq_poly(zetas[i], a) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -582,7 +582,7 @@ impl<
             coeffs_twinc_sumcheck.push(h_coeffs);
         }
 
-        let td = verifier_state.read_digest();
+        let _td = verifier_state.read_digest();
         let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
         let mut nus = vec![nu_0];
 
@@ -621,8 +621,8 @@ impl<
         ////////////////////////
         // b.
         let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
-        let gamma_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&gamma_sumcheck, p))
+        let gamma_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
+            .map(|(index, _point)| eq_poly(&gamma_sumcheck, index))
             .collect::<Vec<F>>();
         let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
@@ -640,8 +640,8 @@ impl<
 
         // d. set \sigma^{(1)} and \sigma^{(2)}
         // compute eq(\tau, i) and eq(\xi, i)
-        let tau_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&tau, p))
+        let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
+            .map(|(index, _point)| eq_poly(&tau, index))
             .collect::<Vec<F>>();
         let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
 
@@ -652,8 +652,8 @@ impl<
                 acc + eq_tau * (mu + omega * eta)
             });
 
-        let xi_eq_evals = BinaryHypercube::new(log_r)
-            .map(|p| eq_poly(&xi, p))
+        let xi_eq_evals = Hypercube::<AscendingOrder>::new(log_r)
+            .map(|(index, _point)| eq_poly(&xi, index))
             .collect::<Vec<F>>();
 
         let sigma_2 = xi_eq_evals
@@ -677,7 +677,7 @@ impl<
             .zip(l2_xs.clone().into_iter().chain(l1_xs))
             .map(|(tau, x)| concat_slices(&tau, &x))
             .collect::<Vec<Vec<F>>>();
-        let beta = scale_and_sum(&betas, &gamma_eq_evals);
+        let _beta = scale_and_sum(&betas, &gamma_eq_evals);
 
         // c. check auth paths
         let binary_shift_queries = bytes_shift_queries
@@ -746,7 +746,7 @@ impl<
         for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
             let h = DensePolynomial::from_coefficients_vec(coeffs);
             assert_eq!(h.evaluate(&F::one()) + h.evaluate(&F::zero()), target_1);
-            target_1 = h.evaluate(&gamma);
+            target_1 = h.evaluate(gamma);
         }
 
         // multilinear batching sumcheck
@@ -802,13 +802,13 @@ impl<
         acc_witness: Self::AccumulatorWitnesses,
         acc_instance: Self::AccumulatorInstances,
     ) -> Result<(), WARPError> {
-        let (td, f, w) = acc_witness;
+        let (_td, f, w) = acc_witness;
         let (rt, alpha, mu, beta, eta) = acc_instance;
 
         let computed_td = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            &f[0].chunks(1).collect::<Vec<_>>(),
+            f[0].chunks(1).collect::<Vec<_>>(),
         )?;
         assert_eq!(rt[0], computed_td.root());
         // TODO? assert_eq!(td[0], computed_td);
@@ -821,8 +821,8 @@ impl<
 
         let tau = &beta.0[0];
 
-        let tau_zero_evader = BinaryHypercube::new(tau.len())
-            .map(|p| eq_poly(tau, p))
+        let tau_zero_evader = Hypercube::<AscendingOrder>::new(tau.len())
+            .map(|(index, _point)| eq_poly(tau, index))
             .collect::<Vec<F>>();
 
         let mut z = beta.1[0].clone();

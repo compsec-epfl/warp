@@ -6,7 +6,7 @@ pub mod preimage;
 
 use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
-use efficient_sumcheck::{hypercube::Hypercube, order_strategy::LexicographicOrder};
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 pub use identity::{IdentityInstance, IdentityRelation, IdentitySynthesizer, IdentityWitness};
 pub use is_prime::{
     IsPrimeInstance, IsPrimeRelation, IsPrimeSynthesizer, IsPrimeWitness, PrattCertificate,
@@ -99,7 +99,7 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
-        let mut cube = Hypercube::<LexicographicOrder>::new(self.log_m);
+        let mut cube = Hypercube::<AscendingOrder>::new(self.log_m);
 
         // TODO: multithread this
         cube.try_fold(F::ZERO, |acc, (index, _point)| {

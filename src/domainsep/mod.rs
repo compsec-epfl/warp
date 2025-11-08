@@ -38,7 +38,7 @@ impl<
         self.add_scalars(1, "root")
             .add_scalars(1, "mu")
             .add_scalars(1, "eta")
-            .challenge_scalars(conf.s * conf.log_n as usize, "alpha")
+            .challenge_scalars(conf.s * conf.log_n, "alpha")
             .add_scalars(conf.s, "mus")
             .challenge_bytes((conf.t * conf.log_n).div_ceil(8), "x")
     }

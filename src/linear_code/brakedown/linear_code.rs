@@ -63,7 +63,7 @@ where
             M,
             DenseMultilinearExtension<F>,
             H,
-        >>::encode(&message, &self.params)
+        >>::encode(message, &self.params)
         .unwrap()
     }
 

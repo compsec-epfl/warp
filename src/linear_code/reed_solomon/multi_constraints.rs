@@ -4,7 +4,7 @@ use ark_ff::FftField;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_serialize::CanonicalSerialize;
 use ark_std::log2;
-use whir::poly_utils::hypercube::BinaryHypercube;
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
 use crate::{
     linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode},
@@ -49,12 +49,12 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self {
-        let hypercube = BinaryHypercube::new(beta.0.len());
+        let hypercube = Hypercube::<AscendingOrder>::new(beta.0.len());
         let tau = &beta.0;
 
         // TODO: multithread this
         // initialize table for eq(tau, i)
-        let tau_eq_evals = hypercube.map(|point| eq_poly(tau, point)).collect();
+        let tau_eq_evals = hypercube.map(|(index, _point)| eq_poly(tau, index)).collect();
 
         Self {
             _p: PhantomData::<P>,
@@ -76,14 +76,14 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
         // let w = rs.decode(f).ok_or(WARPError::DecodeFailed)?;
         // z.extend_from_slice(&w);
         let mut z = self.beta.1.clone();
-        z.extend_from_slice(&w);
+        z.extend_from_slice(w);
 
         // evaluate bundled constraints
         let eval_bundled = p.evaluate_bundled(&self.tau_eq_evals, &z)?;
         let is_correct_bundled_eval = eval_bundled == self.eta;
 
         // evaluate multilinear points
-        let is_correct_multilinear_evals = if self.evaluations.len() > 0 {
+        let is_correct_multilinear_evals = if !self.evaluations.is_empty() {
             let num_vars = log2(self.config.code_length) as usize;
             let f_hat = Self::as_multilinear_extension(num_vars, f);
             self.evaluations.iter().fold(true, |acc, (point, eval)| {

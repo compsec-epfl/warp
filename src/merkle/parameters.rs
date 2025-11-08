@@ -1,4 +1,4 @@
-use ark_crypto_primitives::crh::{sha256::digest, CRHScheme, TwoToOneCRHScheme};
+use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_ff::Field;
 use spongefish::{
     ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,

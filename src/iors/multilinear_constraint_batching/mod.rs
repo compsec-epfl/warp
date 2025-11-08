@@ -9,7 +9,6 @@ use efficient_sumcheck::multilinear::reductions::pairwise;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
 
 use crate::{sumcheck::Sumcheck, utils::poly::eq_poly, WARPError};
 
@@ -99,7 +98,7 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
     fn verify_round(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
-        aux: &Self::VerifierAuxiliary<'_>,
+        _aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
         if sum_00 + sum_11 != *target {
@@ -131,7 +130,7 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
     let mut xi = vec![F::zero(); log2(R) as usize];
     prover_state.fill_challenge_scalars(&mut xi)?;
     let xi_eq_evals = (0..R)
-        .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+        .map(|i| eq_poly(&xi, i))
         .collect::<Vec<_>>();
 
     // 8.1 step 2, initialize evaluation tables
@@ -139,7 +138,7 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
     let ood_evals_vec = (0..1 + S)
         .map(|i| {
             (0..N)
-                .map(|a| eq_poly(&alpha_vec[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                .map(|a| eq_poly(&alpha_vec[i], a) * xi_eq_evals[i])
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -183,7 +182,7 @@ pub fn verifier<F: Field, const R: usize, const N: usize>(
     let mut xi = vec![F::zero(); log2(R) as usize];
     verifier_state.fill_challenge_scalars(&mut xi)?;
     let xi_eq_evals = (0..R)
-        .map(|i| eq_poly(&xi, BinaryHypercubePoint(i)))
+        .map(|i| eq_poly(&xi, i))
         .collect::<Vec<_>>();
 
     // 8.1 step 2, RHS of the equation (sumcheck target)
@@ -236,9 +235,9 @@ mod tests {
         ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
     };
     use ark_std::{log2, test_rng};
+    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
     use spongefish::{duplex_sponge::DuplexSponge, DomainSeparator};
     use spongefish_poseidon::bls12_381::PoseidonPermx5_255_5;
-    use whir::poly_utils::hypercube::BinaryHypercube;
 
     use super::*;
 
@@ -311,10 +310,10 @@ mod tests {
         let beta = (0..r1cs.log_m).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
 
         let mut beta_eq_evals = vec![];
-        let hypercube = BinaryHypercube::new(r1cs.log_m);
+        let hypercube = Hypercube::<AscendingOrder>::new(r1cs.log_m);
 
-        for point in hypercube {
-            beta_eq_evals.push(eq_poly(&beta, point));
+        for (index, _point) in hypercube {
+            beta_eq_evals.push(eq_poly(&beta, index));
         }
 
         let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;

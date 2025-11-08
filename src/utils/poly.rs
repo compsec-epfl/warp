@@ -1,42 +1,25 @@
 use ark_ff::Field;
-use whir::poly_utils::hypercube::BinaryHypercubePoint;
+use efficient_sumcheck::{
+    hypercube::HypercubeMember, interpolation::LagrangePolynomial,
+    order_strategy::AscendingOrder
+};
 
-// from whir
-// https://github.com/WizardOfMenlo/whir/blob/22c675807fc9295fef68a11945713dc3e184e1c1/src/poly_utils/multilinear.rs#L105
-pub fn eq_poly<F: Field>(tau: &[F], mut point: BinaryHypercubePoint) -> F {
-    let n_variables = tau.len();
-    assert!(*point < (1 << n_variables)); // Ensure correct length
-
-    let mut acc = F::ONE;
-
-    for val in tau.iter() {
-        let b = *point % 2;
-        acc *= if b == 1 { *val } else { F::ONE - *val };
-        *point >>= 1;
-    }
-
-    acc
+pub fn eq_poly<F: Field>(original_tau: &[F], point: usize) -> F {
+    // TODO (z-tech): will fix and get rid of this function
+    let num_variables = original_tau.len();
+    let mut tau = original_tau.to_vec();
+    tau.reverse();
+    let tau_hat: Vec<F> = tau.iter().map(|t| F::ONE - *t).collect();
+    LagrangePolynomial::<F, AscendingOrder>::lag_poly(
+        tau,
+        tau_hat,
+        HypercubeMember::new(num_variables, point),
+    )
 }
-
-// pub fn eq_poly<F: Field>(tau: &[F], point: usize) -> F {
-//     let n_variables = tau.len();
-//     assert!(point < (1usize << n_variables));
-
-//     let mut acc = F::ONE;
-//     let mut tmp = point;
-
-//     for val in tau.iter() {
-//         let b = tmp & 1;
-//         acc *= if b == 1 { *val } else { F::ONE - *val };
-//         tmp >>= 1;
-//     }
-
-//     acc
-// }
 
 pub fn eq_poly_non_binary<F: Field>(x: &[F], y: &[F]) -> F {
     assert_eq!(x.len(), y.len());
-    let res = x.into_iter().zip(y).fold(F::one(), |acc, (x_i, y_i)| {
+    let res = x.iter().zip(y).fold(F::one(), |acc, (x_i, y_i)| {
         acc * (*x_i * *y_i + (F::one() - x_i) * (F::one() - y_i))
     });
     res

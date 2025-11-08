@@ -78,7 +78,7 @@ pub(crate) mod tests {
     use ark_ec::AdditiveGroup;
     use ark_ff::UniformRand;
     use ark_std::{marker::PhantomData, test_rng};
-    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::LexicographicOrder};
+    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
     use crate::{
         merkle::poseidon::{
@@ -172,7 +172,7 @@ pub(crate) mod tests {
             z.extend(relation.w);
 
             // assert p_i(z) == 0
-            for (index, _point) in Hypercube::<LexicographicOrder>::new(r1cs.log_m) {
+            for (index, _point) in Hypercube::<AscendingOrder>::new(r1cs.log_m) {
                 let eval = r1cs.eval_p_i(&z, index).unwrap();
                 assert_eq!(BLS12_381::ZERO, eval);
             }
@@ -180,7 +180,7 @@ pub(crate) mod tests {
             // change z to incorrect assignment
             z[10] = BLS12_381::from(42);
             let mut is_0 = true;
-            for (index, _point) in Hypercube::<LexicographicOrder>::new(r1cs.log_m) {
+            for (index, _point) in Hypercube::<AscendingOrder>::new(r1cs.log_m) {
                 let eval = r1cs.eval_p_i(&z, index).unwrap();
                 if eval != BLS12_381::ZERO {
                     is_0 = false;

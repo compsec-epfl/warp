@@ -131,7 +131,7 @@ impl<
         let mt = MerkleTree::<MT>::new(
             &self.config.mt_leaf_hash_params,
             &self.config.mt_two_to_one_hash_params,
-            &witness.chunks(1).collect::<Vec<_>>(),
+            witness.chunks(1).collect::<Vec<_>>(),
         )
         .unwrap();
 
@@ -263,6 +263,7 @@ mod tests {
     use ark_ff::{UniformRand, Zero};
     use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_std::{log2, test_rng};
+    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
     use spongefish::DomainSeparator;
     use whir::{
         crypto::merkle_tree::blake3::Blake3MerkleTreeParams, poly_utils::hypercube::BinaryHypercube,
@@ -343,8 +344,8 @@ mod tests {
             .unwrap();
 
         let gamma = vec![Fr::rand(&mut rng); log_l];
-        let gamma_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&gamma, p))
+        let gamma_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
+            .map(|(index, _point)| eq_poly(&gamma, index))
             .collect::<Vec<Fr>>();
 
         // compute the rlc
@@ -394,8 +395,8 @@ mod tests {
         let upsilon = rlc_f_mle.evaluate(&rlc_alpha);
 
         // compute zero evader evals before evaluating on pesat
-        let zero_evader = BinaryHypercube::new(r1cs.log_m)
-            .map(|p| eq_poly(&rlc_beta.0, p))
+        let zero_evader = Hypercube::<AscendingOrder>::new(r1cs.log_m)
+            .map(|(index, _point)| eq_poly(&rlc_beta.0, index))
             .collect::<Vec<Fr>>();
 
         let mut z = rlc_beta.1.clone();
