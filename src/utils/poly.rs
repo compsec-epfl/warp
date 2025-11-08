@@ -18,6 +18,22 @@ pub fn eq_poly<F: Field>(tau: &[F], mut point: BinaryHypercubePoint) -> F {
     acc
 }
 
+// pub fn eq_poly<F: Field>(tau: &[F], point: usize) -> F {
+//     let n_variables = tau.len();
+//     assert!(point < (1usize << n_variables));
+
+//     let mut acc = F::ONE;
+//     let mut tmp = point;
+
+//     for val in tau.iter() {
+//         let b = tmp & 1;
+//         acc *= if b == 1 { *val } else { F::ONE - *val };
+//         tmp >>= 1;
+//     }
+
+//     acc
+// }
+
 pub fn eq_poly_non_binary<F: Field>(x: &[F], y: &[F]) -> F {
     assert_eq!(x.len(), y.len());
     let res = x.into_iter().zip(y).fold(F::one(), |acc, (x_i, y_i)| {

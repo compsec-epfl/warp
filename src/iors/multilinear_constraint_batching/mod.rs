@@ -156,7 +156,7 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
 
     // TODO (z-tech): we can preprocess ood_evals_vec, id_non_0_eval_sums to g and then we have
     // product sumcheck f * g
-    // can probably pass sponge state to function in efficient-sumcheck and return new sponge state?
+    // can probably pass sponge state to function in efficient-sumcheck and return new sponge
     // 8.1 step 2, sumcheck starts
     let alpha = MultilinearConstraintBatchingSumcheck::prove(
         prover_state,

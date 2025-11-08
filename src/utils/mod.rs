@@ -5,9 +5,8 @@ use ark_crypto_primitives::{
 use ark_ff::{Field, PrimeField};
 use spongefish::{ByteDomainSeparator, BytesToUnitSerialize, DomainSeparator};
 use spongefish::{ProofError, ProofResult, ProverState};
-use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
-
 use whir::crypto::merkle_tree::digest::GenericDigest;
+use whir::crypto::merkle_tree::parameters::MerkleTreeParams;
 
 pub mod poly;
 pub mod poseidon;

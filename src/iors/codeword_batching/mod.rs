@@ -261,7 +261,7 @@ mod tests {
     };
     use ark_bls12_381::Fr;
     use ark_ff::{UniformRand, Zero};
-    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_poly::{DenseMultilinearExtension, Polynomial};
     use ark_std::{log2, test_rng};
     use spongefish::DomainSeparator;
     use whir::{
