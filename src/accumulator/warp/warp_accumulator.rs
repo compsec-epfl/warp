@@ -43,6 +43,7 @@ where
 //     opened_values: Vec<F>,
 // }
 
+#[allow(dead_code)] // this is WIP anyway
 pub struct PreimageRelationAccumulator<F, H, HG, R, S, C>
 where
     F: Field + PrimeField + SpongefishUnit,
@@ -158,6 +159,7 @@ mod tests {
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
+    type TestMerkleTreeConfig = PoseidonMerkleConfig<BLS12_381>;
     type TestRelation = PreimageRelation<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>;
     type TestSponge = DuplexSponge<PoseidonPermutation<255, BLS12_381, 2, 3>>;
     type TestAccumulator = PreimageRelationAccumulator<
@@ -206,7 +208,7 @@ mod tests {
             message_len,
             num_repetitions: 3,
             seed,
-        };
+     };
 
         // config
         let config: PreimageRelationAccumulatorConfig<BLS12_381, TestCRHScheme, RAA<BLS12_381>> =

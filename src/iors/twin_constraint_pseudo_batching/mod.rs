@@ -11,7 +11,7 @@ use spongefish::codecs::arkworks_algebra::{
 use crate::{
     relations::{
         r1cs::{R1CSConstraints, R1CS},
-        relation::BundledPESAT,
+        BundledPESAT,
     },
     sumcheck::{protogalaxy_trick, Sumcheck},
     utils::poly::eq_poly,
@@ -272,7 +272,7 @@ mod tests {
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
-        relations::{r1cs::R1CS, relation::BundledPESAT},
+        relations::{r1cs::R1CS, BundledPESAT},
         utils::poly::eq_poly,
     };
 
@@ -381,9 +381,9 @@ mod tests {
             domain_separator = domain_separator
                 .absorb(
                     2 + (log2(N) as usize + 1).max(r1cs.log_m + 2),
-                    &format!("h_{}", i),
+                    &format!("h_{i}"),
                 )
-                .squeeze(1, &format!("challenge_{}", i));
+                .squeeze(1, &format!("challenge_{i}"));
         }
         domain_separator = domain_separator.absorb(1, "mu").absorb(1, "eta");
 

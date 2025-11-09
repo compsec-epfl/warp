@@ -255,7 +255,7 @@ mod tests {
 
     use crate::{
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
-        relations::{r1cs::R1CS, relation::BundledPESAT},
+        relations::{r1cs::R1CS, BundledPESAT},
         utils::poly::eq_poly,
     };
 
@@ -359,8 +359,8 @@ mod tests {
         .squeeze(log2(R) as usize, "xi");
         for i in 0..log2(N) {
             domain_separator = domain_separator
-                .absorb(3, &format!("h_{}", i))
-                .squeeze(1, &format!("challenge_{}", i));
+                .absorb(3, &format!("h_{i}"))
+                .squeeze(1, &format!("challenge_{i}"));
         }
         domain_separator = domain_separator.absorb(1, "mu");
 

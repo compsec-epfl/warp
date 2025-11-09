@@ -31,11 +31,9 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-use crate::{linear_code::LinearCode, relations::relation::BundledPESAT};
+use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
 use super::AccumulationScheme;
-
-mod accumulator;
 
 #[derive(Clone)]
 pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
@@ -259,10 +257,10 @@ impl<
         // e. zero check randomness and f. bundled evaluations
         let mut taus = vec![vec![F::default(); log_M]; l1];
 
-        for i in 0..l1 {
+        for tau in taus.iter_mut().take(l1) {
             let mut tau_i = vec![F::default(); log_M];
             prover_state.fill_challenge_scalars(&mut tau_i)?;
-            taus[i] = tau_i; // bundled evaluations
+            *tau = tau_i; // bundled evaluations
         }
 
         ////////////////////////
@@ -557,10 +555,10 @@ impl<
 
         let mut l1_taus = vec![vec![F::default(); log_M]; l1];
 
-        for i in 0..l1 {
+        for l1_tau in l1_taus.iter_mut().take(l1) {
             let mut tau_i = vec![F::default(); log_M];
             verifier_state.fill_challenge_scalars(&mut tau_i)?;
-            l1_taus[i] = tau_i; // bundled evaluations
+            *l1_tau = tau_i; // bundled evaluations
         }
 
         let [omega] = verifier_state.challenge_scalars::<1>()?;
@@ -833,7 +831,7 @@ impl<
     }
 }
 
-fn scale_and_sum<F: Field>(vectors: &Vec<Vec<F>>, scalars: &[F]) -> Vec<F> {
+fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     let n = vectors[0].len();
     let mut result = vec![F::default(); n];
 
@@ -859,8 +857,7 @@ pub mod tests {
                 },
                 R1CS,
             },
-            relation::{BundledPESAT, ToPolySystem},
-            Relation,
+            BundledPESAT, Relation, ToPolySystem,
         },
         utils::poseidon,
     };
@@ -954,10 +951,10 @@ pub mod tests {
                 .unwrap();
             acc_roots.push(acc_x.0[0].clone());
             acc_alphas.push(acc_x.1[0].clone());
-            acc_mus.push(acc_x.2[0].clone());
+            acc_mus.push(acc_x.2[0]);
             acc_taus.push(acc_x.3 .0[0].clone());
             acc_xs.push(acc_x.3 .1[0].clone());
-            acc_eta.push(acc_x.4[0].clone());
+            acc_eta.push(acc_x.4[0]);
 
             acc_tds.push(acc_w.0[0].clone());
             acc_f.push(acc_w.1[0].clone());

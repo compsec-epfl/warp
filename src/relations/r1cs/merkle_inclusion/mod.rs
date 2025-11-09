@@ -17,7 +17,7 @@ use std::marker::PhantomData;
 pub use synthesizer::MerkleInclusionSynthesizer;
 pub use witness::MerkleInclusionWitness;
 
-use crate::{relations::relation::ToPolySystem, WARPError};
+use crate::{relations::ToPolySystem, WARPError};
 
 use super::R1CS;
 
@@ -72,7 +72,7 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::relations::relation::ToPolySystem;
+    use crate::relations::ToPolySystem;
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
     use ark_ec::AdditiveGroup;

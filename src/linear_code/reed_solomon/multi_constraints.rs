@@ -8,7 +8,7 @@ use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
 use crate::{
     linear_code::{linear_code::MultiConstrainedLinearCode, LinearCode},
-    relations::relation::BundledPESAT,
+    relations::BundledPESAT,
     utils::poly::eq_poly,
     WARPError,
 };
@@ -39,7 +39,7 @@ pub struct MultiConstrainedReedSolomon<
 impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPESAT<F>>
     MultiConstrainedLinearCode<F, C, P> for MultiConstrainedReedSolomon<F, C, P>
 {
-    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F> {
+    fn as_multilinear_extension(num_vars: usize, f: &[F]) -> DenseMultilinearExtension<F> {
         DenseMultilinearExtension::from_evaluations_slice(num_vars, f)
     }
 

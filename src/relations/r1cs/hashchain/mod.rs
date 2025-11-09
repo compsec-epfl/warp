@@ -20,7 +20,7 @@ pub use relation::HashChainRelation;
 pub use synthesizer::HashChainSynthesizer;
 pub use witness::HashChainWitness;
 
-use crate::{relations::relation::ToPolySystem, WARPError};
+use crate::{relations::relation_trait::ToPolySystem, WARPError};
 
 use super::R1CS;
 

@@ -5,4 +5,4 @@ use warp::{
 };
 
 // type for a twin constrained rs code over R1CS
-pub type TwinConstraintRS<F: Field> = MultiConstrainedReedSolomon<F, ReedSolomon<F>, R1CS<F>>;
+pub type TwinConstraintRS<F> = MultiConstrainedReedSolomon<F, ReedSolomon<F>, R1CS<F>>;

@@ -16,7 +16,7 @@ pub use preimage::{PreimageConfig, PreimageInstance, PreimageRelation, PreimageW
 
 use crate::WARPError;
 
-use super::relation::BundledPESAT;
+use super::relation_trait::BundledPESAT;
 
 pub type R1CSConstraints<F> = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
 

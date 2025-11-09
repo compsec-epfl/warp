@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 use crate::{
     iors::IOR,
     linear_code::{LinearCode, MultiConstrainedLinearCode},
-    relations::relation::BundledPESAT,
+    relations::BundledPESAT,
 };
 
 use spongefish::UnitToBytes;
@@ -254,8 +254,7 @@ mod tests {
                 merkle_inclusion::{tests::get_test_merkle_tree, MerkleInclusionInstance},
                 MerkleInclusionRelation, MerkleInclusionWitness,
             },
-            relation::{BundledPESAT, ToPolySystem},
-            Relation,
+            BundledPESAT, Relation, ToPolySystem,
         },
         utils::poly::eq_poly,
     };

@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn sanity() {
-        let message: Vec<BLS12_381> = (0..4_u64).map(|i| BLS12_381::from(i)).collect();
+        let message: Vec<BLS12_381> = (0..4_u64).map(BLS12_381::from).collect();
         let rs = ReedSolomon::<BLS12_381>::new(ReedSolomonConfig::<BLS12_381>::default(4, 8));
         let _codeword = rs.encode(&message);
     }
