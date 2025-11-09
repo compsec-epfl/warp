@@ -4,17 +4,16 @@ use ark_std::log2;
 use spongefish::{codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, Unit};
 
 use crate::{
-    accumulator::warp::WARPConfig,
-    iors::{codeword_batching::PseudoBatchingIORConfig, pesat::TwinConstraintIORConfig},
     linear_code::LinearCode,
     relations::BundledPESAT,
-    utils::DigestDomainSeparator,
+    utils::{DigestDomainSeparator, DigestToUnitSerialize},
 };
+use spongefish::codecs::arkworks_algebra::FieldToUnitSerialize;
+use spongefish::{codecs::arkworks_algebra::UnitToField, ProofError, ProverState, UnitToBytes};
 
-// TODO
+use crate::accumulator::warp::config::WARPConfig;
+
 pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
-    fn pesat_ior(self, conf: &TwinConstraintIORConfig<F, C, MT>) -> Self;
-    fn pseudo_batching_ior(self, conf: &PseudoBatchingIORConfig<F, C, MT>) -> Self;
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
         config: WARPConfig<F, P>,
@@ -28,21 +27,6 @@ impl<
         DomainSeparator: ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MT>,
     > WARPDomainSeparator<F, C, MT> for DomainSeparator
 {
-    fn pesat_ior(self, conf: &TwinConstraintIORConfig<F, C, MT>) -> Self {
-        self.add_digest("root")
-            .add_scalars(conf.l, "mu")
-            .challenge_scalars(conf.log_m * conf.l, "tau")
-    }
-
-    fn pseudo_batching_ior(self, conf: &PseudoBatchingIORConfig<F, C, MT>) -> Self {
-        self.add_scalars(1, "root")
-            .add_scalars(1, "mu")
-            .add_scalars(1, "eta")
-            .challenge_scalars(conf.s * conf.log_n, "alpha")
-            .add_scalars(conf.s, "mus")
-            .challenge_bytes((conf.t * conf.log_n).div_ceil(8), "x")
-    }
-
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
         config: WARPConfig<F, P>,
@@ -110,4 +94,61 @@ impl<
 
         prover_state
     }
+}
+
+pub fn absorb_instances<F: Field>(
+    prover_state: &mut ProverState,
+    instances: &Vec<Vec<F>>,
+) -> Result<(), ProofError> {
+    instances
+        .iter()
+        .try_for_each(|x| prover_state.add_scalars(x))
+}
+
+pub fn absorb_accumulated_instances<F: Field, MT: Config>(
+    prover_state: &mut ProverState,
+    acc_instances: &(
+        Vec<MT::InnerDigest>,
+        Vec<Vec<F>>,
+        Vec<F>,
+        (Vec<Vec<F>>, Vec<Vec<F>>),
+        Vec<F>,
+    ), // (rt, \alpha, \mu, \beta (\tau, x), \eta)
+) -> Result<(), ProofError>
+where
+    ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+{
+    acc_instances
+        .0
+        .clone()
+        .into_iter()
+        .try_for_each(|digest| prover_state.add_digest(digest))?;
+
+    // alpha
+    acc_instances
+        .1
+        .iter()
+        .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
+
+    // mu
+    prover_state.add_scalars(&acc_instances.2)?;
+
+    //// taus
+    acc_instances
+        .3
+         .0
+        .iter()
+        .try_for_each(|tau| prover_state.add_scalars(tau))?;
+
+    //// xs
+    acc_instances
+        .3
+         .1
+        .iter()
+        .try_for_each(|x| prover_state.add_scalars(x))?;
+
+    //// etas
+    prover_state.add_scalars(&acc_instances.4)?;
+
+    Ok(())
 }

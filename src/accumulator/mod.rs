@@ -11,7 +11,7 @@ use spongefish::{
 
 use crate::{
     utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
-    WARPError,
+    WARPError, WARPProverError, WARPVerifierError,
 };
 
 pub trait AccumulationScheme<F: Field, MT: Config> {
@@ -46,7 +46,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
             (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
             Self::Proof,
         ),
-        WARPError,
+        WARPProverError,
     >
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
@@ -57,7 +57,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         prover_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> Result<(), WARPError>
+    ) -> Result<(), WARPVerifierError>
     where
         VerifierState<'a>: UnitToBytes
             + FieldToUnitDeserialize<F>

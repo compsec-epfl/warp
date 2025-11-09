@@ -4,8 +4,32 @@ use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
+use thiserror::Error;
 
-use crate::WARPError;
+pub mod multilinear_constraint_batching;
+pub mod twin_constraint_pseudo_batching;
+
+#[derive(Error, Debug)]
+pub enum WARPSumcheckProverError {
+    #[error(transparent)]
+    SpongeFishProofError(#[from] spongefish::ProofError),
+    #[error(transparent)]
+    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+}
+
+#[derive(Error, Debug)]
+pub enum WARPSumcheckVerifierError {
+    #[error(transparent)]
+    SpongeFishProofError(#[from] spongefish::ProofError),
+    #[error(transparent)]
+    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Found invalid number of sumcheck rounds")]
+    NumSumcheckRounds,
+    #[error("Sumcheck round verification failed")]
+    SumcheckRound,
+    #[error("Incorrect target")]
+    Target,
+}
 
 pub fn protogalaxy_trick<F: Field>(
     c: impl Iterator<Item = (F, F)>,
@@ -35,20 +59,20 @@ pub trait Sumcheck<F: Field> {
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
         aux: &Self::ProverAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError>;
+    ) -> Result<Self::Challenge, WARPSumcheckProverError>;
 
     fn verify_round(
         verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
-    ) -> Result<Self::Challenge, WARPError>;
+    ) -> Result<Self::Challenge, WARPSumcheckVerifierError>;
 
     fn prove(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
         evals: &mut Self::Evaluations,
         aux: &Self::ProverAuxiliary<'_>,
         n_rounds: usize,
-    ) -> Result<Vec<Self::Challenge>, WARPError> {
+    ) -> Result<Vec<Self::Challenge>, WARPSumcheckProverError> {
         let mut challenges = Vec::with_capacity(n_rounds);
         for _ in 0..n_rounds {
             let c = Self::prove_round(prover_state, evals, aux)?;
@@ -62,7 +86,7 @@ pub trait Sumcheck<F: Field> {
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
         n_rounds: usize,
-    ) -> Result<Vec<Self::Challenge>, WARPError> {
+    ) -> Result<Vec<Self::Challenge>, WARPSumcheckVerifierError> {
         let mut challenges = Vec::with_capacity(n_rounds);
         for _ in 0..n_rounds {
             let c = Self::verify_round(verifier_state, target, aux)?;

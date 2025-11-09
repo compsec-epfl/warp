@@ -1,16 +1,20 @@
+use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
+use crate::sumcheck::WARPSumcheckVerifierError;
+use crate::WARPProverError;
 use crate::{
-    concat_slices,
-    iors::{
-        multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
-        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
-    },
+    domainsep::{absorb_accumulated_instances, absorb_instances},
     relations::r1cs::R1CSConstraints,
-    sumcheck::Sumcheck,
+    sumcheck::{
+        multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
+        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
+        Sumcheck,
+    },
     utils::{
+        concat_slices,
         poly::{eq_poly, eq_poly_non_binary},
         DigestToUnitDeserialize, DigestToUnitSerialize,
     },
-    WARPError,
+    WARPDeciderError, WARPError, WARPVerifierError,
 };
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -33,30 +37,36 @@ use std::marker::PhantomData;
 
 use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
+// #[derive(Clone)]
+// pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
+//     pub l: usize,
+//     pub l1: usize,
+//     pub s: usize,
+//     pub t: usize,
+//     pub p_conf: P::Config,
+//     pub n: usize,
+// }
+
+// impl<F: Field, P: BundledPESAT<F>> WARPConfig<F, P> {
+//     pub fn new(l: usize, l1: usize, s: usize, t: usize, p_conf: P::Config, n: usize) -> Self {
+//         Self {
+//             l,
+//             l1,
+//             s,
+//             t,
+//             p_conf,
+//             n,
+//         }
+//     }
+// }
+
+pub mod config;
+mod traits;
+
+use config::WARPConfig;
+use traits::BoolResult;
+
 use super::AccumulationScheme;
-
-#[derive(Clone)]
-pub struct WARPConfig<F: Field, P: BundledPESAT<F>> {
-    pub l: usize,
-    pub l1: usize,
-    pub s: usize,
-    pub t: usize,
-    pub p_conf: P::Config,
-    pub n: usize,
-}
-
-impl<F: Field, P: BundledPESAT<F>> WARPConfig<F, P> {
-    pub fn new(l: usize, l1: usize, s: usize, t: usize, p_conf: P::Config, n: usize) -> Self {
-        Self {
-            l,
-            l1,
-            s,
-            t,
-            p_conf,
-            n,
-        }
-    }
-}
 
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
     _f: PhantomData<F>,
@@ -149,7 +159,7 @@ impl<
             (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
             Self::Proof,
         ),
-        WARPError,
+        WARPProverError,
     >
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
@@ -177,42 +187,8 @@ impl<
 
         // b. and c. statements and accumulators
         // d. absorb parameters
-        instances
-            .iter()
-            .try_for_each(|x| prover_state.add_scalars(x))?;
-
-        // roots
-        acc_instances
-            .0
-            .clone()
-            .into_iter()
-            .try_for_each(|digest| prover_state.add_digest(digest))?;
-
-        // alpha
-        acc_instances
-            .1
-            .iter()
-            .try_for_each(|alpha| prover_state.add_scalars(alpha))?;
-
-        // mu
-        prover_state.add_scalars(&acc_instances.2)?;
-
-        //// taus
-        acc_instances
-            .3
-             .0
-            .iter()
-            .try_for_each(|tau| prover_state.add_scalars(tau))?;
-
-        //// xs
-        acc_instances
-            .3
-             .1
-            .iter()
-            .try_for_each(|x| prover_state.add_scalars(x))?;
-
-        //// etas
-        prover_state.add_scalars(&acc_instances.4)?;
+        absorb_instances(prover_state, &instances)?;
+        absorb_accumulated_instances(prover_state, &acc_instances)?;
 
         ////////////////////////
         // 2. PESAT Reduction
@@ -220,34 +196,17 @@ impl<
         let n = self.code.code_len();
         let log_n = log2(n) as usize;
 
-        let alpha = 0;
+        // a. encode witnesses
+        let (codewords, leaves) = build_codeword_leaves(&self.code, &witnesses, l1);
 
-        let mut codewords = vec![vec![F::default(); n]; l1];
-
-        // we "stack" codewords to make a single merkle commitment over alphabet \mathbb{F}^{L}
-        let mut codewords_as_leaves = vec![F::default(); l1 * n];
-        let mut mus = vec![F::default(); l1];
-
-        // a. encode witnesses and b. evaluation claims
-        for i in 0..l1 {
-            let f_i = self.code.encode(&witnesses[i]);
-            // stacking codewords in flat array, which we chunk below
-            // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
-            for (j, value) in f_i.iter().enumerate() {
-                codewords_as_leaves[(j * l1) + i] = *value;
-            }
-            // evaluate the dense mle for the codeword \hat{f}(alpha) == f[alpha]
-            mus[i] = f_i[alpha];
-            codewords[i] = f_i;
-        }
-
-        let codewords_as_leaves: Vec<&[F]> = codewords_as_leaves.chunks_exact(l1).collect();
+        // b. evaluation claims
+        let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
 
         // c. commit to witnesses
         let td_0 = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
-            codewords_as_leaves,
+            leaves.chunks_exact(l1).collect::<Vec<_>>(),
         )?;
 
         // d. absorb commitment and code evaluations
@@ -279,6 +238,7 @@ impl<
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
 
+        // build the z (x, w) vectors
         let z_vecs: Vec<Vec<F>> = acc_instances
             .3
              .1
@@ -290,16 +250,8 @@ impl<
 
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
 
-        // TODO: remove this clone()
-        let all_codewords: Vec<Vec<F>> = acc_witnesses
-            .1
-            .clone()
-            .into_iter()
-            .chain(codewords.clone())
-            .collect();
-
         let mut evals = Evals::new(
-            all_codewords.clone(),
+            concat_slices(&acc_witnesses.1, &codewords),
             z_vecs,
             alpha_vecs,
             beta_vecs,
@@ -367,24 +319,15 @@ impl<
         let log_r = log2(r) as usize;
         let n_shift_queries = (self.config.t * log_n).div_ceil(8);
         let mut bytes_shift_queries = vec![0u8; n_shift_queries];
-        let mut xi = vec![F::default(); log_r];
+        let mut xis = vec![F::default(); log_r];
 
         prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
-        prover_state.fill_challenge_scalars(&mut xi)?;
+        prover_state.fill_challenge_scalars(&mut xis)?;
 
         // get shift queries as binary field elements
         let binary_shift_queries = bytes_shift_queries
             .iter()
-            .flat_map(|x| {
-                // TODO factor out
-                (0..8)
-                    .map(|i| {
-                        let val = (x >> i) & 1 == 1;
-                        // return in field element and in binary
-                        F::from(val)
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(byte_to_binary_field_array)
             .take(self.config.t * log_n)
             .collect::<Vec<F>>();
 
@@ -393,11 +336,7 @@ impl<
         // build indexes out of the shift queries stored
         let shift_queries_indexes: Vec<usize> = binary_shift_queries
             .iter()
-            .map(|vals| {
-                vals.iter()
-                    .rev()
-                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
-            })
+            .map(|vals| binary_field_elements_to_usize(vals))
             .collect();
 
         let binary_shift_queries_answers = binary_shift_queries
@@ -410,7 +349,8 @@ impl<
 
         // l. sumcheck polynomials
         // compute evaluations for xi
-        let xi_eq_evals = (0..r).map(|i| eq_poly(&xi, i)).collect::<Vec<_>>();
+
+        let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
 
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
@@ -421,15 +361,7 @@ impl<
             .collect::<Vec<_>>();
 
         // [CBBZ23] optimization from hyperplonk
-        let mut id_non_0_eval_sums = UsizeMap::default();
-        for i in 1 + self.config.s..r {
-            let a = zetas[i]
-                .iter()
-                .enumerate()
-                .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
-                .sum::<usize>();
-            *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xi_eq_evals[i];
-        }
+        let id_non_0_eval_sums = cbbz23(zetas, xi_eq_evals, self.config.s, r);
 
         let alpha = MultilinearConstraintBatchingSumcheck::prove(
             prover_state,
@@ -442,30 +374,26 @@ impl<
         let mu = f_hat.fix_variables(&alpha)[0];
 
         // n. compute authentication paths
-        let auth_0: Vec<Path<MT>> = shift_queries_indexes
-            .iter()
-            .map(|x_t| {
-                td_0.generate_proof(*x_t)
-                    .map_err(|_| ProofError::InvalidProof)
-            })
-            .collect::<Result<Vec<Path<MT>>, ProofError>>()?;
+        let auth_0 = compute_auth_paths(&td_0, &shift_queries_indexes)?;
 
-        let auth: Vec<Vec<Path<MT>>> = acc_witnesses
+        let auth = acc_witnesses
             .0 // for each accumulated witness and for each
-            // query index, get corresponding auth path
             .iter()
-            .map(|td| {
-                shift_queries_indexes
-                    .iter()
-                    .map(|x_t| td.generate_proof(*x_t))
-                    .collect::<Result<Vec<Path<MT>>, Error>>()
-            })
+            .map(|td| compute_auth_paths(td, &shift_queries_indexes))
             .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?;
 
-        let shift_queries_answers = shift_queries_indexes
-            .iter()
-            .map(|idx| all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>())
-            .collect::<Vec<Vec<F>>>();
+        let all_codewords = acc_witnesses
+            .1
+            .into_iter()
+            .chain(codewords)
+            .collect::<Vec<_>>();
+
+        let mut shift_queries_answers =
+            vec![vec![F::default(); all_codewords.len()]; shift_queries_indexes.len()];
+        for (i, idx) in shift_queries_indexes.iter().enumerate() {
+            let answers = all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>();
+            shift_queries_answers[i] = answers;
+        }
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
         let acc_witness = (vec![td], vec![f], vec![w.to_vec()]);
@@ -491,7 +419,7 @@ impl<
         verifier_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> Result<(), WARPError>
+    ) -> Result<(), WARPVerifierError>
     where
         VerifierState<'a>: UnitToBytes
             + FieldToUnitDeserialize<F>
@@ -659,10 +587,8 @@ impl<
         // 4. Decision phase
         ////////////////////////
         // a. new code evaluation point
-        assert!(acc_instance.1[0]
-            .iter()
-            .zip(alpha_sumcheck.clone())
-            .fold(true, |acc, (a_x, a_i)| acc & (*a_x == a_i)));
+        (&acc_instance.1[0] == &alpha_sumcheck)
+            .ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
 
         // b. new circuit evaluation point
         let betas = l2_taus
@@ -703,53 +629,62 @@ impl<
         // check:
         // that the leaf index corresponds to the shift query
         // that the path is correct
-        assert_eq!(proof.6.len(), self.config.t);
+        (proof.6.len() == self.config.t).ok_or_err(WARPVerifierError::NumShiftQueries)?;
+
         // proof.4 is auth_0
         for (i, path) in proof.4.iter().enumerate() {
-            assert_eq!(path.leaf_index, shift_queries_indexes[i]);
+            (path.leaf_index == shift_queries_indexes[i])
+                .ok_or_err(WARPVerifierError::ShiftQueryIndex)?;
+
             let is_valid = path.verify(
                 &self.mt_leaf_hash_params,
                 &self.mt_two_to_one_hash_params,
                 &rt_0,
                 &proof.6[i][l2..], // leaves are evaluations of the l1 codewords
             )?;
-            assert!(is_valid);
+            is_valid.ok_or_err(WARPVerifierError::ShiftQuery)?
         }
 
         // proof.5 holds merkle proofs for l2 accumulated instances
-        assert_eq!(proof.5.len(), l2);
+        (proof.5.len() == l2).ok_or_err(WARPVerifierError::NumL2Instances)?;
         for (i, paths) in proof.5.iter().enumerate() {
-            assert_eq!(paths.len(), self.config.t);
+            (paths.len() == self.config.t).ok_or_err(WARPVerifierError::NumShiftQueries)?;
             let root = &l2_roots[i];
             for (j, path) in paths.iter().enumerate() {
-                assert_eq!(path.leaf_index, shift_queries_indexes[j]);
+                (path.leaf_index == shift_queries_indexes[j])
+                    .ok_or_err(WARPVerifierError::ShiftQueryIndex)?;
                 let is_valid = path.verify(
                     &self.mt_leaf_hash_params,
                     &self.mt_two_to_one_hash_params,
                     root,
                     [proof.6[j][i]], // proof.6[j][i] holds f_i(x_j)
                 )?;
-                assert!(is_valid);
+
+                is_valid.ok_or_err(WARPVerifierError::ShiftQuery)?
             }
         }
 
         // d. sumcheck decisions
         // twin constraints sumcheck
-        assert_eq!(coeffs_twinc_sumcheck.len(), log_l);
+        (coeffs_twinc_sumcheck.len() == log_l)
+            .ok_or_err(WARPSumcheckVerifierError::NumSumcheckRounds)?;
+
         let mut target_1 = sigma_1;
         for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
             let h = DensePolynomial::from_coefficients_vec(coeffs);
-            assert_eq!(h.evaluate(&F::one()) + h.evaluate(&F::zero()), target_1);
+            (h.evaluate(&F::one()) + h.evaluate(&F::zero()) == target_1)
+                .ok_or_err(WARPSumcheckVerifierError::SumcheckRound)?;
             target_1 = h.evaluate(gamma);
         }
 
         // multilinear batching sumcheck
-        assert_eq!(sums_batching_sumcheck.len(), log_n);
+        (sums_batching_sumcheck.len() == log_n)
+            .ok_or_err(WARPSumcheckVerifierError::NumSumcheckRounds)?;
         let mut target_2 = sigma_2;
         for ([sum_00, sum_11, sum_0110], alpha) in
             sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck)
         {
-            assert_eq!(sum_00 + sum_11, target_2);
+            (sum_00 + sum_11 == target_2).ok_or_err(WARPSumcheckVerifierError::SumcheckRound)?;
             target_2 = (target_2 - sum_0110) * alpha.square()
                 + sum_00 * (F::one() - alpha.double())
                 + sum_0110 * alpha;
@@ -757,10 +692,8 @@ impl<
 
         // e. new target decision
         // build eq^{\star}(\alpha)
-        assert_eq!(
-            eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta),
-            target_1
-        );
+        (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta) == target_1)
+            .ok_or_err(WARPSumcheckVerifierError::Target)?;
 
         let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
 
@@ -776,17 +709,16 @@ impl<
                 .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
                 .collect::<Vec<F>>(),
         );
-        assert_eq!(zeta_eqs.len(), r);
+        (zeta_eqs.len() == r).ok_or_err(WARPVerifierError::NumShiftQueries)?;
 
         // mul by \mu and compare to target_2
-        assert_eq!(
-            acc_instance.2[0]
-                * zeta_eqs
-                    .into_iter()
-                    .zip(xi_eq_evals)
-                    .fold(F::zero(), |acc, (a, b)| acc + a * b),
-            target_2
-        );
+        (acc_instance.2[0]
+            * zeta_eqs
+                .into_iter()
+                .zip(xi_eq_evals)
+                .fold(F::zero(), |acc, (a, b)| acc + a * b)
+            == target_2)
+            .ok_or_err(WARPSumcheckVerifierError::Target)?;
 
         Ok(())
     }
@@ -804,14 +736,14 @@ impl<
             &self.mt_two_to_one_hash_params,
             f[0].chunks(1).collect::<Vec<_>>(),
         )?;
-        assert_eq!(rt[0], computed_td.root());
-        // TODO? assert_eq!(td[0], computed_td);
+        (rt[0] == computed_td.root()).ok_or_err(WARPDeciderError::MerkleRoot)?;
+        // TODO? assert_err[0], computed_td);
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.code.code_len()) as usize,
             &f[0],
         );
-        assert_eq!(f_hat.evaluate(&alpha[0]), mu[0]);
+        (f_hat.evaluate(&alpha[0]) == mu[0]).ok_or_err(WARPDeciderError::MLExtensionEvaluation)?;
 
         let tau = &beta.0[0];
 
@@ -822,10 +754,10 @@ impl<
         let mut z = beta.1[0].clone();
         z.extend(w[0].clone());
         let computed_eta = self.p.evaluate_bundled(&tau_zero_evader, &z).unwrap();
-        assert_eq!(computed_eta, eta[0]);
+        (computed_eta == eta[0]).ok_or_err(WARPDeciderError::BundledEvaluation)?;
 
         let computed_f = self.code.encode(&w[0]);
-        assert_eq!(f[0], computed_f);
+        (f[0] == computed_f).ok_or_err(WARPDeciderError::EncodedWitness)?;
 
         Ok(())
     }
@@ -842,6 +774,67 @@ fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     result
 }
 
+fn byte_to_binary_field_array<F: Field>(byte: &u8) -> Vec<F> {
+    (0..8)
+        .map(|i| {
+            let val = (byte >> i) & 1 == 1;
+            // return in field element and in binary
+            F::from(val)
+        })
+        .collect::<Vec<_>>()
+}
+
+fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
+    elements
+        .iter()
+        .rev()
+        .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
+}
+
+fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
+    code: &C,
+    witnesses: &[Vec<F>],
+    l1: usize,
+) -> (Vec<Vec<F>>, Vec<F>) {
+    let mut leaves = vec![F::default(); l1 * code.code_len()];
+    let mut codewords = vec![vec![F::default(); code.code_len()]; l1];
+    for (i, w) in witnesses.iter().enumerate() {
+        let f_i = code.encode(w);
+        // stacking codewords in flat array, which we chunk below
+        // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
+        for (j, value) in f_i.iter().enumerate() {
+            leaves[(j * l1) + i] = *value;
+        }
+        codewords[i] = f_i;
+    }
+    (codewords, leaves)
+}
+
+fn compute_auth_paths<P: Config>(
+    td: &MerkleTree<P>,
+    indexes: &Vec<usize>,
+) -> Result<Vec<Path<P>>, Error> {
+    let paths = indexes
+        .iter()
+        .map(|x_t| td.generate_proof(*x_t))
+        .collect::<Result<Vec<Path<P>>, Error>>()?;
+    Ok(paths)
+}
+
+// [CBBZ23] hyperplonk optimization
+fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> UsizeMap<F> {
+    let mut id_non_0_eval_sums = UsizeMap::default();
+    for i in 1 + s..r {
+        let a = zetas[i]
+            .iter()
+            .enumerate()
+            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+            .sum::<usize>();
+        *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
+    }
+    id_non_0_eval_sums
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::marker::PhantomData;
@@ -850,7 +843,7 @@ pub mod tests {
         accumulator::AccumulationScheme,
         domainsep::WARPDomainSeparator,
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
-        merkle::blake3::{Blake3MerkleConfig, Blake3MerkleTreeParams},
+        merkle::blake3::Blake3MerkleTreeParams,
         relations::{
             r1cs::{
                 hashchain::{

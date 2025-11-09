@@ -1,5 +1,4 @@
-use std::{hash::Hash, marker::PhantomData};
-
+use crate::merkle::digest::GenericDigest;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, IdentityDigestConverter},
@@ -13,13 +12,12 @@ use spongefish::{
     ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator,
     DuplexSpongeInterface, ProofError, ProofResult, ProverState, Unit, VerifierState,
 };
+use std::{hash::Hash, marker::PhantomData};
 
 use crate::utils::{
     DigestDomainSeparator, DigestToUnitDeserialize, DigestToUnitSerialize, HintDeserialize,
     HintSerialize,
 };
-
-use super::digest::GenericDigest;
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
 ///

@@ -3,6 +3,7 @@ use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::ProofResult;
 
+pub mod errs;
 pub mod poly;
 pub mod poseidon;
 
@@ -25,6 +26,13 @@ pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
             // F::deserialize_uncompressed(&mut reader).unwrap()
         })
         .collect()
+}
+
+pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
+    let mut v = Vec::<F>::with_capacity(a.len() + b.len());
+    v.extend_from_slice(a);
+    v.extend_from_slice(b);
+    v
 }
 
 // we copy instead of import from whir since we would like to implement the `DigestDomainSeparator` trait
