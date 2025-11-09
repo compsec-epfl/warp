@@ -212,7 +212,7 @@ pub mod tests {
         let mut instances = vec![];
 
         // intialize some instances and witnesses
-        for i in 0..l {
+        for (i, leaf) in leaves.iter().enumerate().take(l) {
             let proof = mt.generate_proof(i).unwrap();
             let instance = MerkleInclusionInstance::<
                 Fr,
@@ -220,7 +220,7 @@ pub mod tests {
                 PoseidonMerkleConfigGadget<Fr>,
             > {
                 root: mt.root(),
-                leaf: (*leaves[i]).to_vec(),
+                leaf: leaf.to_vec(),
                 _merkle_config_gadget: PhantomData,
             };
             let witness = MerkleInclusionWitness::<

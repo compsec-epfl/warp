@@ -194,7 +194,7 @@ impl<
             .chunks(self.config.log_n)
             .map(|array_tuples| {
                 let (alpha_as_field_elements, alpha_as_bool): (Vec<F>, Vec<bool>) =
-                    array_tuples.to_vec().into_iter().unzip();
+                    array_tuples.iter().copied().unzip();
 
                 // compute x_k as usize from binary representation
                 // we need to rev for the mle evaluation routine of arkworks

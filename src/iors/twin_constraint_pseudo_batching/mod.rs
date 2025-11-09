@@ -150,9 +150,7 @@ pub fn prover<F: Field, const L: usize>(
     // 6.1 step 1, sample challenge \tau and \xi
     let mut tau = vec![F::zero(); log2(L) as usize];
     prover_state.fill_challenge_scalars(&mut tau)?;
-    let tau_eq_evals = (0..L)
-        .map(|i| eq_poly(&tau, i))
-        .collect::<Vec<_>>();
+    let tau_eq_evals = (0..L).map(|i| eq_poly(&tau, i)).collect::<Vec<_>>();
     let [xi] = prover_state.challenge_scalars::<1>()?;
 
     // 6.1 step 2, initialize evaluation tables
@@ -183,9 +181,7 @@ pub fn prover<F: Field, const L: usize>(
 
     let z = evals.z.pop().unwrap();
 
-    let beta_eq_evals = (0..m)
-        .map(|i| eq_poly(&beta, i))
-        .collect::<Vec<_>>();
+    let beta_eq_evals = (0..m).map(|i| eq_poly(&beta, i)).collect::<Vec<_>>();
 
     let eta = r1cs.evaluate_bundled(&beta_eq_evals, &z)?;
 
@@ -207,9 +203,7 @@ pub fn verifier<F: Field, const L: usize>(
     // 6.1 step 1, sample challenge \tau and \xi
     let mut tau = vec![F::zero(); log2(L) as usize];
     verifier_state.fill_challenge_scalars(&mut tau)?;
-    let tau_eq_evals = (0..L)
-        .map(|i| eq_poly(&tau, i))
-        .collect::<Vec<_>>();
+    let tau_eq_evals = (0..L).map(|i| eq_poly(&tau, i)).collect::<Vec<_>>();
     let [xi] = verifier_state.challenge_scalars::<1>()?;
 
     // 6.1 step 2, RHS of the equation (sumcheck target)
@@ -296,8 +290,8 @@ mod tests {
 
             let mut r = FpVar::one();
 
-            for i in 0..M - 1 {
-                r *= &v[i];
+            for i in v.iter().take(M - 1) {
+                r *= i;
             }
 
             r.enforce_equal(&x)?;
@@ -357,7 +351,7 @@ mod tests {
             let mut beta_eq_evals = Vec::<Fr>::new();
             let hypercube = Hypercube::<AscendingOrder>::new(r1cs.log_m);
 
-            for (index, point) in hypercube {
+            for (index, _point) in hypercube {
                 beta_eq_evals.push(eq_poly(&beta, index));
             }
 

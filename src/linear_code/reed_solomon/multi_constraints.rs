@@ -54,7 +54,9 @@ impl<F: FftField, C: LinearCode<F, Config = ReedSolomonConfig<F>>, P: BundledPES
 
         // TODO: multithread this
         // initialize table for eq(tau, i)
-        let tau_eq_evals = hypercube.map(|(index, _point)| eq_poly(tau, index)).collect();
+        let tau_eq_evals = hypercube
+            .map(|(index, _point)| eq_poly(tau, index))
+            .collect();
 
         Self {
             _p: PhantomData::<P>,

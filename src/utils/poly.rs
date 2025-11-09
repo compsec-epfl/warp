@@ -1,7 +1,6 @@
 use ark_ff::Field;
 use efficient_sumcheck::{
-    hypercube::HypercubeMember, interpolation::LagrangePolynomial,
-    order_strategy::AscendingOrder
+    hypercube::HypercubeMember, interpolation::LagrangePolynomial, order_strategy::AscendingOrder,
 };
 
 pub fn eq_poly<F: Field>(original_tau: &[F], point: usize) -> F {

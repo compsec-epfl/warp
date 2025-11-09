@@ -5,7 +5,12 @@ use ark_std::{
     hash::{BuildHasherDefault, Hasher},
     log2,
 };
-use efficient_sumcheck::multilinear::reductions::pairwise;
+use efficient_sumcheck::{
+    multilinear::{reductions::pairwise, ReduceMode},
+    multilinear_product::{TimeProductProver, TimeProductProverConfig},
+    prover::Prover,
+    streams::{MemoryStream, Stream},
+};
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
@@ -59,29 +64,39 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         _aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPError> {
         // preprocess g so that we get a product sumcheck f * g
-        let mut g = sum_columns(ood_evals_vec);
-        for (i, v) in g.iter_mut().enumerate() {
+        let mut preprocessed_g = sum_columns(ood_evals_vec);
+        for (i, v) in preprocessed_g.iter_mut().enumerate() {
             *v += id_non_0_eval_sums.get(&i).unwrap_or(&F::ZERO);
         }
-        let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
-            .step_by(2)
-            .map(|a| {
-                let p0 = f_evals[a];
-                let p1 = f_evals[a + 1];
-                let q0 = g[a];
-                let q1 = g[a + 1];
-                (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
-            })
-            .fold((F::zero(), F::zero(), F::zero()), |acc, x| {
-                (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
-            });
+
+        // round evaluation
+        let f = MemoryStream::new(f_evals.to_vec());
+        let g = MemoryStream::new(preprocessed_g.clone());
+        let config =
+            TimeProductProverConfig::new(f.num_variables(), vec![f, g], ReduceMode::Pairwise);
+        let mut time_product_prover = TimeProductProver::new(config);
+        let message = time_product_prover.next_message(None).unwrap();
+        // let (sum_00, sum_11, sum_0110) = (0..f_evals.len())
+        //     .step_by(2)
+        //     .map(|a| {
+        //         let p0 = f_evals[a];
+        //         let p1 = f_evals[a + 1];
+        //         let q0 = preprocessed_g[a];
+        //         let q1 = preprocessed_g[a + 1];
+        //         (p0 * q0, p1 * q1, p0 * q1 + p1 * q0)
+        //     })
+        //     .fold((F::zero(), F::zero(), F::zero()), |acc, x| {
+        //         (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
+        //     });
+
 
         // absorb
-        prover_state.add_scalars(&[sum_00, sum_11, sum_0110])?;
-        // get challenge
-        let [c] = prover_state.challenge_scalars::<1>()?;
+        prover_state.add_scalars(&[message.0, message.1, message.2]).unwrap();
 
-        // update evaluation tables
+        // squeeze
+        let [c] = prover_state.challenge_scalars::<1>().unwrap();
+
+        // reduce
         pairwise::reduce_evaluations(f_evals, c);
         ood_evals_vec.iter_mut().for_each(|e| {
             pairwise::reduce_evaluations(e, c);
@@ -129,9 +144,7 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
     // 8.1 step 1, sample challenge \xi
     let mut xi = vec![F::zero(); log2(R) as usize];
     prover_state.fill_challenge_scalars(&mut xi)?;
-    let xi_eq_evals = (0..R)
-        .map(|i| eq_poly(&xi, i))
-        .collect::<Vec<_>>();
+    let xi_eq_evals = (0..R).map(|i| eq_poly(&xi, i)).collect::<Vec<_>>();
 
     // 8.1 step 2, initialize evaluation tables
     let f_evals = u.clone();
@@ -157,6 +170,7 @@ pub fn prover<F: Field, const S: usize, const R: usize, const N: usize>(
     // product sumcheck f * g
     // can probably pass sponge state to function in efficient-sumcheck and return new sponge
     // 8.1 step 2, sumcheck starts
+
     let alpha = MultilinearConstraintBatchingSumcheck::prove(
         prover_state,
         &mut (f_evals, ood_evals_vec, id_non_0_eval_sums),
@@ -181,9 +195,7 @@ pub fn verifier<F: Field, const R: usize, const N: usize>(
     // 8.1 step 1, sample challenge \xi
     let mut xi = vec![F::zero(); log2(R) as usize];
     verifier_state.fill_challenge_scalars(&mut xi)?;
-    let xi_eq_evals = (0..R)
-        .map(|i| eq_poly(&xi, i))
-        .collect::<Vec<_>>();
+    let xi_eq_evals = (0..R).map(|i| eq_poly(&xi, i)).collect::<Vec<_>>();
 
     // 8.1 step 2, RHS of the equation (sumcheck target)
     let mut sigma = (0..R).map(|i| mu_vec[i] * xi_eq_evals[i]).sum::<F>();
@@ -259,8 +271,8 @@ mod tests {
 
             let mut r = FpVar::one();
 
-            for i in 0..15 {
-                r *= &v[i];
+            for i in v.iter().take(15) {
+                r *= i;
             }
 
             r.enforce_equal(&x)?;

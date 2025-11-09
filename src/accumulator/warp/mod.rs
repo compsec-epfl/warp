@@ -321,9 +321,7 @@ impl<
         let (f, z, zeta_0, beta_tau) = evals.get_last_evals()?;
 
         // eval the bundled r1cs
-        let beta_eq_evals = (0..M)
-            .map(|i| eq_poly(&beta_tau, i))
-            .collect::<Vec<_>>();
+        let beta_eq_evals = (0..M).map(|i| eq_poly(&beta_tau, i)).collect::<Vec<_>>();
 
         let eta = self
             .p
@@ -414,9 +412,7 @@ impl<
 
         // l. sumcheck polynomials
         // compute evaluations for xi
-        let xi_eq_evals = (0..r)
-            .map(|i| eq_poly(&xi, i))
-            .collect::<Vec<_>>();
+        let xi_eq_evals = (0..r).map(|i| eq_poly(&xi, i)).collect::<Vec<_>>();
 
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
