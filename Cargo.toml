@@ -25,7 +25,6 @@ spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", packa
 efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
 #efficient-sumcheck = { path = "../space-efficient-sumcheck" }
 thiserror = "2.0.16"
-whir = { git = "https://github.com/WizardOfMenlo/whir", rev = "3d627d3" }
 zeroize = { version = "1.5", features = ["derive"] }
 
 

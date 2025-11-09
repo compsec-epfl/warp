@@ -850,6 +850,7 @@ pub mod tests {
         accumulator::AccumulationScheme,
         domainsep::WARPDomainSeparator,
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
+        merkle::blake3::{Blake3MerkleConfig, Blake3MerkleTreeParams},
         relations::{
             r1cs::{
                 hashchain::{
@@ -866,7 +867,6 @@ pub mod tests {
     use ark_ff::UniformRand;
     use rand::thread_rng;
     use spongefish::DomainSeparator;
-    use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
     use super::{WARPConfig, WARP};
 

@@ -8,8 +8,8 @@ use std::marker::PhantomData;
 use warp::accumulator::warp::{WARPConfig, WARP};
 use warp::accumulator::AccumulationScheme;
 use warp::domainsep::WARPDomainSeparator;
+use warp::merkle::blake3::Blake3MerkleTreeParams;
 use warp::relations::r1cs::R1CS;
-use whir::crypto::merkle_tree::blake3::Blake3MerkleTreeParams;
 
 mod utils;
 use spongefish::DomainSeparator;

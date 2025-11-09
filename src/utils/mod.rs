@@ -1,5 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::ProofResult;
 
 pub mod poly;
@@ -42,4 +43,13 @@ pub trait DigestToUnitSerialize<MerkleConfig: Config> {
 // from whir
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}
+
+// from whir
+pub trait HintSerialize {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+}
+// from whir
+pub trait HintDeserialize {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
 }

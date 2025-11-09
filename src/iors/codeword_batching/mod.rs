@@ -248,7 +248,10 @@ mod tests {
             IOR,
         },
         linear_code::MultiConstrainedLinearCode,
-        merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
+        merkle::{
+            blake3::Blake3MerkleTreeParams,
+            poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
+        },
         relations::{
             r1cs::{
                 merkle_inclusion::{tests::get_test_merkle_tree, MerkleInclusionInstance},
@@ -264,9 +267,6 @@ mod tests {
     use ark_std::{log2, test_rng};
     use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
     use spongefish::DomainSeparator;
-    use whir::{
-        crypto::merkle_tree::blake3::Blake3MerkleTreeParams, poly_utils::hypercube::BinaryHypercube,
-    };
 
     use crate::{
         iors::codeword_batching::PseudoBatchingIOR,
@@ -356,15 +356,15 @@ mod tests {
             vec![Fr::zero(); r1cs.n - r1cs.k],
         );
 
-        for p in BinaryHypercube::new(log_l) {
-            let constraint_i = constraints[p.0].clone();
+        for (index, _point) in Hypercube::<AscendingOrder>::new(log_l) {
+            let constraint_i = constraints[index].clone();
 
             let alpha_i = &constraint_i.evaluations[0].0;
             let beta = &constraint_i.beta;
 
-            let f_i = &codewords[p.0];
-            let w_i = &witnesses[p.0];
-            let eq_eval_i = &gamma_eq_evals[p.0];
+            let f_i = &codewords[index];
+            let w_i = &witnesses[index];
+            let eq_eval_i = &gamma_eq_evals[index];
 
             for (i, element) in f_i.iter().enumerate() {
                 rlc_f[i] += eq_eval_i * element;

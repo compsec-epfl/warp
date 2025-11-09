@@ -89,9 +89,10 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         //         (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2)
         //     });
 
-
         // absorb
-        prover_state.add_scalars(&[message.0, message.1, message.2]).unwrap();
+        prover_state
+            .add_scalars(&[message.0, message.1, message.2])
+            .unwrap();
 
         // squeeze
         let [c] = prover_state.challenge_scalars::<1>().unwrap();
