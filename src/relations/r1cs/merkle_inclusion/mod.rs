@@ -93,17 +93,19 @@ pub(crate) mod tests {
         },
     };
 
+    pub type TestMerkleTree<F, MC, MG> = (
+        MerkleInclusionConfig<F, MC, MG>,
+        Vec<Vec<F>>,
+        MerkleTree<MC>,
+    );
+
     pub fn get_test_merkle_tree(
         height: usize,
-    ) -> (
-        MerkleInclusionConfig<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        >,
-        Vec<Vec<BLS12_381>>,
-        MerkleTree<PoseidonMerkleConfig<BLS12_381>>,
-    ) {
+    ) -> TestMerkleTree<
+        BLS12_381,
+        PoseidonMerkleConfig<BLS12_381>,
+        PoseidonMerkleConfigGadget<BLS12_381>,
+    > {
         let leaf_len = 2;
         let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
         let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();

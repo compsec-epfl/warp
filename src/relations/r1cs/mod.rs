@@ -74,7 +74,7 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
 
 impl<F: Field> R1CS<F> {
     // evaluate the given sparse linear combination over the provided z vector
-    fn eval_lc(lc: &Vec<(F, usize)>, z: &Vec<F>) -> Result<F, WARPError> {
+    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WARPError> {
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
             acc += *coeff
@@ -85,7 +85,7 @@ impl<F: Field> R1CS<F> {
     }
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
-    pub fn eval_p_i(&self, z: &Vec<F>, i: usize) -> Result<F, WARPError> {
+    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WARPError> {
         let (a_i, b_i, c_i) = self.p.get(i).ok_or(WARPError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
@@ -98,7 +98,7 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Config = (usize, usize, usize);
     type Constraints = R1CSConstraints<F>;
 
-    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
         let mut cube = Hypercube::<AscendingOrder>::new(self.log_m);
 
         // TODO: multithread this

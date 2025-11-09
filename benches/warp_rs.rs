@@ -6,18 +6,12 @@ use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs
 use warp::accumulator::warp::config::WARPConfig;
 use warp::accumulator::warp::WARP;
 use warp::accumulator::AccumulationScheme;
-use warp::domainsep::WARPDomainSeparator;
 use warp::merkle::blake3::Blake3MerkleTreeParams;
-use warp::relations::r1cs::R1CS;
 
 mod utils;
 use utils::poseidon;
 use warp::linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig};
-use warp::relations::r1cs::hashchain::{
-    compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness,
-};
-use warp::relations::Relation;
-use warp::relations::{BundledPESAT, ToPolySystem};
+use warp::relations::BundledPESAT;
 
 const HASHCHAIN_SIZE: usize = 1600;
 
@@ -62,7 +56,7 @@ pub fn bench_rs_warp(c: &mut Criterion) {
                         let prover_state = domainsep.to_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
-                    |(mut prover_state, x_w)| {
+                    |(mut prover_state, _x_w)| {
                         let _ = hash_chain_warp
                             .prove(
                                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),

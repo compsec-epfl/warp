@@ -28,7 +28,7 @@ pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
         .collect()
 }
 
-pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
+pub fn concat_slices<F: Clone>(a: &[F], b: &[F]) -> Vec<F> {
     let mut v = Vec::<F>::with_capacity(a.len() + b.len());
     v.extend_from_slice(a);
     v.extend_from_slice(b);

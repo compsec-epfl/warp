@@ -1,15 +1,11 @@
 use ark_crypto_primitives::{
-    crh::{CRHScheme, CRHSchemeGadget, TwoToOneCRHScheme, TwoToOneCRHSchemeGadget},
-    merkle_tree::{
-        constraints::ConfigGadget as MerkleConfigGadget, Config as MerkleConfig,
-        IdentityDigestConverter,
-    },
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::{Config as MerkleConfig, IdentityDigestConverter},
     sponge::Absorb,
     Error,
 };
 use ark_ff::{Field, PrimeField};
-use ark_r1cs_std::fields::fp::FpVar;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use ark_std::{borrow::Borrow, marker::PhantomData, rand::RngCore};
 use std::sync::atomic::{AtomicUsize, Ordering};
 

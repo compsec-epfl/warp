@@ -14,6 +14,14 @@ use crate::{
     WARPError, WARPProverError, WARPVerifierError,
 };
 
+type WarpAccumResult<F, MT, S> = (
+    (
+        <S as AccumulationScheme<F, MT>>::AccumulatorInstances,
+        <S as AccumulationScheme<F, MT>>::AccumulatorWitnesses,
+    ),
+    <S as AccumulationScheme<F, MT>>::Proof,
+);
+
 pub trait AccumulationScheme<F: Field, MT: Config> {
     type Index;
     type ProverKey;
@@ -41,13 +49,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         instances: Self::Instances,
         acc_instances: Self::AccumulatorInstances,
         acc_witnesses: Self::AccumulatorWitnesses,
-    ) -> Result<
-        (
-            (Self::AccumulatorInstances, Self::AccumulatorWitnesses),
-            Self::Proof,
-        ),
-        WARPProverError,
-    >
+    ) -> Result<WarpAccumResult<F, MT, Self>, WARPProverError>
     where
         ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
 

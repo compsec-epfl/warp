@@ -98,22 +98,24 @@ impl<
 
 pub fn absorb_instances<F: Field>(
     prover_state: &mut ProverState,
-    instances: &Vec<Vec<F>>,
+    instances: &[Vec<F>],
 ) -> Result<(), ProofError> {
     instances
         .iter()
         .try_for_each(|x| prover_state.add_scalars(x))
 }
 
+pub type AccInstances<F, MT> = (
+    Vec<<MT as Config>::InnerDigest>, // rt
+    Vec<Vec<F>>,                      // alpha
+    Vec<F>,                           // mu
+    (Vec<Vec<F>>, Vec<Vec<F>>),       // (tau, x)
+    Vec<F>,                           // eta
+);
+
 pub fn absorb_accumulated_instances<F: Field, MT: Config>(
     prover_state: &mut ProverState,
-    acc_instances: &(
-        Vec<MT::InnerDigest>,
-        Vec<Vec<F>>,
-        Vec<F>,
-        (Vec<Vec<F>>, Vec<Vec<F>>),
-        Vec<F>,
-    ), // (rt, \alpha, \mu, \beta (\tau, x), \eta)
+    acc_instances: &AccInstances<F, MT>, // (rt, \alpha, \mu, \beta (\tau, x), \eta)
 ) -> Result<(), ProofError>
 where
     ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,

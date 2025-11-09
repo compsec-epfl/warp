@@ -21,7 +21,7 @@ pub trait BundledPESAT<F: Field> {
     type Config;
     type Constraints;
 
-    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError>;
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError>;
 
     // returns (M, N, k)
     fn config(&self) -> Self::Config;

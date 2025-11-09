@@ -22,6 +22,8 @@ pub struct Evals<F> {
     pub tau: Vec<F>,
 }
 
+pub type EvalTuple<F> = (Vec<F>, Vec<F>, Vec<F>, Vec<F>);
+
 impl<F> Evals<F> {
     pub fn new(
         u: Vec<Vec<F>>,
@@ -33,7 +35,7 @@ impl<F> Evals<F> {
         Self { u, z, a, b, tau }
     }
 
-    pub fn get_last_evals(&mut self) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), WARPProverError> {
+    pub fn get_last_evals(&mut self) -> Result<EvalTuple<F>, WARPProverError> {
         let z = self.z.pop().ok_or(WARPProverError::EmptyEval)?;
         let beta_tau = self.b.pop().ok_or(WARPProverError::EmptyEval)?;
         let u = self.u.pop().ok_or(WARPProverError::EmptyEval)?;

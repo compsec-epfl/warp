@@ -587,8 +587,7 @@ impl<
         // 4. Decision phase
         ////////////////////////
         // a. new code evaluation point
-        (&acc_instance.1[0] == &alpha_sumcheck)
-            .ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
+        (acc_instance.1[0] == alpha_sumcheck).ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
 
         // b. new circuit evaluation point
         let betas = l2_taus
@@ -791,7 +790,7 @@ fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
         .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
 }
 
-fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
+fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
     code: &C,
     witnesses: &[Vec<F>],
     l1: usize,
@@ -812,7 +811,7 @@ fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
 
 fn compute_auth_paths<P: Config>(
     td: &MerkleTree<P>,
-    indexes: &Vec<usize>,
+    indexes: &[usize],
 ) -> Result<Vec<Path<P>>, Error> {
     let paths = indexes
         .iter()
@@ -932,7 +931,7 @@ pub mod tests {
                 Blake3MerkleTreeParams<BLS12_381>,
             >::warp(domainsep, warp_config.clone());
             let mut prover_state = domainsep.to_prover_state();
-            let ((acc_x, acc_w), pf) = hash_chain_warp
+            let ((acc_x, acc_w), _pf) = hash_chain_warp
                 .prove(
                     (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
                     &mut prover_state,

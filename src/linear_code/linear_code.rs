@@ -17,13 +17,13 @@ pub trait LinearCode<F: Field> {
 }
 
 pub trait MultiConstraintChecker<F: Field> {
-    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F>;
+    fn as_multilinear_extension(num_vars: usize, f: &[F]) -> DenseMultilinearExtension<F>;
 
     fn check_constraints<P: BundledPESAT<F>>(
         &self,
         constraints: &MultiConstraints<F>,
-        w: &Vec<F>,
-        f: &Vec<F>,
+        w: &[F],
+        f: &[F],
         p: &P,
     ) -> Result<(), WARPError>;
 }
@@ -68,15 +68,15 @@ impl<F: Field> MultiConstraints<F> {
 }
 
 impl<F: Field, C: LinearCode<F>> MultiConstraintChecker<F> for C {
-    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F> {
+    fn as_multilinear_extension(num_vars: usize, f: &[F]) -> DenseMultilinearExtension<F> {
         DenseMultilinearExtension::from_evaluations_slice(num_vars, f)
     }
 
     fn check_constraints<P: BundledPESAT<F>>(
         &self,
         constraints: &MultiConstraints<F>,
-        w: &Vec<F>,
-        f: &Vec<F>,
+        w: &[F],
+        f: &[F],
         p: &P,
     ) -> Result<(), WARPError> {
         let mut z = constraints.beta.1.clone();
