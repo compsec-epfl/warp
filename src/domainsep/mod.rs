@@ -232,8 +232,6 @@ pub fn derive_randomness<
 >(
     verifier_state: &mut VerifierState<'a>,
     l1: usize,
-    l2: usize,
-    instance_len: usize,
     log_n: usize,
     log_l: usize,
     s: usize,

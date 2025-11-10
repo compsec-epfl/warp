@@ -438,7 +438,7 @@ impl<
             tau,
             gamma_sumcheck,
             coeffs_twinc_sumcheck,
-            _td,
+            td,
             eta,
             mut nus,
             ood_samples,
@@ -449,8 +449,6 @@ impl<
         ) = derive_randomness(
             verifier_state,
             l1,
-            l2,
-            N - k,
             log_n,
             log_l,
             self.config.s,
@@ -466,9 +464,9 @@ impl<
         ////////////////////////
         // b.
         let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
-        let gamma_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&gamma_sumcheck, p))
-            .collect::<Vec<F>>();
+
+        let gamma_eq_evals = compute_hypercube_evaluations(log_l, &gamma_sumcheck);
+
         let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
         // compute \eta_{s + k}
@@ -485,9 +483,8 @@ impl<
 
         // d. set \sigma^{(1)} and \sigma^{(2)}
         // compute eq(\tau, i) and eq(\xi, i)
-        let tau_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&tau, p))
-            .collect::<Vec<F>>();
+        let tau_eq_evals = compute_hypercube_evaluations(log_l, &tau);
+
         let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
 
         let sigma_1 = tau_eq_evals
@@ -497,9 +494,7 @@ impl<
                 acc + eq_tau * (mu + omega * eta)
             });
 
-        let xi_eq_evals = BinaryHypercube::new(log_r)
-            .map(|p| eq_poly(&xi, p))
-            .collect::<Vec<F>>();
+        let xi_eq_evals = compute_hypercube_evaluations(log_r, &xi);
 
         let sigma_2 = xi_eq_evals
             .iter()
@@ -525,16 +520,7 @@ impl<
         // c. check auth paths
         let binary_shift_queries = bytes_shift_queries
             .iter()
-            .flat_map(|x| {
-                // TODO factor out
-                (0..8)
-                    .map(|i| {
-                        let val = (x >> i) & 1 == 1;
-                        // return in field element and in binary
-                        F::from(val)
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(byte_to_binary_field_array)
             .take(self.config.t * log_n)
             .collect::<Vec<F>>();
 
@@ -542,11 +528,7 @@ impl<
 
         let shift_queries_indexes: Vec<usize> = binary_shift_queries
             .iter()
-            .map(|vals| {
-                vals.iter()
-                    .rev()
-                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
-            })
+            .map(|vals| binary_field_elements_to_usize(vals))
             .collect();
 
         // check:
@@ -757,6 +739,12 @@ fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) 
         *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
     }
     id_non_0_eval_sums
+}
+
+pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
+    BinaryHypercube::new(num_variables)
+        .map(|p| eq_poly(point, p))
+        .collect::<Vec<F>>()
 }
 
 #[cfg(test)]
