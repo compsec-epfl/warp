@@ -4,9 +4,9 @@ pub mod is_prime;
 pub mod merkle_inclusion;
 pub mod preimage;
 
-use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 pub use identity::{IdentityInstance, IdentityRelation, IdentitySynthesizer, IdentityWitness};
 pub use is_prime::{
     IsPrimeInstance, IsPrimeRelation, IsPrimeSynthesizer, IsPrimeWitness, PrattCertificate,
@@ -74,7 +74,7 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
 
 impl<F: Field> R1CS<F> {
     // evaluate the given sparse linear combination over the provided z vector
-    fn eval_lc(lc: &Vec<(F, usize)>, z: &Vec<F>) -> Result<F, WARPError> {
+    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WARPError> {
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
             acc += *coeff
@@ -85,8 +85,8 @@ impl<F: Field> R1CS<F> {
     }
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
-    pub fn eval_p_i(&self, z: &Vec<F>, i: &BinaryHypercubePoint) -> Result<F, WARPError> {
-        let (a_i, b_i, c_i) = self.p.get(i.0).ok_or(WARPError::R1CSNonExistingLC)?;
+    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WARPError> {
+        let (a_i, b_i, c_i) = self.p.get(i).ok_or(WARPError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
@@ -98,15 +98,15 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Config = (usize, usize, usize);
     type Constraints = R1CSConstraints<F>;
 
-    fn evaluate_bundled(&self, zero_evader_evals: &Vec<F>, z: &Vec<F>) -> Result<F, WARPError> {
-        let mut cube = BinaryHypercube::new(self.log_m);
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
+        let mut cube = Hypercube::<AscendingOrder>::new(self.log_m);
 
         // TODO: multithread this
-        cube.try_fold(F::ZERO, |acc, point| {
+        cube.try_fold(F::ZERO, |acc, (index, _point)| {
             let eq_tau_i = *zero_evader_evals
-                .get(point.0)
-                .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), point.0))?;
-            let p_i = self.eval_p_i(z, &point)?;
+                .get(index)
+                .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), index))?;
+            let p_i = self.eval_p_i(z, index)?;
             Ok(acc + eq_tau_i * p_i)
         })
     }

@@ -1,7 +1,9 @@
 mod brakedown;
-mod linear_code;
 mod raa;
 mod reed_solomon;
+
+#[allow(clippy::module_inception)]
+mod linear_code;
 
 pub use brakedown::{Brakedown, BrakedownConfig};
 pub use linear_code::{LinearCode, MultiConstraintChecker, MultiConstraints};

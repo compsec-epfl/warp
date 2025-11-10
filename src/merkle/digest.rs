@@ -1,18 +1,10 @@
 use ark_crypto_primitives::sponge::Absorb;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-/// A generic fixed-size digest wrapper used in cryptographic hashing.
-///
-/// This struct represents a digest as a `[u8; N]` byte array, where `N` is the
-/// compile-time size of the digest.
-///
-/// `GenericDigest` is intended to be used as the output type for cryptographic
-/// hash functions (e.g., Blake3, Keccak).
-///
-/// # Type Parameters
-/// - `N`: The size of the digest in bytes (e.g., 32 for a 256-bit hash).
+// This is copy/ paste from https://github.com/WizardOfMenlo/whir/blob/3d627d31cec7d73a470a31a913229dd3128ee0cf/src/crypto/merkle_tree/digest.rs
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize)]
-pub struct GenericDigest<const N: usize>(pub(crate) [u8; N]);
+pub struct GenericDigest<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> Default for GenericDigest<N> {
     fn default() -> Self {

@@ -56,7 +56,7 @@ pub fn bench_rs_warp(c: &mut Criterion) {
                         let prover_state = domainsep.to_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
-                    |(mut prover_state, x_w)| {
+                    |(mut prover_state, _x_w)| {
                         let _ = hash_chain_warp
                             .prove(
                                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),

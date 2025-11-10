@@ -1,7 +1,6 @@
 use crate::domainsep::{derive_randomness, parse_statement};
 use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
 use crate::sumcheck::WARPSumcheckVerifierError;
-use crate::utils::hypercube::{BinaryHypercube, BinaryHypercubePoint};
 use crate::WARPProverError;
 use crate::{
     domainsep::{absorb_accumulated_instances, absorb_instances},
@@ -29,6 +28,7 @@ use ark_poly::{
     MultilinearExtension, Polynomial,
 };
 use ark_std::log2;
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
     BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
@@ -210,8 +210,8 @@ impl<
 
         // b. define [...]
         // c. sumcheck protocol
-        let tau_eq_evals = BinaryHypercube::new(log_l)
-            .map(|p| eq_poly(&tau, p))
+        let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
+            .map(|(index, _point)| eq_poly(&tau, index))
             .collect::<Vec<F>>();
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
@@ -242,6 +242,7 @@ impl<
             &(self.p.constraints(), omega),
             log_l,
         )?;
+        println!("gamma: {:?}", gamma);
 
         debug_assert_eq!(gamma.len(), log_l);
 
@@ -249,9 +250,7 @@ impl<
         let (f, z, zeta_0, beta_tau) = evals.get_last_evals()?;
 
         // eval the bundled r1cs
-        let beta_eq_evals = (0..M)
-            .map(|i| eq_poly(&beta_tau, BinaryHypercubePoint(i)))
-            .collect::<Vec<_>>();
+        let beta_eq_evals = (0..M).map(|i| eq_poly(&beta_tau, i)).collect::<Vec<_>>();
 
         let eta = self
             .p
@@ -329,14 +328,13 @@ impl<
 
         // l. sumcheck polynomials
         // compute evaluations for xi
-        let xi_eq_evals = (0..r)
-            .map(|i| eq_poly(&xis, BinaryHypercubePoint(i)))
-            .collect::<Vec<_>>();
+
+        let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
 
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
                 (0..n)
-                    .map(|a| eq_poly(zetas[i], BinaryHypercubePoint(a)) * xi_eq_evals[i])
+                    .map(|a| eq_poly(zetas[i], a) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -505,8 +503,7 @@ impl<
         // 4. Decision phase
         ////////////////////////
         // a. new code evaluation point
-        (&acc_instance.1[0] == &alpha_sumcheck)
-            .ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
+        (acc_instance.1[0] == alpha_sumcheck).ok_or_err(WARPVerifierError::CodeEvaluationPoint)?;
 
         // b. new circuit evaluation point
         let betas = l2_taus
@@ -653,8 +650,8 @@ impl<
 
         let tau = &beta.0[0];
 
-        let tau_zero_evader = BinaryHypercube::new(tau.len())
-            .map(|p| eq_poly(tau, p))
+        let tau_zero_evader = Hypercube::<AscendingOrder>::new(tau.len())
+            .map(|(index, _point)| eq_poly(tau, index))
             .collect::<Vec<F>>();
 
         let mut z = beta.1[0].clone();
@@ -697,7 +694,7 @@ fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
         .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
 }
 
-fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
+fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
     code: &C,
     witnesses: &[Vec<F>],
     l1: usize,
@@ -718,7 +715,7 @@ fn build_codeword_leaves<'a, F: Field, C: LinearCode<F>>(
 
 fn compute_auth_paths<P: Config>(
     td: &MerkleTree<P>,
-    indexes: &Vec<usize>,
+    indexes: &[usize],
 ) -> Result<Vec<Path<P>>, Error> {
     let paths = indexes
         .iter()
@@ -751,11 +748,11 @@ pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]
 pub mod tests {
     use std::marker::PhantomData;
 
-    use crate::merkle::blake3::Blake3MerkleTreeParams;
     use crate::{
         accumulator::AccumulationScheme,
         domainsep::WARPDomainSeparator,
         linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
+        merkle::blake3::Blake3MerkleTreeParams,
         relations::{
             r1cs::{
                 hashchain::{
@@ -844,7 +841,7 @@ pub mod tests {
                 Blake3MerkleTreeParams<BLS12_381>,
             >::warp(domainsep, warp_config.clone());
             let mut prover_state = domainsep.to_prover_state();
-            let ((acc_x, acc_w), pf) = hash_chain_warp
+            let ((acc_x, acc_w), _pf) = hash_chain_warp
                 .prove(
                     (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
                     &mut prover_state,

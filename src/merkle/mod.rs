@@ -15,9 +15,9 @@ pub struct HashCounter;
 static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl HashCounter {
-    pub(crate) fn add() -> usize {
-        HASH_COUNTER.fetch_add(1, Ordering::SeqCst)
-    }
+    // pub(crate) fn add() -> usize {
+    //     HASH_COUNTER.fetch_add(1, Ordering::SeqCst)
+    // }
 
     pub fn reset() {
         HASH_COUNTER.store(0, Ordering::SeqCst);

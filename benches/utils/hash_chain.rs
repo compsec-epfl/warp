@@ -35,11 +35,7 @@ pub fn get_hashchain_instance_witness_pairs<F: PrimeField + Absorb>(
         .map(|_| {
             let preimage = vec![F::rand(&mut rng)];
             let instance = HashChainInstance {
-                digest: compute_hash_chain::<F, CRH<_>>(
-                    &poseidon_config,
-                    &preimage,
-                    hashchain_size,
-                ),
+                digest: compute_hash_chain::<F, CRH<_>>(poseidon_config, &preimage, hashchain_size),
             };
             let witness = HashChainWitness {
                 preimage,

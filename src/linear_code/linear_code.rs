@@ -1,8 +1,9 @@
-use crate::utils::hypercube::BinaryHypercube;
 use ark_ff::Field;
 use ark_poly::DenseMultilinearExtension;
 use ark_poly::Polynomial;
 use ark_std::log2;
+use efficient_sumcheck::hypercube::Hypercube;
+use efficient_sumcheck::order_strategy::AscendingOrder;
 
 use crate::utils::poly::eq_poly;
 use crate::{relations::BundledPESAT, WARPError};
@@ -16,13 +17,13 @@ pub trait LinearCode<F: Field> {
 }
 
 pub trait MultiConstraintChecker<F: Field> {
-    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F>;
+    fn as_multilinear_extension(num_vars: usize, f: &[F]) -> DenseMultilinearExtension<F>;
 
     fn check_constraints<P: BundledPESAT<F>>(
         &self,
         constraints: &MultiConstraints<F>,
-        w: &Vec<F>,
-        f: &Vec<F>,
+        w: &[F],
+        f: &[F],
         p: &P,
     ) -> Result<(), WARPError>;
 }
@@ -47,12 +48,14 @@ impl<F: Field> MultiConstraints<F> {
         beta: (Vec<F>, Vec<F>), // (tau, x)
         eta: F,
     ) -> Self {
-        let hypercube = BinaryHypercube::new(beta.0.len());
+        let hypercube = Hypercube::<AscendingOrder>::new(beta.0.len());
         let tau = &beta.0;
 
         // TODO: multithread this
         // initialize table for eq(tau, i)
-        let tau_eq_evals = hypercube.map(|point| eq_poly(tau, point)).collect();
+        let tau_eq_evals = hypercube
+            .map(|(index, _point)| eq_poly(tau, index))
+            .collect();
 
         MultiConstraints {
             r: evaluations.len(),
@@ -65,15 +68,15 @@ impl<F: Field> MultiConstraints<F> {
 }
 
 impl<F: Field, C: LinearCode<F>> MultiConstraintChecker<F> for C {
-    fn as_multilinear_extension(num_vars: usize, f: &Vec<F>) -> DenseMultilinearExtension<F> {
+    fn as_multilinear_extension(num_vars: usize, f: &[F]) -> DenseMultilinearExtension<F> {
         DenseMultilinearExtension::from_evaluations_slice(num_vars, f)
     }
 
     fn check_constraints<P: BundledPESAT<F>>(
         &self,
         constraints: &MultiConstraints<F>,
-        w: &Vec<F>,
-        f: &Vec<F>,
+        w: &[F],
+        f: &[F],
         p: &P,
     ) -> Result<(), WARPError> {
         let mut z = constraints.beta.1.clone();

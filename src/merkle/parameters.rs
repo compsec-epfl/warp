@@ -6,14 +6,18 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 use spongefish::{
-    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
-    ProofResult, ProverState, VerifierState,
+    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator,
+    DuplexSpongeInterface, ProofError, ProofResult, ProverState, Unit, VerifierState,
 };
 use std::{hash::Hash, marker::PhantomData};
 
-use crate::utils::{DigestDomainSeparator, DigestToUnitDeserialize, DigestToUnitSerialize};
-use serde::{Deserialize, Serialize};
+use crate::utils::{
+    DigestDomainSeparator, DigestToUnitDeserialize, DigestToUnitSerialize, HintDeserialize,
+    HintSerialize,
+};
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
 ///
@@ -79,6 +83,20 @@ where
     }
 }
 
+impl<H, U, R> HintSerialize for ProverState<H, U, R>
+where
+    U: Unit,
+    H: DuplexSpongeInterface<U>,
+    R: RngCore + CryptoRng,
+{
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()> {
+        let mut bytes = Vec::new();
+        hint.serialize_compressed(&mut bytes)?;
+        self.hint_bytes(&bytes)?;
+        Ok(())
+    }
+}
+
 impl<F: Field, LeafH, CompressH, const N: usize>
     DigestToUnitDeserialize<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
     for VerifierState<'_>
@@ -91,4 +109,41 @@ where
         self.fill_next_bytes(&mut digest)?;
         Ok(digest.into())
     }
+}
+
+impl<H, U> HintDeserialize for VerifierState<'_, H, U>
+where
+    U: Unit,
+    H: DuplexSpongeInterface<U>,
+{
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T> {
+        let mut bytes = self.hint_bytes()?;
+        Ok(T::deserialize_compressed(&mut bytes)?)
+    }
+}
+
+/// Returns the `(leaf_hash_params, two_to_one_hash_params)` for any compatible Merkle tree.
+///
+/// # Type Parameters
+/// - `F`: The leaf field element type
+/// - `LeafH`: The leaf hash function
+/// - `CompressH`: The two-to-one internal hash function
+///
+/// # Panics
+/// Panics if `setup()` fails (which should not happen for deterministic hashers).
+pub fn default_config<F, LeafH, CompressH>(
+    rng: &mut impl RngCore,
+) -> (
+    <LeafH as CRHScheme>::Parameters,
+    <CompressH as TwoToOneCRHScheme>::Parameters,
+)
+where
+    F: CanonicalSerialize + Send,
+    LeafH: CRHScheme<Input = [F]> + Send,
+    CompressH: TwoToOneCRHScheme + Send,
+{
+    (
+        LeafH::setup(rng).expect("Failed to setup Leaf hash"),
+        CompressH::setup(rng).expect("Failed to setup Compress hash"),
+    )
 }

@@ -31,22 +31,6 @@ pub enum WARPSumcheckVerifierError {
     Target,
 }
 
-pub fn vsbw_reduce_evaluations<F: Field>(evals: &[F], c: F) -> Vec<F> {
-    evals.chunks(2).map(|e| e[0] + c * (e[1] - e[0])).collect()
-}
-
-pub fn vsbw_reduce_vec_evaluations<F: Field>(evals: &[Vec<F>], c: F) -> Vec<Vec<F>> {
-    evals
-        .chunks(2)
-        .map(|e| {
-            e[0].par_iter()
-                .zip(&e[1])
-                .map(|(&a, &b)| a + c * (b - a))
-                .collect()
-        })
-        .collect()
-}
-
 pub fn protogalaxy_trick<F: Field>(
     c: impl Iterator<Item = (F, F)>,
     mut q: Vec<DensePolynomial<F>>,

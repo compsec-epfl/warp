@@ -1,36 +1,60 @@
-use std::{borrow::Borrow, marker::PhantomData};
-
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::{Config as MerkleConfig, IdentityDigestConverter},
+    sponge::Absorb,
     Error,
 };
+use ark_ff::{Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use ark_std::{borrow::Borrow, marker::PhantomData, rand::RngCore};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{digest::GenericDigest, parameters::MerkleTreeParams, HashCounter};
+use crate::merkle::{digest::GenericDigest, parameters::MerkleTreeParams};
 
-/// Digest type used in Blake3-based Merkle trees.
-///
-/// Alias for a 32-byte generic digest.
-pub type Blake3Digest = GenericDigest<32>;
+#[derive(Clone)]
+pub struct Blake3MerkleConfig<F: PrimeField> {
+    _field: PhantomData<F>,
+}
 
-/// Merkle tree configuration using Blake3 as both leaf and node hasher.
 pub type Blake3MerkleTreeParams<F> =
-    MerkleTreeParams<F, Blake3LeafHash<F>, Blake3Compress, Blake3Digest>;
+    MerkleTreeParams<F, Blake3CRHScheme<F>, Blake3TwoToOneCRHScheme, GenericDigest<32>>;
 
-/// Leaf hash function using Blake3 over compressed `[F]` input.
-///
-/// This struct implements `CRHScheme` where the input is a slice of
-/// canonical-serializable field elements `[F]`, and the output is a
-/// 32-byte Blake3 digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Blake3LeafHash<F>(#[serde(skip)] PhantomData<F>);
+impl<F: PrimeField + Absorb> MerkleConfig for Blake3MerkleConfig<F> {
+    type Leaf = [F];
+    type LeafDigest = <Self::LeafHash as CRHScheme>::Output;
+    type LeafInnerDigestConverter = IdentityDigestConverter<Self::LeafDigest>;
+    type InnerDigest = <Self::TwoToOneHash as TwoToOneCRHScheme>::Output;
+    type LeafHash = Blake3CRHScheme<F>;
+    type TwoToOneHash = Blake3TwoToOneCRHScheme;
+}
 
-impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
+#[derive(Clone)]
+pub struct Blake3CRHScheme<F: Field> {
+    _f: PhantomData<F>,
+}
+
+#[derive(Debug, Default)]
+pub struct HashCounter;
+
+static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+impl HashCounter {
+    pub(crate) fn add() -> usize {
+        HASH_COUNTER.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn reset() {
+        HASH_COUNTER.store(0, Ordering::SeqCst);
+    }
+
+    pub fn get() -> usize {
+        HASH_COUNTER.load(Ordering::SeqCst)
+    }
+}
+
+impl<F: Field> CRHScheme for Blake3CRHScheme<F> {
     type Input = [F];
-    type Output = Blake3Digest;
+    type Output = GenericDigest<32>;
     type Parameters = ();
 
     fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, Error> {
@@ -50,16 +74,12 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
     }
 }
 
-/// Node compression function using Blake3 over two 32-byte digests.
-///
-/// This struct implements `TwoToOneCRHScheme`, combining two digests
-/// by concatenation and hashing with Blake3.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Blake3Compress;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Blake3TwoToOneCRHScheme;
 
-impl TwoToOneCRHScheme for Blake3Compress {
-    type Input = Blake3Digest;
-    type Output = Blake3Digest;
+impl TwoToOneCRHScheme for Blake3TwoToOneCRHScheme {
+    type Input = GenericDigest<32>;
+    type Output = GenericDigest<32>;
     type Parameters = ();
 
     fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, Error> {
@@ -83,5 +103,35 @@ impl TwoToOneCRHScheme for Blake3Compress {
         right_input: T,
     ) -> Result<Self::Output, Error> {
         Self::evaluate(parameters, left_input, right_input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Blake3MerkleConfig;
+    use ark_bls12_381::Fr as BLS12_381;
+    use ark_crypto_primitives::merkle_tree::MerkleTree;
+
+    #[test]
+    fn blake3_merkle_example_usage() {
+        // create some leaves
+        let leaf0: Vec<BLS12_381> = vec![BLS12_381::from(1u64), BLS12_381::from(2u64)];
+        let leaf1: Vec<BLS12_381> = vec![BLS12_381::from(3u64), BLS12_381::from(4u64)];
+        let leaves: Vec<&[BLS12_381]> = vec![&leaf0, &leaf1];
+
+        // build Merkle tree
+        let mt = MerkleTree::<Blake3MerkleConfig<BLS12_381>>::new(&(), &(), &leaves).unwrap();
+
+        // get proofs
+        let proof0 = mt.generate_proof(0).unwrap();
+        let proof1 = mt.generate_proof(1).unwrap();
+
+        // verify proofs for valid leaves
+        assert!(proof0.verify(&(), &(), &mt.root(), leaf0.clone()).unwrap());
+        assert!(proof1.verify(&(), &(), &mt.root(), leaf1.clone()).unwrap());
+
+        // verify proofs are not valid for other leaves
+        assert!(!proof0.verify(&(), &(), &mt.root(), leaf1).unwrap());
+        assert!(!proof1.verify(&(), &(), &mt.root(), leaf0).unwrap());
     }
 }

@@ -1,9 +1,9 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::ProofResult;
 
 pub mod errs;
-pub mod hypercube;
 pub mod poly;
 pub mod poseidon;
 
@@ -28,7 +28,7 @@ pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
         .collect()
 }
 
-pub fn concat_slices<F: Clone>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
+pub fn concat_slices<F: Clone>(a: &[F], b: &[F]) -> Vec<F> {
     let mut v = Vec::<F>::with_capacity(a.len() + b.len());
     v.extend_from_slice(a);
     v.extend_from_slice(b);
@@ -51,4 +51,13 @@ pub trait DigestToUnitSerialize<MerkleConfig: Config> {
 // from whir
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}
+
+// from whir
+pub trait HintSerialize {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+}
+// from whir
+pub trait HintDeserialize {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
 }

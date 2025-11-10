@@ -73,12 +73,12 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::relations::ToPolySystem;
-    use crate::utils::hypercube::BinaryHypercube;
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
     use ark_ec::AdditiveGroup;
     use ark_ff::UniformRand;
     use ark_std::{marker::PhantomData, test_rng};
+    use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
     use crate::{
         merkle::poseidon::{
@@ -93,17 +93,19 @@ pub(crate) mod tests {
         },
     };
 
+    pub type TestMerkleTree<F, MC, MG> = (
+        MerkleInclusionConfig<F, MC, MG>,
+        Vec<Vec<F>>,
+        MerkleTree<MC>,
+    );
+
     pub fn get_test_merkle_tree(
         height: usize,
-    ) -> (
-        MerkleInclusionConfig<
-            BLS12_381,
-            PoseidonMerkleConfig<BLS12_381>,
-            PoseidonMerkleConfigGadget<BLS12_381>,
-        >,
-        Vec<Vec<BLS12_381>>,
-        MerkleTree<PoseidonMerkleConfig<BLS12_381>>,
-    ) {
+    ) -> TestMerkleTree<
+        BLS12_381,
+        PoseidonMerkleConfig<BLS12_381>,
+        PoseidonMerkleConfigGadget<BLS12_381>,
+    > {
         let leaf_len = 2;
         let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
         let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
@@ -172,16 +174,16 @@ pub(crate) mod tests {
             z.extend(relation.w);
 
             // assert p_i(z) == 0
-            for p in BinaryHypercube::new(r1cs.log_m) {
-                let eval = r1cs.eval_p_i(&z, &p).unwrap();
+            for (index, _point) in Hypercube::<AscendingOrder>::new(r1cs.log_m) {
+                let eval = r1cs.eval_p_i(&z, index).unwrap();
                 assert_eq!(BLS12_381::ZERO, eval);
             }
 
             // change z to incorrect assignment
             z[10] = BLS12_381::from(42);
             let mut is_0 = true;
-            for p in BinaryHypercube::new(r1cs.log_m) {
-                let eval = r1cs.eval_p_i(&z, &p).unwrap();
+            for (index, _point) in Hypercube::<AscendingOrder>::new(r1cs.log_m) {
+                let eval = r1cs.eval_p_i(&z, index).unwrap();
                 if eval != BLS12_381::ZERO {
                     is_0 = false;
                     break;

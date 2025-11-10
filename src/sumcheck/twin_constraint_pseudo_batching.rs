@@ -1,5 +1,6 @@
 use ark_ff::{Field, Zero};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
+use efficient_sumcheck::multilinear::reductions::{pairwise, tablewise};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
@@ -7,7 +8,7 @@ use spongefish::codecs::arkworks_algebra::{
 
 use crate::{
     relations::r1cs::R1CSConstraints,
-    sumcheck::{protogalaxy_trick, vsbw_reduce_evaluations, vsbw_reduce_vec_evaluations, Sumcheck},
+    sumcheck::{protogalaxy_trick, Sumcheck},
     utils::errs::WARPProverError,
 };
 
@@ -21,6 +22,8 @@ pub struct Evals<F> {
     pub tau: Vec<F>,
 }
 
+pub type EvalTuple<F> = (Vec<F>, Vec<F>, Vec<F>, Vec<F>);
+
 impl<F> Evals<F> {
     pub fn new(
         u: Vec<Vec<F>>,
@@ -32,7 +35,7 @@ impl<F> Evals<F> {
         Self { u, z, a, b, tau }
     }
 
-    pub fn get_last_evals(&mut self) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), WARPProverError> {
+    pub fn get_last_evals(&mut self) -> Result<EvalTuple<F>, WARPProverError> {
         let z = self.z.pop().ok_or(WARPProverError::EmptyEval)?;
         let beta_tau = self.b.pop().ok_or(WARPProverError::EmptyEval)?;
         let u = self.u.pop().ok_or(WARPProverError::EmptyEval)?;
@@ -96,11 +99,11 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
         // get challenge
         let [c] = prover_state.challenge_scalars::<1>()?;
         // update evaluation tables
-        *u = vsbw_reduce_vec_evaluations(u, c);
-        *z = vsbw_reduce_vec_evaluations(z, c);
-        *a = vsbw_reduce_vec_evaluations(a, c);
-        *b = vsbw_reduce_vec_evaluations(b, c);
-        *tau = vsbw_reduce_evaluations(tau, c);
+        tablewise::reduce_evaluations(u, c);
+        tablewise::reduce_evaluations(z, c);
+        tablewise::reduce_evaluations(a, c);
+        tablewise::reduce_evaluations(b, c);
+        pairwise::reduce_evaluations(tau, c);
         Ok(c)
     }
 
