@@ -14,8 +14,6 @@ use crate::{
     relations::BundledPESAT,
     utils::{DigestDomainSeparator, DigestToUnitSerialize},
 };
-use spongefish::codecs::arkworks_algebra::FieldToUnitSerialize;
-use spongefish::{codecs::arkworks_algebra::UnitToField, ProofError, ProverState, UnitToBytes};
 
 use crate::accumulator::warp::config::WARPConfig;
 

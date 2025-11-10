@@ -739,8 +739,8 @@ fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) 
 }
 
 pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
-    BinaryHypercube::new(num_variables)
-        .map(|p| eq_poly(point, p))
+    Hypercube::<AscendingOrder>::new(num_variables)
+        .map(|p| eq_poly(point, p.0))
         .collect::<Vec<F>>()
 }
 
