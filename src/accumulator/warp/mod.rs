@@ -242,7 +242,6 @@ impl<
             &(self.p.constraints(), omega),
             log_l,
         )?;
-        println!("gamma: {:?}", gamma);
 
         debug_assert_eq!(gamma.len(), log_l);
 
