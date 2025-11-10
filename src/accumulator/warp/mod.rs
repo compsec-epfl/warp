@@ -1,3 +1,4 @@
+use crate::domainsep::{derive_randomness, parse_statement};
 use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
 use crate::sumcheck::WARPSumcheckVerifierError;
 use crate::WARPProverError;
@@ -421,109 +422,49 @@ impl<
         let log_n = log2(n) as usize;
 
         // f. absorb parameters
-        let mut l1_xs = vec![vec![F::default(); N - k]; l1];
-        l1_xs
-            .iter_mut()
-            .try_for_each(|inst| verifier_state.fill_next_scalars(inst))?;
-
-        // l2 instances
-        let l2_roots = (0..l2)
-            .map(|_| verifier_state.read_digest())
-            .collect::<Result<Vec<MT::InnerDigest>, ProofError>>()?;
-
-        let mut l2_alphas = vec![vec![F::default(); log_n]; l2];
-        l2_alphas
-            .iter_mut()
-            .try_for_each(|alpha| verifier_state.fill_next_scalars(alpha))?;
-
-        let mut l2_mus = vec![F::default(); l2];
-        verifier_state.fill_next_scalars(&mut l2_mus)?;
-
-        let mut l2_taus = vec![vec![F::default(); log_M]; l2];
-        l2_taus
-            .iter_mut()
-            .try_for_each(|tau| verifier_state.fill_next_scalars(tau))?;
-
-        let mut l2_xs = vec![vec![F::default(); N - k]; l2];
-        l2_xs
-            .iter_mut()
-            .try_for_each(|x| verifier_state.fill_next_scalars(x))?;
-
-        let mut l2_etas = vec![F::default(); l2];
-        verifier_state.fill_next_scalars(&mut l2_etas)?;
+        let (l1_xs, (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas)) =
+            parse_statement(verifier_state, l1, l2, N - k, log_n, log_M)?;
 
         ////////////////////////
         // 2. Derive randomness
         ////////////////////////
-        let rt_0 = verifier_state.read_digest()?;
-        let mut l1_mus = vec![F::default(); l1];
-        verifier_state.fill_next_scalars(&mut l1_mus)?;
+        let (
+            rt_0,
+            l1_mus,
+            l1_taus,
+            omega,
+            tau,
+            gamma_sumcheck,
+            coeffs_twinc_sumcheck,
+            td,
+            eta,
+            mut nus,
+            ood_samples,
+            bytes_shift_queries,
+            xi,
+            alpha_sumcheck,
+            sums_batching_sumcheck,
+        ) = derive_randomness(
+            verifier_state,
+            l1,
+            log_n,
+            log_l,
+            self.config.s,
+            self.config.t,
+            log_M,
+        )?;
 
-        let mut l1_taus = vec![vec![F::default(); log_M]; l1];
-
-        for l1_tau in l1_taus.iter_mut().take(l1) {
-            let mut tau_i = vec![F::default(); log_M];
-            verifier_state.fill_challenge_scalars(&mut tau_i)?;
-            *l1_tau = tau_i; // bundled evaluations
-        }
-
-        let [omega] = verifier_state.challenge_scalars::<1>()?;
-        let mut tau = vec![F::default(); log_l];
-        verifier_state.fill_challenge_scalars(&mut tau)?;
-
-        // e. twin constraints sumcheck
-        let mut gamma_sumcheck = Vec::new();
-        let mut coeffs_twinc_sumcheck = Vec::new();
-        for _ in 0..log_l {
-            let mut h_coeffs = vec![F::zero(); 2 + (log_n + 1).max(log_M + 2) as usize];
-            verifier_state.fill_next_scalars(&mut h_coeffs)?;
-            let [c] = verifier_state.challenge_scalars::<1>()?;
-            gamma_sumcheck.push(c);
-            coeffs_twinc_sumcheck.push(h_coeffs);
-        }
-
-        let _td = verifier_state.read_digest();
-        let [eta, nu_0] = verifier_state.next_scalars::<2>()?;
-        let mut nus = vec![nu_0];
-
-        // g. ood samples
-        let n_ood_samples = self.config.s * log_n;
-        let mut ood_samples = vec![F::default(); n_ood_samples];
-        verifier_state.fill_challenge_scalars(&mut ood_samples)?;
-        let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
-
-        // h. ood answers
-        let mut ood_answers = vec![F::default(); self.config.s];
-        verifier_state.fill_next_scalars(&mut ood_answers)?;
-        nus.extend(ood_answers);
-
-        // i. shift queries and zero check
         let r = 1 + self.config.s + self.config.t;
         let log_r = log2(r) as usize;
-        let n_shift_queries = (self.config.t * log_n).div_ceil(8);
-        let mut bytes_shift_queries = vec![0u8; n_shift_queries];
-        let mut xi = vec![F::default(); log_r];
-        verifier_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
-        verifier_state.fill_challenge_scalars(&mut xi)?;
-
-        // j. batching sumcheck
-        let mut alpha_sumcheck = Vec::new();
-        let mut sums_batching_sumcheck = Vec::new();
-        for _ in 0..log_n {
-            let [sum_00, sum_11, sum_0110]: [F; 3] = verifier_state.next_scalars()?;
-            let [c] = verifier_state.challenge_scalars::<1>()?;
-            alpha_sumcheck.push(c);
-            sums_batching_sumcheck.push([sum_00, sum_11, sum_0110]);
-        }
 
         ////////////////////////
         // 3. Derive values
         ////////////////////////
         // b.
         let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
-        let gamma_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
-            .map(|(index, _point)| eq_poly(&gamma_sumcheck, index))
-            .collect::<Vec<F>>();
+
+        let gamma_eq_evals = compute_hypercube_evaluations(log_l, &gamma_sumcheck);
+
         let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
         // compute \eta_{s + k}
@@ -540,9 +481,8 @@ impl<
 
         // d. set \sigma^{(1)} and \sigma^{(2)}
         // compute eq(\tau, i) and eq(\xi, i)
-        let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
-            .map(|(index, _point)| eq_poly(&tau, index))
-            .collect::<Vec<F>>();
+        let tau_eq_evals = compute_hypercube_evaluations(log_l, &tau);
+
         let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
 
         let sigma_1 = tau_eq_evals
@@ -552,9 +492,7 @@ impl<
                 acc + eq_tau * (mu + omega * eta)
             });
 
-        let xi_eq_evals = Hypercube::<AscendingOrder>::new(log_r)
-            .map(|(index, _point)| eq_poly(&xi, index))
-            .collect::<Vec<F>>();
+        let xi_eq_evals = compute_hypercube_evaluations(log_r, &xi);
 
         let sigma_2 = xi_eq_evals
             .iter()
@@ -579,16 +517,7 @@ impl<
         // c. check auth paths
         let binary_shift_queries = bytes_shift_queries
             .iter()
-            .flat_map(|x| {
-                // TODO factor out
-                (0..8)
-                    .map(|i| {
-                        let val = (x >> i) & 1 == 1;
-                        // return in field element and in binary
-                        F::from(val)
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(byte_to_binary_field_array)
             .take(self.config.t * log_n)
             .collect::<Vec<F>>();
 
@@ -596,11 +525,7 @@ impl<
 
         let shift_queries_indexes: Vec<usize> = binary_shift_queries
             .iter()
-            .map(|vals| {
-                vals.iter()
-                    .rev()
-                    .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
-            })
+            .map(|vals| binary_field_elements_to_usize(vals))
             .collect();
 
         // check:
@@ -676,6 +601,7 @@ impl<
 
         zeta_eqs.extend(
             ood_samples
+                .chunks(log_n)
                 .into_iter()
                 .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
                 .collect::<Vec<F>>(),
@@ -810,6 +736,12 @@ fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) 
         *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
     }
     id_non_0_eval_sums
+}
+
+pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
+    BinaryHypercube::new(num_variables)
+        .map(|p| eq_poly(point, p))
+        .collect::<Vec<F>>()
 }
 
 #[cfg(test)]
