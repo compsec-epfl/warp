@@ -19,12 +19,6 @@ where
 }
 
 #[derive(MontConfig)]
-#[modulus = "21888242871839275222246405745257275088548364400416034343698204186575808495617"]
-#[generator = "5"]
-pub struct BN254Config;
-pub type Field256 = Fp256<MontBackend<BN254Config, 4>>;
-
-#[derive(MontConfig)]
 #[modulus = "3801539170989320091464968600173246866371124347557388484609"]
 #[generator = "3"]
 pub struct FConfig192;
