@@ -1,18 +1,6 @@
 // from whir
 // https://github.com/WizardOfMenlo/whir/blob/main/src/crypto/fields.rs
-use ark_ff::{Fp128, Fp192, Fp2, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig, MontFp};
-
-#[derive(MontConfig)]
-#[modulus = "3801539170989320091464968600173246866371124347557388484609"]
-#[generator = "3"]
-pub struct FConfig192;
-pub type Field192 = Fp192<MontBackend<FConfig192, 3>>;
-
-#[derive(MontConfig)]
-#[modulus = "340282366920938463463374557953744961537"]
-#[generator = "3"]
-pub struct FrConfig128;
-pub type Field128 = Fp128<MontBackend<FrConfig128, 2>>;
+use ark_ff::{Fp2, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig, MontFp};
 
 #[derive(MontConfig)]
 #[modulus = "18446744069414584321"]
