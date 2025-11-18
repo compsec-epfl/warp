@@ -1,22 +1,6 @@
 // from whir
 // https://github.com/WizardOfMenlo/whir/blob/main/src/crypto/fields.rs
-use ark_ff::{
-    Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig,
-    MontFp, PrimeField,
-};
-
-pub trait FieldWithSize {
-    fn field_size_in_bits() -> usize;
-}
-
-impl<F> FieldWithSize for F
-where
-    F: Field,
-{
-    fn field_size_in_bits() -> usize {
-        F::BasePrimeField::MODULUS_BIT_SIZE as usize * F::extension_degree() as usize
-    }
-}
+use ark_ff::{Fp128, Fp192, Fp2, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig, MontFp};
 
 #[derive(MontConfig)]
 #[modulus = "3801539170989320091464968600173246866371124347557388484609"]
