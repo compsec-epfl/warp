@@ -3,7 +3,6 @@ pub mod tests;
 
 pub mod accumulator;
 pub mod domainsep;
-pub mod fields;
 pub mod merkle;
 pub mod relations;
 pub mod sumcheck;

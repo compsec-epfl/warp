@@ -2,6 +2,7 @@ use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::reed_solomon::config::ReedSolomonConfig;
 use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
+use ark_goldilocks::fields::fp::Fp as Field64;
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_domain_sep;
@@ -9,7 +10,6 @@ use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs
 use warp::accumulator::warp::config::WARPConfig;
 use warp::accumulator::warp::WARP;
 use warp::accumulator::AccumulationScheme;
-use warp::fields::Field64;
 use warp::merkle::blake3::Blake3MerkleTreeParams;
 
 mod utils;

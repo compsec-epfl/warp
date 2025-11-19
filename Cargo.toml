@@ -26,6 +26,7 @@ efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck
 thiserror = "2.0.16"
 zeroize = { version = "1.5", features = ["derive"] }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
+ark-goldilocks = { git = "https://github.com/dmpierre/ark-goldilocks.git" }
 
 
 [dev-dependencies]
