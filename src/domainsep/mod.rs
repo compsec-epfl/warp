@@ -1,3 +1,4 @@
+use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use ark_std::log2;
@@ -10,7 +11,6 @@ use spongefish::{BytesToUnitDeserialize, VerifierState};
 
 use crate::utils::DigestToUnitDeserialize;
 use crate::{
-    linear_code::LinearCode,
     relations::BundledPESAT,
     utils::{DigestDomainSeparator, DigestToUnitSerialize},
 };

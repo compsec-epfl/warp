@@ -1,4 +1,5 @@
 use crate::domainsep::{derive_randomness, parse_statement};
+use crate::relations::BundledPESAT;
 use crate::sumcheck::multilinear_constraint_batching::UsizeMap;
 use crate::sumcheck::WARPSumcheckVerifierError;
 use crate::WARPProverError;
@@ -17,6 +18,7 @@ use crate::{
     },
     WARPDeciderError, WARPError, WARPVerifierError,
 };
+use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
@@ -35,8 +37,6 @@ use spongefish::{
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
-
-use crate::{linear_code::LinearCode, relations::BundledPESAT};
 
 pub mod config;
 mod traits;
@@ -745,12 +745,9 @@ pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]
 
 #[cfg(test)]
 pub mod tests {
-    use std::marker::PhantomData;
-
     use crate::{
         accumulator::AccumulationScheme,
         domainsep::WARPDomainSeparator,
-        linear_code::{LinearCode, ReedSolomon, ReedSolomonConfig},
         merkle::blake3::Blake3MerkleTreeParams,
         relations::{
             r1cs::{
@@ -764,10 +761,15 @@ pub mod tests {
         utils::poseidon,
     };
     use ark_bls12_381::Fr as BLS12_381;
+    use ark_codes::{
+        reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
+        traits::LinearCode,
+    };
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
     use ark_ff::UniformRand;
     use rand::thread_rng;
     use spongefish::DomainSeparator;
+    use std::marker::PhantomData;
 
     use super::{WARPConfig, WARP};
 

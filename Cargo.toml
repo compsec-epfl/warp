@@ -23,9 +23,9 @@ serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", branch = "main" }
 spongefish-poseidon = { git = "https://github.com/arkworks-rs/spongefish", package = "spongefish-poseidon", branch = "main", features = ["bls12-381"] }
 efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
-#efficient-sumcheck = { path = "../space-efficient-sumcheck" }
 thiserror = "2.0.16"
 zeroize = { version = "1.5", features = ["derive"] }
+ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 
 
 [dev-dependencies]
