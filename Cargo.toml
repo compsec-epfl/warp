@@ -28,6 +28,8 @@ zeroize = { version = "1.5", features = ["derive"] }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 ark-goldilocks = { git = "https://github.com/dmpierre/ark-goldilocks.git" }
 
+[patch.crates-io]
+ark-crypto-primitives = { git = "https://github.com/dmpierre/crypto-primitives.git", branch = "dev/blake3" }
 
 [dev-dependencies]
 ark-bls12-381 = "0.5.0"
