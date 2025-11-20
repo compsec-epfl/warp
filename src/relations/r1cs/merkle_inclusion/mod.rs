@@ -72,7 +72,7 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::relations::ToPolySystem;
+    use crate::{relations::ToPolySystem, utils::poseidon::initialize_poseidon_config};
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::{merkle_tree::MerkleTree, sponge::poseidon::PoseidonConfig};
     use ark_ec::AdditiveGroup;
@@ -81,9 +81,7 @@ pub(crate) mod tests {
     use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
     use crate::{
-        merkle::poseidon::{
-            poseidon_test_params, PoseidonMerkleConfig, PoseidonMerkleConfigGadget,
-        },
+        crypto::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
         relations::{
             r1cs::merkle_inclusion::{
                 MerkleInclusionConfig, MerkleInclusionInstance, MerkleInclusionRelation,
@@ -107,8 +105,8 @@ pub(crate) mod tests {
         PoseidonMerkleConfigGadget<BLS12_381>,
     > {
         let leaf_len = 2;
-        let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let leaf_hash_param: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
+        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
         let config = MerkleInclusionConfig::<
             BLS12_381,
             PoseidonMerkleConfig<BLS12_381>,

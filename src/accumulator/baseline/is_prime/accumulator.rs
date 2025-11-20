@@ -147,14 +147,13 @@ mod tests {
     use ark_std::marker::PhantomData;
     use ark_std::rand::rngs::OsRng;
 
+    use crate::utils::poseidon::initialize_poseidon_config;
     use crate::{
         accumulator::{
             baseline::is_prime::{IsPrimeRelationAccumulator, IsPrimeRelationAccumulatorConfig},
             RelationAccumulator,
         },
-        merkle::poseidon::{
-            poseidon_test_params, PoseidonMerkleConfig, PoseidonMerkleConfigGadget,
-        },
+        crypto::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
         relations::{
             r1cs::{IsPrimeInstance, IsPrimeRelation, IsPrimeWitness, PrattCertificate},
             Relation,
@@ -217,8 +216,8 @@ mod tests {
             PoseidonMerkleConfig<BLS12_381>,
             BLS12_381_PAIRING,
         > {
-            leaf_hash_param: poseidon_test_params(),
-            two_to_one_hash_param: poseidon_test_params(),
+            leaf_hash_param: initialize_poseidon_config(),
+            two_to_one_hash_param: initialize_poseidon_config(),
             proving_key: pk,
             prepared_vk: pvk,
             _merkle_config: PhantomData,

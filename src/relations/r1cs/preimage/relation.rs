@@ -119,9 +119,11 @@ mod tests {
     use ark_ff::{UniformRand, Zero};
     use ark_std::{marker::PhantomData, test_rng};
 
-    use crate::merkle::poseidon::poseidon_test_params;
-    use crate::relations::r1cs::preimage::{PreimageInstance, PreimageRelation, PreimageWitness};
     use crate::relations::Relation;
+    use crate::{
+        relations::r1cs::preimage::{PreimageInstance, PreimageRelation, PreimageWitness},
+        utils::poseidon::initialize_poseidon_config,
+    };
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
@@ -129,7 +131,7 @@ mod tests {
     #[test]
     fn sanity_0() {
         let mut rng = test_rng();
-        let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let parameters: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
 
         let preimage: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
         let digest = TestCRHScheme::evaluate(&parameters, preimage.clone()).unwrap();
@@ -148,7 +150,7 @@ mod tests {
     #[test]
     fn sanity_1() {
         let mut rng = test_rng();
-        let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let parameters: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
 
         let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
         let preimage_1: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
@@ -172,18 +174,21 @@ mod tests {
             _crhs_scheme: PhantomData,
         };
         let zero_instance = PreimageInstance::<BLS12_381> {
-            digest: TestCRHScheme::evaluate(&poseidon_test_params(), zero_witness.preimage.clone())
-                .unwrap(),
+            digest: TestCRHScheme::evaluate(
+                &initialize_poseidon_config(),
+                zero_witness.preimage.clone(),
+            )
+            .unwrap(),
         };
         let relation = PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
             zero_instance,
             zero_witness,
-            poseidon_test_params(),
+            initialize_poseidon_config(),
         );
         assert!(relation.verify());
         let description: Vec<u8> =
             PreimageRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::description(
-                &poseidon_test_params(),
+                &initialize_poseidon_config(),
             );
         let description_hash = blake3::hash(&description).to_hex();
         assert_eq!(

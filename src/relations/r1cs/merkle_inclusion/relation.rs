@@ -146,9 +146,7 @@ mod tests {
     use ark_std::marker::PhantomData;
 
     use crate::{
-        merkle::poseidon::{
-            poseidon_test_params, PoseidonMerkleConfig, PoseidonMerkleConfigGadget,
-        },
+        crypto::merkle::poseidon::{PoseidonMerkleConfig, PoseidonMerkleConfigGadget},
         relations::{
             r1cs::merkle_inclusion::{
                 MerkleInclusionConfig, MerkleInclusionInstance, MerkleInclusionRelation,
@@ -156,6 +154,7 @@ mod tests {
             },
             Relation,
         },
+        utils::poseidon::initialize_poseidon_config,
     };
 
     #[test]
@@ -169,8 +168,8 @@ mod tests {
         let leaves: Vec<&[BLS12_381]> = vec![&leaf0, &leaf1];
 
         // Commit to the Merkle tree
-        let leaf_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
-        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let leaf_hash_param: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
+        let two_to_one_hash_param: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
 
         let mt = MerkleTree::<PoseidonMerkleConfig<BLS12_381>>::new(
             &leaf_hash_param,

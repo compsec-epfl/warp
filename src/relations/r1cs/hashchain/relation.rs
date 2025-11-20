@@ -136,7 +136,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::relations::r1cs::hashchain::{relation::compute_hash_chain, HashChainInstance};
+    use crate::{
+        relations::r1cs::hashchain::{relation::compute_hash_chain, HashChainInstance},
+        utils::poseidon::initialize_poseidon_config,
+    };
     use ark_bls12_381::Fr as BLS12_381;
     use ark_crypto_primitives::crh::{
         poseidon::{constraints::CRHGadget, CRH},
@@ -147,10 +150,8 @@ mod tests {
     use ark_std::{marker::PhantomData, test_rng};
 
     use crate::relations::r1cs::hashchain::relation::HashChainRelation;
+    use crate::relations::r1cs::hashchain::HashChainWitness;
     use crate::relations::Relation;
-    use crate::{
-        merkle::poseidon::poseidon_test_params, relations::r1cs::hashchain::HashChainWitness,
-    };
 
     type TestCRHScheme = CRH<BLS12_381>;
     type TestCRHSchemeGadget = CRHGadget<BLS12_381>;
@@ -159,7 +160,7 @@ mod tests {
     fn sanity_0() {
         let hash_chain_size = 10;
         let mut rng = test_rng();
-        let parameters: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let parameters: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
         let preimage: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
 
         let digest =
@@ -180,7 +181,7 @@ mod tests {
     fn sanity_1() {
         let hash_chain_size = 10;
         let mut rng = test_rng();
-        let params: PoseidonConfig<BLS12_381> = poseidon_test_params();
+        let params: PoseidonConfig<BLS12_381> = initialize_poseidon_config();
 
         let preimage_0: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
         let preimage_1: Vec<BLS12_381> = vec![BLS12_381::rand(&mut rng), BLS12_381::rand(&mut rng)];
@@ -207,18 +208,21 @@ mod tests {
         };
 
         let zero_instance = HashChainInstance::<BLS12_381> {
-            digest: TestCRHScheme::evaluate(&poseidon_test_params(), zero_witness.preimage.clone())
-                .unwrap(),
+            digest: TestCRHScheme::evaluate(
+                &initialize_poseidon_config(),
+                zero_witness.preimage.clone(),
+            )
+            .unwrap(),
         };
         let relation = HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::new(
             zero_instance,
             zero_witness,
-            (poseidon_test_params(), hash_chain_size),
+            (initialize_poseidon_config(), hash_chain_size),
         );
         assert!(relation.verify());
         let description: Vec<u8> =
             HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::description(&(
-                poseidon_test_params(),
+                initialize_poseidon_config(),
                 hash_chain_size,
             ));
         let description_hash = blake3::hash(&description).to_hex();

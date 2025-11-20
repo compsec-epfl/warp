@@ -1,6 +1,5 @@
 mod accumulator_trait;
 pub mod baseline; // TODO(z-tech): baseline behind test flag or later deleted?
-pub mod warp;
 pub use crate::accumulator::accumulator_trait::RelationAccumulator;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;

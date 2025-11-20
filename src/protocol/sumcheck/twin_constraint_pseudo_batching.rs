@@ -6,11 +6,9 @@ use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
 
-use crate::{
-    relations::r1cs::R1CSConstraints,
-    sumcheck::{protogalaxy_trick, Sumcheck},
-    utils::errs::WARPProverError,
-};
+use crate::{relations::r1cs::R1CSConstraints, utils::errs::WARPProverError};
+
+use super::{protogalaxy_trick, Sumcheck};
 
 use super::{WARPSumcheckProverError, WARPSumcheckVerifierError};
 

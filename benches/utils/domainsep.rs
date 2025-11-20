@@ -2,9 +2,9 @@ use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use spongefish::{DomainSeparator, Unit};
-use warp::{
-    accumulator::warp::config::WARPConfig, domainsep::WARPDomainSeparator, relations::BundledPESAT,
-};
+use warp::config::WARPConfig;
+use warp::protocol::domainsep::WARPDomainSeparator;
+use warp::relations::BundledPESAT;
 
 pub fn init_domain_sep<
     F: Field + Unit,

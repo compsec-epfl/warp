@@ -1,4 +1,4 @@
-use crate::sumcheck::{WARPSumcheckProverError, WARPSumcheckVerifierError};
+use crate::protocol::sumcheck::{WARPSumcheckProverError, WARPSumcheckVerifierError};
 use ark_crypto_primitives::Error;
 use thiserror::Error;
 
