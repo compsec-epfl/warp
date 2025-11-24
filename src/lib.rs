@@ -38,6 +38,7 @@ pub mod tests;
 
 pub mod accumulator;
 pub mod config;
+pub mod constraints;
 pub mod crypto;
 pub mod protocol;
 pub mod relations;
@@ -730,16 +731,17 @@ impl<
         acc_witness: Self::AccumulatorWitnesses,
         acc_instance: Self::AccumulatorInstances,
     ) -> Result<(), WARPError> {
-        let (_td, f, w) = acc_witness;
+        let (mt, f, w) = acc_witness;
         let (rt, alpha, mu, beta, eta) = acc_instance;
 
-        let computed_td = MerkleTree::<MT>::new(
+        let computed_mt = MerkleTree::<MT>::new(
             &self.mt_leaf_hash_params,
             &self.mt_two_to_one_hash_params,
             f[0].chunks(1).collect::<Vec<_>>(),
         )?;
-        (rt[0] == computed_td.root()).ok_or_err(WARPDeciderError::MerkleRoot)?;
-        // TODO? assert_err[0], computed_td);
+        (rt[0] == computed_mt.root()).ok_or_err(WARPDeciderError::MerkleRoot)?;
+        (mt[0].root() == computed_mt.root()).ok_or_err(WARPDeciderError::MerkleTrapDoor)?;
+        (mt[0].leaf_nodes == computed_mt.leaf_nodes).ok_or_err(WARPDeciderError::MerkleRoot)?;
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.code.code_len()) as usize,

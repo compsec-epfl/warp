@@ -42,6 +42,8 @@ pub enum WARPVerifierError {
 pub enum WARPDeciderError {
     #[error("Invalid merkle root")]
     MerkleRoot,
+    #[error("Invalid merkle trapdoor")]
+    MerkleTrapDoor,
     #[error("Invalid multilinear extension evaluation")]
     MLExtensionEvaluation,
     #[error("Invalid bundled evaluation")]
