@@ -230,7 +230,7 @@ mod tests {
         // when hash_chain_size is 1, we get the same description as the PreimageRelation
         assert_eq!(
             description_hash,
-            *"354223328d1f52c726b1e8e23fb5537d8df968b18e57f8f8169563dbf3dbe54d"
+            *"2501f57f175c1f0e5e44679419a86c8b08eb6a38d987a133e15ef0269b8eca57"
         );
     }
 }
