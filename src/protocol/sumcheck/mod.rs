@@ -1,10 +1,14 @@
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
+use multilinear_constraint_batching::UsizeMap;
 use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
 };
 use thiserror::Error;
+
+use crate::utils::poly::eq_poly;
 
 pub mod multilinear_constraint_batching;
 pub mod twin_constraint_pseudo_batching;
@@ -46,6 +50,26 @@ pub fn protogalaxy_trick<F: Field>(
     }
     assert_eq!(q.len(), 1);
     q.pop().unwrap()
+}
+
+// [CBBZ23] hyperplonk optimization
+pub fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> UsizeMap<F> {
+    let mut id_non_0_eval_sums = UsizeMap::default();
+    for i in 1 + s..r {
+        let a = zetas[i]
+            .iter()
+            .enumerate()
+            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+            .sum::<usize>();
+        *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
+    }
+    id_non_0_eval_sums
+}
+
+pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
+    Hypercube::<AscendingOrder>::new(num_variables)
+        .map(|p| eq_poly(point, p.0))
+        .collect::<Vec<F>>()
 }
 
 pub trait Sumcheck<F: Field> {

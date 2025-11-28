@@ -9,7 +9,7 @@ use utils::domainsep::init_domain_sep;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WARPConfig;
 use warp::crypto::merkle::blake3::Blake3MerkleTreeParams;
-use warp::AccumulationScheme;
+use warp::traits::AccumulationScheme;
 use warp::WARP;
 
 mod utils;

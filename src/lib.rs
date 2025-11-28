@@ -1,3 +1,7 @@
+use crate::protocol::sumcheck::cbbz23;
+use crate::protocol::sumcheck::compute_hypercube_evaluations;
+use crate::traits::AccumulationScheme;
+use crate::utils::errs::WARPError;
 use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -9,6 +13,8 @@ use ark_poly::{
     MultilinearExtension, Polynomial,
 };
 use ark_std::log2;
+use crypto::merkle::build_codeword_leaves;
+use crypto::merkle::compute_auth_paths;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use protocol::domainsep::parse_statement;
 use protocol::sumcheck::WARPSumcheckVerifierError;
@@ -19,6 +25,9 @@ use spongefish::{
     UnitToBytes, VerifierState,
 };
 use std::marker::PhantomData;
+use utils::binary_field_elements_to_usize;
+use utils::byte_to_binary_field_array;
+use utils::scale_and_sum;
 use utils::{
     concat_slices,
     poly::{eq_poly, eq_poly_non_binary},
@@ -28,109 +37,25 @@ use utils::{
 use config::WARPConfig;
 use protocol::domainsep::{absorb_accumulated_instances, absorb_instances, derive_randomness};
 use protocol::sumcheck::{
-    multilinear_constraint_batching::{MultilinearConstraintBatchingSumcheck, UsizeMap},
+    multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
     twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
     Sumcheck,
 };
 
-#[doc(hidden)]
-pub mod tests;
+// #[doc(hidden)]
+// pub mod tests;
 
-pub mod accumulator;
+// pub mod accumulator;
 pub mod config;
 pub mod constraints;
 pub mod crypto;
 pub mod protocol;
 pub mod relations;
+pub mod traits;
 pub mod utils;
 
 use ark_crypto_primitives::Error;
-use thiserror::Error;
 use utils::errs::{WARPDeciderError, WARPProverError, WARPVerifierError};
-
-#[derive(Error, Debug)]
-pub enum WARPError {
-    #[error(transparent)]
-    ProverError(#[from] WARPProverError),
-    #[error(transparent)]
-    VerifierError(#[from] WARPVerifierError),
-    #[error(transparent)]
-    DeciderError(#[from] WARPDeciderError),
-    #[error(transparent)]
-    ArkError(#[from] Error),
-    #[error("z.len() is {0}, but tried accessing at {1}")]
-    R1CSWitnessSize(usize, usize),
-    #[error("Tried accessing at {1} when z.len() is {0}")]
-    ZeroEvaderSize(usize, usize),
-    #[error("LC does not exist")]
-    R1CSNonExistingLC,
-    #[error("Error decoding codeword")]
-    DecodeFailed,
-    #[error("Bundled PESAT eval returned {0}, multilinear evals returned {1}")]
-    UnsatisfiedMultiConstraints(bool, bool),
-    #[error("f.len() is {0}, but tried accessing at {1}")]
-    CodewordSize(usize, usize),
-}
-
-type WarpAccumResult<F, MT, S> = (
-    (
-        <S as AccumulationScheme<F, MT>>::AccumulatorInstances,
-        <S as AccumulationScheme<F, MT>>::AccumulatorWitnesses,
-    ),
-    <S as AccumulationScheme<F, MT>>::Proof,
-);
-
-pub trait AccumulationScheme<F: Field, MT: Config> {
-    type Index;
-    type ProverKey;
-    type VerifierKey;
-    type AccumulatorInstances;
-    type AccumulatorWitnesses;
-    type Instances;
-    type Witnesses;
-    type Proof;
-
-    // on given index, returns prover and verifier keys
-    fn index(
-        prover_state: &mut ProverState,
-        index: Self::Index,
-    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)>
-    where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
-
-    // prove accumulation of instances and witnesses with previous accumulators `accs`
-    fn prove(
-        &self,
-        pk: Self::ProverKey,
-        prover_state: &mut ProverState,
-        witnesses: Self::Witnesses,
-        instances: Self::Instances,
-        acc_instances: Self::AccumulatorInstances,
-        acc_witnesses: Self::AccumulatorWitnesses,
-    ) -> Result<WarpAccumResult<F, MT, Self>, WARPProverError>
-    where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
-
-    fn verify<'a>(
-        &self,
-        vk: Self::VerifierKey,
-        prover_state: &mut VerifierState<'a>,
-        acc_instance: Self::AccumulatorInstances,
-        proof: Self::Proof,
-    ) -> Result<(), WARPVerifierError>
-    where
-        VerifierState<'a>: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MT>
-            + BytesToUnitDeserialize;
-
-    fn decide(
-        &self,
-        acc_witness: Self::AccumulatorWitnesses,
-        acc_instance: Self::AccumulatorInstances,
-    ) -> Result<(), WARPError>;
-}
 
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
@@ -765,84 +690,6 @@ impl<
 
         Ok(())
     }
-}
-
-fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
-    let n = vectors[0].len();
-    let mut result = vec![F::default(); n];
-
-    vectors.iter().zip(scalars).for_each(|(v, &a)| {
-        result.iter_mut().zip(v).for_each(|(r, &x)| *r += a * x);
-    });
-
-    result
-}
-
-fn byte_to_binary_field_array<F: Field>(byte: &u8) -> Vec<F> {
-    (0..8)
-        .map(|i| {
-            let val = (byte >> i) & 1 == 1;
-            // return in field element and in binary
-            F::from(val)
-        })
-        .collect::<Vec<_>>()
-}
-
-fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
-    elements
-        .iter()
-        .rev()
-        .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
-}
-
-fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
-    code: &C,
-    witnesses: &[Vec<F>],
-    l1: usize,
-) -> (Vec<Vec<F>>, Vec<F>) {
-    let mut leaves = vec![F::default(); l1 * code.code_len()];
-    let mut codewords = vec![vec![F::default(); code.code_len()]; l1];
-    for (i, w) in witnesses.iter().enumerate() {
-        let f_i = code.encode(w);
-        // stacking codewords in flat array, which we chunk below
-        // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
-        for (j, value) in f_i.iter().enumerate() {
-            leaves[(j * l1) + i] = *value;
-        }
-        codewords[i] = f_i;
-    }
-    (codewords, leaves)
-}
-
-fn compute_auth_paths<P: Config>(
-    td: &MerkleTree<P>,
-    indexes: &[usize],
-) -> Result<Vec<Path<P>>, Error> {
-    let paths = indexes
-        .iter()
-        .map(|x_t| td.generate_proof(*x_t))
-        .collect::<Result<Vec<Path<P>>, Error>>()?;
-    Ok(paths)
-}
-
-// [CBBZ23] hyperplonk optimization
-fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> UsizeMap<F> {
-    let mut id_non_0_eval_sums = UsizeMap::default();
-    for i in 1 + s..r {
-        let a = zetas[i]
-            .iter()
-            .enumerate()
-            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
-            .sum::<usize>();
-        *id_non_0_eval_sums.entry(a).or_insert(F::zero()) += &xis_eq_evals[i];
-    }
-    id_non_0_eval_sums
-}
-
-pub fn compute_hypercube_evaluations<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
-    Hypercube::<AscendingOrder>::new(num_variables)
-        .map(|p| eq_poly(point, p.0))
-        .collect::<Vec<F>>()
 }
 
 #[cfg(test)]
