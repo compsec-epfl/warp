@@ -20,9 +20,9 @@ pub use relation::HashChainRelation;
 pub use synthesizer::HashChainSynthesizer;
 pub use witness::HashChainWitness;
 
-use crate::{relations::relation_trait::ToPolySystem, WARPError};
-
 use super::R1CS;
+use crate::relations::ToPolySystem;
+use crate::utils::errs::WARPError;
 
 impl<
         F: PrimeField + Absorb,

@@ -1,22 +1,12 @@
 pub mod hashchain;
-pub mod identity;
-pub mod is_prime;
-pub mod merkle_inclusion;
-pub mod preimage;
 
 use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
-pub use identity::{IdentityInstance, IdentityRelation, IdentitySynthesizer, IdentityWitness};
-pub use is_prime::{
-    IsPrimeInstance, IsPrimeRelation, IsPrimeSynthesizer, IsPrimeWitness, PrattCertificate,
-};
-pub use merkle_inclusion::{MerkleInclusionRelation, MerkleInclusionWitness};
-pub use preimage::{PreimageConfig, PreimageInstance, PreimageRelation, PreimageWitness};
 
 use crate::WARPError;
 
-use super::relation_trait::BundledPESAT;
+use super::BundledPESAT;
 
 pub type R1CSConstraints<F> = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
 

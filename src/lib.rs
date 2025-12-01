@@ -42,10 +42,6 @@ use protocol::sumcheck::{
     Sumcheck,
 };
 
-// #[doc(hidden)]
-// pub mod tests;
-
-// pub mod accumulator;
 pub mod config;
 pub mod constraints;
 pub mod crypto;
@@ -461,7 +457,7 @@ impl<
             tau,
             gamma_sumcheck,
             coeffs_twinc_sumcheck,
-            td,
+            _td,
             eta,
             mut nus,
             ood_samples,
