@@ -6,31 +6,18 @@ use ark_crypto_primitives::{
             },
             TwoToOneCRH as PoseidonTwoToOneCRH, CRH as PoseidonCRH,
         },
-        CRHScheme, CRHSchemeGadget, TwoToOneCRHScheme, TwoToOneCRHSchemeGadget,
+        CRHSchemeGadget, TwoToOneCRHSchemeGadget,
     },
-    merkle_tree::{
-        constraints::ConfigGadget as MerkleConfigGadget, Config as MerkleConfig,
-        IdentityDigestConverter,
-    },
+    merkle_tree::{constraints::ConfigGadget as MerkleConfigGadget, IdentityDigestConverter},
     sponge::Absorb,
 };
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_std::marker::PhantomData;
 
-#[derive(Clone)]
-pub struct PoseidonMerkleConfig<F: PrimeField> {
-    _field: PhantomData<F>,
-}
+use crate::crypto::merkle::parameters::MerkleTreeParams;
 
-impl<F: PrimeField + Absorb> MerkleConfig for PoseidonMerkleConfig<F> {
-    type Leaf = [F];
-    type LeafDigest = <Self::LeafHash as CRHScheme>::Output;
-    type LeafInnerDigestConverter = IdentityDigestConverter<Self::LeafDigest>;
-    type InnerDigest = <Self::TwoToOneHash as TwoToOneCRHScheme>::Output;
-    type LeafHash = PoseidonCRH<F>;
-    type TwoToOneHash = PoseidonTwoToOneCRH<F>;
-}
+pub type PoseidonMerkleConfig<F> = MerkleTreeParams<F, PoseidonCRH<F>, PoseidonTwoToOneCRH<F>, F>;
 
 #[derive(Clone)]
 pub struct PoseidonMerkleConfigGadget<F: PrimeField> {

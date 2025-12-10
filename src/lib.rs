@@ -1,7 +1,5 @@
-use crate::protocol::sumcheck::cbbz23;
-use crate::protocol::sumcheck::compute_hypercube_evaluations;
-use crate::traits::AccumulationScheme;
-use crate::utils::errs::WARPError;
+use std::marker::PhantomData;
+
 use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -13,33 +11,34 @@ use ark_poly::{
     MultilinearExtension, Polynomial,
 };
 use ark_std::log2;
-use crypto::merkle::build_codeword_leaves;
-use crypto::merkle::compute_auth_paths;
+use config::WARPConfig;
+use crypto::merkle::{build_codeword_leaves, compute_auth_paths};
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
-use protocol::domainsep::parse_statement;
-use protocol::sumcheck::WARPSumcheckVerifierError;
+use protocol::{
+    domainsep::{
+        absorb_accumulated_instances, absorb_instances, derive_randomness, parse_statement,
+    },
+    sumcheck::{
+        multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
+        twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
+        Sumcheck, WARPSumcheckVerifierError,
+    },
+};
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
-    BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
-    UnitToBytes, VerifierState,
+    BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, UnitToBytes,
 };
-use std::marker::PhantomData;
-use utils::binary_field_elements_to_usize;
-use utils::byte_to_binary_field_array;
-use utils::scale_and_sum;
 use utils::{
-    concat_slices,
+    binary_field_elements_to_usize, byte_to_binary_field_array, concat_slices,
     poly::{eq_poly, eq_poly_non_binary},
-    DigestToUnitDeserialize, DigestToUnitSerialize,
+    scale_and_sum, DigestToUnitDeserialize, DigestToUnitSerialize,
 };
 
-use config::WARPConfig;
-use protocol::domainsep::{absorb_accumulated_instances, absorb_instances, derive_randomness};
-use protocol::sumcheck::{
-    multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
-    twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
-    Sumcheck,
+use crate::{
+    protocol::sumcheck::{cbbz23, compute_hypercube_evaluations},
+    traits::AccumulationScheme,
+    utils::errs::WARPError,
 };
 
 pub mod config;
@@ -81,7 +80,7 @@ impl<
         F: Field,
         P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
-        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+        MT: Config<Leaf = [F]>,
     > WARP<F, P, C, MT>
 {
     pub fn new(
@@ -106,7 +105,7 @@ impl<
         F: Field + PrimeField,
         P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
-        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+        MT: Config<Leaf = [F]>,
     > AccumulationScheme<F, MT> for WARP<F, P, C, MT>
 {
     type Index = P;
@@ -134,10 +133,13 @@ impl<
         Vec<Vec<F>>,
     );
 
-    fn index(
+    fn index<ProverState>(
         prover_state: &mut ProverState,
         index: Self::Index,
-    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)> {
+    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)>
+    where
+        ProverState: BytesToUnitSerialize + FieldToUnitSerialize<F>,
+    {
         let (m, n, k) = index.config();
         // initialize prover state for fs
         // TODO for R1CS
@@ -146,7 +148,7 @@ impl<
         Ok(((index.clone(), m, n, k), (m, n, k)))
     }
 
-    fn prove(
+    fn prove<ProverState>(
         &self,
         pk: Self::ProverKey,
         prover_state: &mut ProverState,
@@ -162,7 +164,8 @@ impl<
         WARPProverError,
     >
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+        ProverState:
+            UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT> + FieldToUnitSerialize<F>,
     {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
@@ -413,15 +416,15 @@ impl<
         ))
     }
 
-    fn verify<'a>(
+    fn verify<VerifierState>(
         &self,
         vk: Self::VerifierKey,
-        verifier_state: &mut VerifierState<'a>,
+        verifier_state: &mut VerifierState,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
     ) -> Result<(), WARPVerifierError>
     where
-        VerifierState<'a>: UnitToBytes
+        VerifierState: UnitToBytes
             + FieldToUnitDeserialize<F>
             + UnitToField<F>
             + DigestToUnitDeserialize<MT>
@@ -690,9 +693,21 @@ impl<
 
 #[cfg(test)]
 pub mod test {
-    use super::AccumulationScheme;
+    use std::marker::PhantomData;
+
+    use ark_bls12_381::Fr as BLS12_381;
+    use ark_codes::{
+        reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
+        traits::LinearCode,
+    };
+    use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
+    use ark_ff::UniformRand;
+    use rand::thread_rng;
+    use spongefish::DomainSeparator;
+
     use super::{
         crypto::merkle::blake3::Blake3MerkleTreeParams, protocol::domainsep::WARPDomainSeparator,
+        AccumulationScheme, WARPConfig, WARP,
     };
     use crate::{
         relations::{
@@ -706,18 +721,6 @@ pub mod test {
         },
         utils::poseidon,
     };
-    use ark_bls12_381::Fr as BLS12_381;
-    use ark_codes::{
-        reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
-        traits::LinearCode,
-    };
-    use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-    use ark_ff::UniformRand;
-    use rand::thread_rng;
-    use spongefish::DomainSeparator;
-    use std::marker::PhantomData;
-
-    use super::{WARPConfig, WARP};
 
     #[test]
     pub fn warp_test() {

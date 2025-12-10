@@ -1,8 +1,8 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    BytesToUnitDeserialize, ProofResult, ProverState, UnitToBytes, VerifierState,
+    codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
+    BytesToUnitDeserialize, BytesToUnitSerialize, ProofResult, UnitToBytes,
 };
 
 use crate::utils::{
@@ -29,15 +29,15 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
     type Proof;
 
     // on given index, returns prover and verifier keys
-    fn index(
+    fn index<ProverState>(
         prover_state: &mut ProverState,
         index: Self::Index,
     ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)>
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+        ProverState: BytesToUnitSerialize + FieldToUnitSerialize<F>;
 
     // prove accumulation of instances and witnesses with previous accumulators `accs`
-    fn prove(
+    fn prove<ProverState>(
         &self,
         pk: Self::ProverKey,
         prover_state: &mut ProverState,
@@ -47,17 +47,18 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         acc_witnesses: Self::AccumulatorWitnesses,
     ) -> Result<WARPAccumResult<F, MT, Self>, WARPProverError>
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+        ProverState:
+            UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT> + FieldToUnitSerialize<F>;
 
-    fn verify<'a>(
+    fn verify<VerifierState>(
         &self,
         vk: Self::VerifierKey,
-        prover_state: &mut VerifierState<'a>,
+        prover_state: &mut VerifierState,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
     ) -> Result<(), WARPVerifierError>
     where
-        VerifierState<'a>: UnitToBytes
+        VerifierState: UnitToBytes
             + FieldToUnitDeserialize<F>
             + UnitToField<F>
             + DigestToUnitDeserialize<MT>

@@ -1,16 +1,18 @@
-use ark_crypto_primitives::crh::blake3::GenericDigest;
+use std::{hash::Hash, marker::PhantomData};
+
 use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
+    crh::{blake3::GenericDigest, CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, IdentityDigestConverter},
     sponge::Absorb,
 };
-use ark_ff::Field;
+use ark_ff::{Field, Fp, FpConfig};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
-use serde::Deserialize;
-use serde::Serialize;
-use spongefish::{ByteDomainSeparator, DomainSeparator};
-use std::{hash::Hash, marker::PhantomData};
+use serde::{Deserialize, Serialize};
+use spongefish::{
+    codecs::arkworks_algebra::FieldDomainSeparator, ByteDomainSeparator, DefaultHash,
+    DomainSeparator,
+};
 
 use crate::utils::DigestDomainSeparator;
 
@@ -63,6 +65,17 @@ where
 {
     fn add_digest(self, label: &str) -> Self {
         self.add_bytes(N, label)
+    }
+}
+
+impl<P: FpConfig<N>, LeafH, CompressH, S: FieldDomainSeparator<Fp<P, N>>, const N: usize>
+    DigestDomainSeparator<MerkleTreeParams<Fp<P, N>, LeafH, CompressH, Fp<P, N>>> for S
+where
+    LeafH: CRHScheme<Input = [Fp<P, N>], Output = Fp<P, N>>,
+    CompressH: TwoToOneCRHScheme<Input = Fp<P, N>, Output = Fp<P, N>>,
+{
+    fn add_digest(self, label: &str) -> Self {
+        self.add_scalars(1, label)
     }
 }
 

@@ -1,27 +1,29 @@
 use ark_codes::traits::LinearCode;
-use ark_crypto_primitives::crh::blake3::GenericDigest;
-use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
-use ark_crypto_primitives::merkle_tree::Config;
-use ark_ff::Field;
+use ark_crypto_primitives::{
+    crh::{blake3::GenericDigest, CRHScheme, TwoToOneCRHScheme},
+    merkle_tree::Config,
+};
+use ark_ff::{Field, Fp, FpConfig, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use rand::{CryptoRng, RngCore};
-use spongefish::codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize};
-use spongefish::BytesToUnitSerialize;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldDomainSeparator, UnitToField},
-    ByteDomainSeparator, ProofError, ProverState, Unit, UnitToBytes,
+    codecs::arkworks_algebra::{
+        FieldDomainSeparator, FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
+    },
+    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DuplexSpongeInterface,
+    ProofError, ProofResult, ProverState, Unit, UnitToBytes, VerifierState,
 };
-use spongefish::{BytesToUnitDeserialize, DuplexSpongeInterface, ProofResult, VerifierState};
 
-use crate::crypto::merkle::parameters::MerkleTreeParams;
-use crate::utils::{DigestToUnitDeserialize, HintDeserialize, HintSerialize};
 use crate::{
+    config::WARPConfig,
+    crypto::merkle::parameters::MerkleTreeParams,
     relations::BundledPESAT,
-    utils::{DigestDomainSeparator, DigestToUnitSerialize},
+    utils::{
+        DigestDomainSeparator, DigestToUnitDeserialize, DigestToUnitSerialize, HintDeserialize,
+        HintSerialize,
+    },
 };
-
-use crate::config::WARPConfig;
 
 pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
@@ -106,7 +108,7 @@ impl<
     }
 }
 
-pub fn absorb_instances<F: Field>(
+pub fn absorb_instances<ProverState: FieldToUnitSerialize<F>, F: Field>(
     prover_state: &mut ProverState,
     instances: &[Vec<F>],
 ) -> Result<(), ProofError> {
@@ -123,12 +125,12 @@ pub type AccInstances<F, MT> = (
     Vec<F>,                           // eta
 );
 
-pub fn absorb_accumulated_instances<F: Field, MT: Config>(
+pub fn absorb_accumulated_instances<ProverState, F: Field, MT: Config>(
     prover_state: &mut ProverState,
     acc_instances: &AccInstances<F, MT>, // (rt, \alpha, \mu, \beta (\tau, x), \eta)
 ) -> Result<(), ProofError>
 where
-    ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+    ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + DigestToUnitSerialize<MT>,
 {
     acc_instances
         .0
@@ -165,12 +167,8 @@ where
     Ok(())
 }
 
-pub fn parse_statement<
-    'a,
-    F: Field,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
->(
-    verifier_state: &mut VerifierState<'a>,
+pub fn parse_statement<F: Field, MT: Config<Leaf = [F]>>(
+    verifier_state: &mut (impl FieldToUnitDeserialize<F> + DigestToUnitDeserialize<MT>),
     l1: usize,
     l2: usize,
     instance_len: usize,
@@ -188,14 +186,7 @@ pub fn parse_statement<
         ),
     ),
     ProofError,
->
-where
-    VerifierState<'a>: UnitToBytes
-        + FieldToUnitDeserialize<F>
-        + UnitToField<F>
-        + DigestToUnitDeserialize<MT>
-        + BytesToUnitDeserialize,
-{
+> {
     // f. absorb parameters
     let mut l1_xs = vec![vec![F::default(); instance_len]; l1];
     l1_xs
@@ -234,12 +225,11 @@ where
     ))
 }
 
-pub fn derive_randomness<
-    'a,
-    F: Field,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
->(
-    verifier_state: &mut VerifierState<'a>,
+pub fn derive_randomness<F: Field, MT: Config<Leaf = [F]>>(
+    verifier_state: &mut (impl UnitToBytes
+              + FieldToUnitDeserialize<F>
+              + UnitToField<F>
+              + DigestToUnitDeserialize<MT>),
     l1: usize,
     log_n: usize,
     log_l: usize,
@@ -265,14 +255,7 @@ pub fn derive_randomness<
         Vec<[F; 3]>,
     ),
     ProofError,
->
-where
-    VerifierState<'a>: UnitToBytes
-        + FieldToUnitDeserialize<F>
-        + UnitToField<F>
-        + DigestToUnitDeserialize<MT>
-        + BytesToUnitDeserialize,
-{
+> {
     let rt_0 = verifier_state.read_digest()?;
     let mut l1_mus = vec![F::default(); l1];
     verifier_state.fill_next_scalars(&mut l1_mus)?;
@@ -364,6 +347,24 @@ where
     }
 }
 
+impl<
+        P: FpConfig<N>,
+        LeafH,
+        CompressH,
+        H: DuplexSpongeInterface<Fp<P, N>>,
+        R: RngCore + CryptoRng,
+        const N: usize,
+    > DigestToUnitSerialize<MerkleTreeParams<Fp<P, N>, LeafH, CompressH, Fp<P, N>>>
+    for ProverState<H, Fp<P, N>, R>
+where
+    LeafH: CRHScheme<Input = [Fp<P, N>], Output = Fp<P, N>>,
+    CompressH: TwoToOneCRHScheme<Input = Fp<P, N>, Output = Fp<P, N>>,
+{
+    fn add_digest(&mut self, digest: Fp<P, N>) -> ProofResult<()> {
+        self.add_scalars(&[digest])
+    }
+}
+
 impl<H, U, R> HintSerialize for ProverState<H, U, R>
 where
     U: Unit,
@@ -389,6 +390,20 @@ where
         let mut digest = [0u8; N];
         self.fill_next_bytes(&mut digest)?;
         Ok(digest.into())
+    }
+}
+
+impl<P: FpConfig<N>, LeafH, CompressH, H: DuplexSpongeInterface<Fp<P, N>>, const N: usize>
+    DigestToUnitDeserialize<MerkleTreeParams<Fp<P, N>, LeafH, CompressH, Fp<P, N>>>
+    for VerifierState<'_, H, Fp<P, N>>
+where
+    LeafH: CRHScheme<Input = [Fp<P, N>], Output = Fp<P, N>>,
+    CompressH: TwoToOneCRHScheme<Input = Fp<P, N>, Output = Fp<P, N>>,
+{
+    fn read_digest(&mut self) -> ProofResult<Fp<P, N>> {
+        let mut digest = [Fp::zero(); 1];
+        self.fill_next_scalars(&mut digest)?;
+        Ok(digest[0])
     }
 }
 
