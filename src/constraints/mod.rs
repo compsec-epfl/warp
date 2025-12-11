@@ -568,6 +568,7 @@ pub mod test {
                 .sum::<FpVar<_>>())
         .enforce_equal(&target_2)?;
 
+        assert!(cs.is_satisfied()?);
         println!("{}", cs.num_constraints());
 
         Ok(())
