@@ -30,6 +30,9 @@ ark-goldilocks = { git = "https://github.com/dmpierre/ark-goldilocks.git" }
 
 [patch.crates-io]
 ark-crypto-primitives = { git = "https://github.com/dmpierre/crypto-primitives.git", branch = "dev/blake3" }
+ark-ff = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-ff" }
+ark-poly = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-poly" }
+ark-serialize = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-serialize" }
 
 [dev-dependencies]
 ark-bls12-381 = "0.5.0"

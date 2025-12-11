@@ -16,7 +16,7 @@ mod utils;
 use utils::poseidon;
 use warp::relations::BundledPESAT;
 
-const HASHCHAIN_SIZE: usize = 1600;
+const HASHCHAIN_SIZE: usize = 800;
 
 pub fn bench_rs_warp(c: &mut Criterion) {
     let mut rng = thread_rng();
@@ -77,15 +77,16 @@ pub fn bench_rs_warp(c: &mut Criterion) {
     }
 }
 
-pub fn bench_rs_warp_f64(c: &mut Criterion) {
+pub fn bench_rs_warp_fields(c: &mut Criterion) {
+    pub type F = Field64;
     let mut rng = thread_rng();
-    let poseidon_config = poseidon::initialize_poseidon_config::<Field64>();
+    let poseidon_config = poseidon::initialize_poseidon_config::<F>();
     let r1cs = get_hashchain_r1cs(&poseidon_config, HASHCHAIN_SIZE);
 
-    let code_config = ReedSolomonConfig::<Field64>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two());
     let code = ReedSolomon::new(code_config.clone());
-    let s = 8;
-    let t = 7;
+    let s = 2;
+    let t = 125;
 
     for l in [32, 64, 128, 256, 512] {
         let warp_config = WARPConfig::new(l, l, s, t, r1cs.config(), code.code_len());
@@ -101,7 +102,7 @@ pub fn bench_rs_warp_f64(c: &mut Criterion) {
         let instances_witnesses =
             get_hashchain_instance_witness_pairs(l, &poseidon_config, HASHCHAIN_SIZE, &mut rng);
 
-        let mut group = c.benchmark_group("warp_rs_bls12_381_hash_chain");
+        let mut group = c.benchmark_group("warp_rs_f64_hash_chain");
         group.sample_size(10);
         group.bench_with_input(
             BenchmarkId::from_parameter(l),
@@ -136,5 +137,5 @@ pub fn bench_rs_warp_f64(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_rs_warp_f64);
+criterion_group!(benches, bench_rs_warp_fields);
 criterion_main!(benches);

@@ -4,6 +4,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::ProofResult;
 
 pub mod errs;
+pub mod fields;
 pub mod poly;
 pub mod poseidon;
 
