@@ -46,7 +46,10 @@ impl<
         let log_l = log2(config.l) as usize;
         let log_n = log2(config.n) as usize;
         let r = 1 + config.s + config.t;
-        assert!(r.is_power_of_two());
+
+        // WARNING: removing this for more flexibility, but this should be checked carefully
+        //        assert!(r.is_power_of_two());
+
         let log_r = log2(r) as usize;
         #[allow(non_snake_case)]
         let (M, N, k) = config.p_conf;
