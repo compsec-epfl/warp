@@ -15,6 +15,8 @@ use ark_poly::{
 use ark_std::log2;
 use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
+use efficient_sumcheck::experimental::inner_product::batched_constraint_poly;
+use efficient_sumcheck::experimental::inner_product::inner_product;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use protocol::domainsep::parse_statement;
 use protocol::sumcheck::WARPSumcheckVerifierError;
@@ -37,7 +39,6 @@ use utils::{
 use config::WARPConfig;
 use protocol::domainsep::{absorb_accumulated_instances, absorb_instances, derive_randomness};
 use protocol::sumcheck::{
-    multilinear_constraint_batching::MultilinearConstraintBatchingSumcheck,
     twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
     Sumcheck,
 };
@@ -363,12 +364,13 @@ impl<
         // [CBBZ23] optimization from hyperplonk
         let id_non_0_eval_sums = cbbz23(zetas, xi_eq_evals, self.config.s, r);
 
-        let alpha = MultilinearConstraintBatchingSumcheck::prove(
+        // call efficient sumcheck for batched_constraint checks
+        let alpha = inner_product(
+            &mut f.clone(),
+            &mut batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
             prover_state,
-            &mut (f.clone(), ood_evals_vec, id_non_0_eval_sums),
-            &(),
-            log_n,
-        )?;
+        )
+        .verifier_messages;
 
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
@@ -623,7 +625,6 @@ impl<
         zeta_eqs.extend(
             ood_samples
                 .chunks(log_n)
-                .into_iter()
                 .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
                 .collect::<Vec<F>>(),
         );
