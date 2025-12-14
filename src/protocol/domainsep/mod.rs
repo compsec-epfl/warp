@@ -296,7 +296,7 @@ where
     let mut gamma_sumcheck = Vec::new();
     let mut coeffs_twinc_sumcheck = Vec::new();
     for _ in 0..log_l {
-        let mut h_coeffs = vec![F::zero(); 2 + (log_n + 1).max(log_M + 2) as usize];
+        let mut h_coeffs = vec![F::zero(); 2 + (log_n + 1).max(log_M + 2)];
         verifier_state.fill_next_scalars(&mut h_coeffs)?;
         let [c] = verifier_state.challenge_scalars::<1>()?;
         gamma_sumcheck.push(c);

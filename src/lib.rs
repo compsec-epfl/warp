@@ -365,8 +365,12 @@ impl<
         let id_non_0_eval_sums = cbbz23(zetas, xi_eq_evals, self.config.s, r);
 
         // call efficient sumcheck for batched_constraint checks
-        let mut g = batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums);
-        let alpha = inner_product(&mut f.clone(), &mut g, prover_state).verifier_messages;
+        let alpha = inner_product(
+            &mut f.clone(),
+            &mut batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
+            prover_state,
+        )
+        .verifier_messages;
 
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
