@@ -5,10 +5,7 @@ use std::{
 
 use ark_ff::Field;
 use efficient_sumcheck::{
-    multilinear::{reductions::pairwise, ReduceMode},
-    multilinear_product::{TimeProductProver, TimeProductProverConfig},
-    prover::Prover,
-    streams::{MemoryStream, Stream},
+    experimental::inner_product::FastMap, multilinear::{ReduceMode, reductions::pairwise}, multilinear_product::{TimeProductProver, TimeProductProverConfig}, prover::Prover, streams::{MemoryStream, Stream}
 };
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
@@ -35,6 +32,14 @@ impl Hasher for IdentityHasher {
 
 use super::{Sumcheck, WARPSumcheckProverError, WARPSumcheckVerifierError};
 
+pub fn batched_constraint_poly<F: Field>(dense_polys: &Vec<Vec<F>>, sparse_polys: &UsizeMap<F>) -> Vec<F> {
+    let mut res = sum_columns(dense_polys);
+    for (k, v) in sparse_polys.iter() {
+        res[*k] += v;
+    }
+    res
+}
+
 fn sum_columns<F: Field>(matrix: &Vec<Vec<F>>) -> Vec<F> {
     if matrix.is_empty() {
         return vec![];
@@ -51,7 +56,7 @@ fn sum_columns<F: Field>(matrix: &Vec<Vec<F>>) -> Vec<F> {
 pub struct MultilinearConstraintBatchingSumcheck {}
 
 impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
-    type Evaluations = (Vec<F>, Vec<Vec<F>>, UsizeMap<F>);
+    type Evaluations = (Vec<F>, Vec<F>);
     type ProverAuxiliary<'a> = ();
     type VerifierAuxiliary<'a> = ();
     type Target = F;
@@ -59,20 +64,11 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
 
     fn prove_round(
         prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
-        (f_evals, ood_evals_vec, id_non_0_eval_sums): &mut Self::Evaluations,
+        (f, g): &mut Self::Evaluations,
         _aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPSumcheckProverError> {
-        let mut preprocessed_g = sum_columns(ood_evals_vec);
-        for (i, v) in preprocessed_g.iter_mut().enumerate() {
-            *v += id_non_0_eval_sums.get(&i).unwrap_or(&F::ZERO);
-        }
-
         // round evaluation
-        let f = MemoryStream::new(f_evals.to_vec());
-        let g = MemoryStream::new(preprocessed_g.clone());
-        let config =
-            TimeProductProverConfig::new(f.num_variables(), vec![f, g], ReduceMode::Pairwise);
-        let mut time_product_prover = TimeProductProver::new(config);
+        let mut time_product_prover = TimeProductProver::new(TimeProductProverConfig::new(f.len().trailing_zeros() as usize, vec![MemoryStream::new(f.to_vec()), MemoryStream::new(g.to_vec())], ReduceMode::Pairwise));
         let message = time_product_prover.next_message(None).unwrap();
 
         prover_state.add_scalars(&[message.0, message.1, message.2])?;
@@ -80,16 +76,8 @@ impl<F: Field> Sumcheck<F> for MultilinearConstraintBatchingSumcheck {
         let [c] = prover_state.challenge_scalars::<1>()?;
 
         // update evaluation tables
-        pairwise::reduce_evaluations(f_evals, c);
-        ood_evals_vec.iter_mut().for_each(|e| {
-            pairwise::reduce_evaluations(e, c);
-        });
-        let mut map = UsizeMap::default();
-        for (&i, &eval) in id_non_0_eval_sums.iter() {
-            *map.entry(i >> 1).or_insert(F::zero()) +=
-                eval * if i & 1 == 1 { c } else { F::one() - c };
-        }
-        *id_non_0_eval_sums = map;
+        pairwise::reduce_evaluations(f, c);
+        pairwise::reduce_evaluations(g, c);
         Ok(c)
     }
 
