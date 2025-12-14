@@ -1,7 +1,8 @@
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
-use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
-use multilinear_constraint_batching::UsizeMap;
+use efficient_sumcheck::{
+    experimental::inner_product::FastMap, hypercube::Hypercube, order_strategy::AscendingOrder,
+};
 use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::{
     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
@@ -10,7 +11,6 @@ use thiserror::Error;
 
 use crate::utils::poly::eq_poly;
 
-pub mod multilinear_constraint_batching;
 pub mod twin_constraint_pseudo_batching;
 
 #[derive(Error, Debug)]
@@ -53,8 +53,8 @@ pub fn protogalaxy_trick<F: Field>(
 }
 
 // [CBBZ23] hyperplonk optimization
-pub fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> UsizeMap<F> {
-    let mut id_non_0_eval_sums = UsizeMap::default();
+pub fn cbbz23<F: Field>(zetas: Vec<&[F]>, xis_eq_evals: Vec<F>, s: usize, r: usize) -> FastMap<F> {
+    let mut id_non_0_eval_sums = FastMap::default();
     for i in 1 + s..r {
         let a = zetas[i]
             .iter()
