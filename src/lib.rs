@@ -12,6 +12,7 @@ use ark_poly::{
     univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
     MultilinearExtension, Polynomial,
 };
+use ark_serialize::CanonicalSerialize;
 use ark_std::log2;
 use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
@@ -48,6 +49,7 @@ pub mod constraints;
 pub mod crypto;
 pub mod protocol;
 pub mod relations;
+pub mod serialize;
 pub mod traits;
 pub mod utils;
 
@@ -115,6 +117,7 @@ impl<
     type VerifierKey = (usize, usize, usize);
     type Instances = Vec<Vec<F>>;
     type Witnesses = Vec<Vec<F>>;
+
     type AccumulatorInstances = (
         Vec<MT::InnerDigest>,
         Vec<Vec<F>>,
@@ -122,6 +125,7 @@ impl<
         (Vec<Vec<F>>, Vec<Vec<F>>),
         Vec<F>,
     ); // (rt, \alpha, \mu, \beta (\tau, x), \eta)
+
     type AccumulatorWitnesses = (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>); // (td, f, w)
 
     // (rt_0, \mu_i, \nu_0, \nu_i, auth_0, auth_j, ((f_i(x_j))))
@@ -535,7 +539,9 @@ impl<
             .zip(l2_xs.clone().into_iter().chain(l1_xs))
             .map(|(tau, x)| concat_slices(&tau, &x))
             .collect::<Vec<Vec<F>>>();
-        let _beta = scale_and_sum(&betas, &gamma_eq_evals);
+        let beta = scale_and_sum(&betas, &gamma_eq_evals);
+        let expected_beta = concat_slices(&acc_instance.3 .0[0], &acc_instance.3 .1[0]);
+        (expected_beta == beta).ok_or_err(WARPVerifierError::CircuitEvaluationPoint)?;
 
         // c. check auth paths
         let binary_shift_queries = bytes_shift_queries
@@ -695,6 +701,7 @@ pub mod test {
     use super::{
         crypto::merkle::blake3::Blake3MerkleTreeParams, protocol::domainsep::WARPDomainSeparator,
     };
+    use crate::serialize::{AccInstanceSerializer, AccWitnessSerializer, ProofSerializer};
     use crate::{
         relations::{
             r1cs::{
@@ -713,7 +720,8 @@ pub mod test {
         traits::LinearCode,
     };
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-    use ark_ff::UniformRand;
+    use ark_ff::{PrimeField, UniformRand};
+    use ark_serialize::{CanonicalSerialize, Compress};
     use rand::thread_rng;
     use spongefish::DomainSeparator;
     use std::marker::PhantomData;
@@ -848,9 +856,31 @@ pub mod test {
                 (r1cs.m, r1cs.n, r1cs.k),
                 &mut verifier_state,
                 acc_x.clone(),
-                pf,
+                pf.clone(),
             )
             .unwrap();
-        hash_chain_warp.decide(acc_w, acc_x).unwrap();
+        hash_chain_warp
+            .decide(acc_w.clone(), acc_x.clone())
+            .unwrap();
+
+        let acc_x_to_serde =
+            AccInstanceSerializer::<_, Blake3MerkleTreeParams<BLS12_381>>::new(acc_x);
+        let acc_w_to_serde =
+            AccWitnessSerializer::<_, Blake3MerkleTreeParams<BLS12_381>>::new(acc_w);
+        let proof_to_serde = ProofSerializer::new(pf);
+
+        println!(
+            "acc_x size: {}",
+            acc_x_to_serde.serialized_size(Compress::Yes)
+        );
+        println!(
+            "acc_w size: {}",
+            acc_w_to_serde.serialized_size(Compress::Yes)
+        );
+        println!(
+            "proof size: {}",
+            proof_to_serde.serialized_size(Compress::Yes)
+        );
+        println!("narg_str size: {}", narg_str.len());
     }
 }

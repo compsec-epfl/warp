@@ -50,6 +50,8 @@ pub enum WARPVerifierError {
     SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
     #[error("Invalid new code evaluation point")]
     CodeEvaluationPoint,
+    #[error("Invalid new circuit evaluation point")]
+    CircuitEvaluationPoint,
     #[error("Found invalid number of shift queries points")]
     NumShiftQueries,
     #[error("Found invalid shift query index")]
