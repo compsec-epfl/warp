@@ -1,3 +1,4 @@
+use crate::protocol::sumcheck::WARPSumcheckProverError;
 use crate::protocol::sumcheck::cbbz23;
 use crate::protocol::sumcheck::compute_hypercube_evaluations;
 use crate::traits::AccumulationScheme;
@@ -21,10 +22,7 @@ use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use protocol::domainsep::parse_statement;
 use protocol::sumcheck::WARPSumcheckVerifierError;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
-    BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
-    UnitToBytes, VerifierState,
+use spongefish::{ ProverState, VerifierState,
 };
 use std::marker::PhantomData;
 use utils::binary_field_elements_to_usize;
@@ -141,7 +139,7 @@ impl<
     fn index(
         prover_state: &mut ProverState,
         index: Self::Index,
-    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)> {
+    ) -> Result<(Self::ProverKey, Self::VerifierKey), Error> {
         let (m, n, k) = index.config();
         // initialize prover state for fs
         // TODO for R1CS
@@ -166,7 +164,7 @@ impl<
         WARPProverError,
     >
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+        ProverState: DigestToUnitSerialize<MT>,
     {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
@@ -280,7 +278,7 @@ impl<
         let eta = self
             .p
             .evaluate_bundled(&beta_eq_evals, &z)
-            .map_err(|_| ProofError::InvalidProof)?;
+            .map_err(|_| WARPSumcheckProverError::InvalidProof)?;
 
         let (x, w) = z.split_at(N - k);
         let beta = (vec![beta_tau], vec![x.to_vec()]);
@@ -420,11 +418,8 @@ impl<
         proof: Self::Proof,
     ) -> Result<(), WARPVerifierError>
     where
-        VerifierState<'a>: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MT>
-            + BytesToUnitDeserialize,
+        VerifierState<'a>:
+            DigestToUnitDeserialize<MT>
     {
         let (l1, l) = (self.config.l1, self.config.l);
         let l2 = l - l1;

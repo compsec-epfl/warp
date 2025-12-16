@@ -4,9 +4,7 @@ use efficient_sumcheck::{
     experimental::inner_product::FastMap, hypercube::Hypercube, order_strategy::AscendingOrder,
 };
 use rayon::prelude::*;
-use spongefish::codecs::arkworks_algebra::{
-    FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
-};
+use spongefish::{ProverState, VerifierState};
 use thiserror::Error;
 
 use crate::utils::poly::eq_poly;
@@ -80,19 +78,19 @@ pub trait Sumcheck<F: Field> {
     type Challenge;
 
     fn prove_round(
-        prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+        prover_state: &mut ProverState,
         evals: &mut Self::Evaluations,
         aux: &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPSumcheckProverError>;
 
     fn verify_round(
-        verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+        verifier_state: &mut VerifierState,
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPSumcheckVerifierError>;
 
     fn prove(
-        prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+        prover_state: &mut ProverState,
         evals: &mut Self::Evaluations,
         aux: &Self::ProverAuxiliary<'_>,
         n_rounds: usize,
@@ -106,7 +104,7 @@ pub trait Sumcheck<F: Field> {
     }
 
     fn verify(
-        verifier_state: &mut (impl FieldToUnitDeserialize<F> + UnitToField<F>),
+        verifier_state: &mut VerifierState,
         target: &mut Self::Target,
         aux: &Self::VerifierAuxiliary<'_>,
         n_rounds: usize,
