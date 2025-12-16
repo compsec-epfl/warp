@@ -714,13 +714,14 @@ pub mod test {
         },
         utils::poseidon,
     };
+
     use ark_bls12_381::Fr as BLS12_381;
     use ark_codes::{
         reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
         traits::LinearCode,
     };
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-    use ark_ff::{PrimeField, UniformRand};
+    use ark_ff::{UniformRand};
     use ark_serialize::{CanonicalSerialize, Compress};
     use rand::thread_rng;
     use spongefish::DomainSeparator;
@@ -882,5 +883,164 @@ pub mod test {
             proof_to_serde.serialized_size(Compress::Yes)
         );
         println!("narg_str size: {}", narg_str.len());
+    }
+
+     #[test]
+    pub fn warp_test_small_field() {
+        use crate::utils::fields::SmallGoldilocks;
+
+        let l1 = 4;
+        let s = 8;
+        let t = 7;
+        let hash_chain_size = 10;
+        let mut rng = thread_rng();
+        let poseidon_config = poseidon::initialize_poseidon_config::<SmallGoldilocks>();
+        let r1cs = HashChainRelation::<SmallGoldilocks, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+            poseidon_config.clone(),
+            hash_chain_size,
+        ))
+        .unwrap();
+        let code_config =
+            ReedSolomonConfig::<SmallGoldilocks>::default(r1cs.k, r1cs.k.next_power_of_two());
+        let code = ReedSolomon::new(code_config);
+
+        let instances_witnesses: (Vec<Vec<SmallGoldilocks>>, Vec<Vec<SmallGoldilocks>>) = (0..l1)
+            .map(|_| {
+                let preimage = vec![SmallGoldilocks::rand(&mut rng)];
+                let instance = HashChainInstance {
+                    digest: compute_hash_chain::<SmallGoldilocks, CRH<_>>(
+                        &poseidon_config,
+                        &preimage,
+                        hash_chain_size,
+                    ),
+                };
+                let witness = HashChainWitness {
+                    preimage,
+                    _crhs_scheme: PhantomData::<CRH<SmallGoldilocks>>,
+                };
+                let relation = HashChainRelation::<SmallGoldilocks, CRH<_>, CRHGadget<_>>::new(
+                    instance,
+                    witness,
+                    (poseidon_config.clone(), hash_chain_size),
+                );
+                (relation.x, relation.w)
+            })
+            .unzip();
+
+        let r1cs = HashChainRelation::<SmallGoldilocks, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+            poseidon_config.clone(),
+            hash_chain_size,
+        ))
+        .unwrap();
+
+        let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
+        let hash_chain_warp = WARP::<
+            SmallGoldilocks,
+            R1CS<SmallGoldilocks>,
+            _,
+            Blake3MerkleTreeParams<SmallGoldilocks>,
+        >::new(
+            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
+        );
+
+        let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
+            (vec![], vec![], vec![], vec![], vec![], vec![]);
+        let (mut acc_tds, mut acc_f, mut acc_ws) = (vec![], vec![], vec![]);
+
+        for _ in 0..l1 {
+            let domainsep = DomainSeparator::new("test::warp");
+
+            let domainsep = WARPDomainSeparator::<
+                SmallGoldilocks,
+                ReedSolomon<SmallGoldilocks>,
+                Blake3MerkleTreeParams<SmallGoldilocks>,
+            >::warp(domainsep, warp_config.clone());
+            let mut prover_state = domainsep.to_prover_state();
+            let ((acc_x, acc_w), _pf) = hash_chain_warp
+                .prove(
+                    (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                    &mut prover_state,
+                    instances_witnesses.1.clone(),
+                    instances_witnesses.0.clone(),
+                    (vec![], vec![], vec![], (vec![], vec![]), vec![]),
+                    (vec![], vec![], vec![]),
+                )
+                .unwrap();
+            acc_roots.push(acc_x.0[0].clone());
+            acc_alphas.push(acc_x.1[0].clone());
+            acc_mus.push(acc_x.2[0]);
+            acc_taus.push(acc_x.3 .0[0].clone());
+            acc_xs.push(acc_x.3 .1[0].clone());
+            acc_eta.push(acc_x.4[0]);
+
+            acc_tds.push(acc_w.0[0].clone());
+            acc_f.push(acc_w.1[0].clone());
+            acc_ws.push(acc_w.2[0].clone());
+        }
+
+        let domainsep = DomainSeparator::new("test::warp");
+        // Use 8 (2*l1) for the total accumulation size to test multi-instance accumulation
+        let warp_config =
+            WARPConfig::<_, R1CS<SmallGoldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
+
+        let hash_chain_warp = WARP::<
+            SmallGoldilocks,
+            R1CS<SmallGoldilocks>,
+            _,
+            Blake3MerkleTreeParams<SmallGoldilocks>,
+        >::new(
+            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
+        );
+        let domainsep = WARPDomainSeparator::<
+            SmallGoldilocks,
+            ReedSolomon<SmallGoldilocks>,
+            Blake3MerkleTreeParams<SmallGoldilocks>,
+        >::warp(domainsep, warp_config);
+
+        let mut prover_state = domainsep.to_prover_state();
+        let ((acc_x, acc_w), pf) = hash_chain_warp
+            .prove(
+                (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                &mut prover_state,
+                instances_witnesses.1,
+                instances_witnesses.0,
+                (acc_roots, acc_alphas, acc_mus, (acc_taus, acc_xs), acc_eta),
+                (acc_tds, acc_f, acc_ws),
+            )
+            .unwrap();
+
+        let narg_str = prover_state.narg_string();
+        let mut verifier_state = domainsep.to_verifier_state(narg_str);
+        hash_chain_warp
+            .verify(
+                (r1cs.m, r1cs.n, r1cs.k),
+                &mut verifier_state,
+                acc_x.clone(),
+                pf.clone(),
+            )
+            .unwrap();
+        hash_chain_warp
+            .decide(acc_w.clone(), acc_x.clone())
+            .unwrap();
+
+        let acc_x_to_serde =
+            AccInstanceSerializer::<_, Blake3MerkleTreeParams<SmallGoldilocks>>::new(acc_x);
+        let acc_w_to_serde =
+            AccWitnessSerializer::<_, Blake3MerkleTreeParams<SmallGoldilocks>>::new(acc_w);
+        let proof_to_serde = ProofSerializer::new(pf);
+
+        println!(
+            "SmallGoldilocks acc_x size: {}",
+            acc_x_to_serde.serialized_size(Compress::Yes)
+        );
+        println!(
+            "SmallGoldilocks acc_w size: {}",
+            acc_w_to_serde.serialized_size(Compress::Yes)
+        );
+        println!(
+            "SmallGoldilocks proof size: {}",
+            proof_to_serde.serialized_size(Compress::Yes)
+        );
+        println!("SmallGoldilocks narg_str size: {}", narg_str.len());
     }
 }
