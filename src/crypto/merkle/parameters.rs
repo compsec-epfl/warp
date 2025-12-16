@@ -9,7 +9,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
-use spongefish::{ByteDomainSeparator, DomainSeparator};
+use spongefish::DomainSeparator;
 use std::{hash::Hash, marker::PhantomData};
 
 use crate::utils::DigestDomainSeparator;
@@ -56,7 +56,7 @@ where
 
 impl<F: Field, LeafH, CompressH, const N: usize>
     DigestDomainSeparator<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
-    for DomainSeparator
+    for DomainSeparator<F>
 where
     LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
     CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,

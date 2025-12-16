@@ -2,9 +2,10 @@ use ark_ff::{Field, Zero};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 use efficient_sumcheck::multilinear::reductions::{pairwise, tablewise};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use spongefish::codecs::arkworks_algebra::{
-    FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
-};
+use spongefish::ProverState;
+// use spongefish::codecs::arkworks_algebra::{
+//     FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
+// };
 
 use crate::{relations::r1cs::R1CSConstraints, utils::errs::WARPProverError};
 
@@ -52,7 +53,7 @@ impl<F: Field> Sumcheck<F> for TwinConstraintPseudoBatchingSumcheck {
     type Challenge = F;
 
     fn prove_round(
-        prover_state: &mut (impl FieldToUnitSerialize<F> + UnitToField<F>),
+        prover_state: &mut ProverState,
         Evals { u, z, a, b, tau }: &mut Self::Evaluations,
         &(r1cs, xi): &Self::ProverAuxiliary<'_>,
     ) -> Result<Self::Challenge, WARPSumcheckProverError> {

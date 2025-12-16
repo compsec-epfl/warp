@@ -1,9 +1,10 @@
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::{Error, merkle_tree::Config};
 use ark_ff::Field;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    BytesToUnitDeserialize, ProofResult, ProverState, UnitToBytes, VerifierState,
-};
+use spongefish::{ProverState, VerifierState};
+// use spongefish::{
+//     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
+//     BytesToUnitDeserialize, ProofResult, ProverState, UnitToBytes, VerifierState,
+// };
 
 use crate::utils::{
     errs::{WARPError, WARPProverError, WARPVerifierError},
@@ -32,9 +33,9 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
     fn index(
         prover_state: &mut ProverState,
         index: Self::Index,
-    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)>
+    ) -> Result<(Self::ProverKey, Self::VerifierKey), Error>
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+        ProverState: DigestToUnitSerialize<MT>;
 
     // prove accumulation of instances and witnesses with previous accumulators `accs`
     fn prove(
@@ -47,7 +48,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         acc_witnesses: Self::AccumulatorWitnesses,
     ) -> Result<WARPAccumResult<F, MT, Self>, WARPProverError>
     where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>;
+        ProverState: DigestToUnitSerialize<MT>;
 
     fn verify<'a>(
         &self,
@@ -57,11 +58,8 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         proof: Self::Proof,
     ) -> Result<(), WARPVerifierError>
     where
-        VerifierState<'a>: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MT>
-            + BytesToUnitDeserialize;
+        VerifierState<'a>: 
+            DigestToUnitDeserialize<MT>;
 
     fn decide(
         &self,

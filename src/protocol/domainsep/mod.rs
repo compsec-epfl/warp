@@ -6,15 +6,10 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use rand::{CryptoRng, RngCore};
-use spongefish::codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize};
-use spongefish::BytesToUnitSerialize;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldDomainSeparator, UnitToField},
-    ByteDomainSeparator, ProofError, ProverState, Unit, UnitToBytes,
-};
-use spongefish::{BytesToUnitDeserialize, DuplexSpongeInterface, ProofResult, VerifierState};
+use spongefish::{DuplexSpongeInterface, ProverState, VerifierState};
 
 use crate::crypto::merkle::parameters::MerkleTreeParams;
+use crate::protocol::sumcheck::WARPSumcheckProverError;
 use crate::utils::{DigestToUnitDeserialize, HintDeserialize, HintSerialize};
 use crate::{
     relations::BundledPESAT,
@@ -23,7 +18,7 @@ use crate::{
 
 use crate::config::WARPConfig;
 
-pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
+pub trait WARPDomainSeparator<F: Field, C: LinearCode<F>, MT: Config> {
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
         self,
         config: WARPConfig<F, P>,
@@ -31,10 +26,10 @@ pub trait WARPDomainSeparator<F: Field + Unit, C: LinearCode<F>, MT: Config> {
 }
 
 impl<
-        F: Field + Unit,
+        F: Field,
         C: LinearCode<F>,
         MT: Config,
-        DomainSeparator: ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MT>,
+        DomainSeparator: DigestDomainSeparator<MT>,
     > WARPDomainSeparator<F, C, MT> for DomainSeparator
 {
     fn warp<P: BundledPESAT<F, Config = (usize, usize, usize)>>(
@@ -112,7 +107,7 @@ impl<
 pub fn absorb_instances<F: Field>(
     prover_state: &mut ProverState,
     instances: &[Vec<F>],
-) -> Result<(), ProofError> {
+) -> Result<(), WARPSumcheckProverError> {
     instances
         .iter()
         .try_for_each(|x| prover_state.add_scalars(x))
@@ -129,9 +124,9 @@ pub type AccInstances<F, MT> = (
 pub fn absorb_accumulated_instances<F: Field, MT: Config>(
     prover_state: &mut ProverState,
     acc_instances: &AccInstances<F, MT>, // (rt, \alpha, \mu, \beta (\tau, x), \eta)
-) -> Result<(), ProofError>
+) -> Result<(), WARPSumcheckProverError>
 where
-    ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
+    ProverState: DigestToUnitSerialize<MT>,
 {
     acc_instances
         .0
@@ -190,14 +185,10 @@ pub fn parse_statement<
             Vec<F>,
         ),
     ),
-    ProofError,
+    WARPSumcheckProverError,
 >
 where
-    VerifierState<'a>: UnitToBytes
-        + FieldToUnitDeserialize<F>
-        + UnitToField<F>
-        + DigestToUnitDeserialize<MT>
-        + BytesToUnitDeserialize,
+    VerifierState<'a>: DigestToUnitDeserialize<MT>
 {
     // f. absorb parameters
     let mut l1_xs = vec![vec![F::default(); instance_len]; l1];
@@ -208,7 +199,7 @@ where
     // l2 instances
     let l2_roots = (0..l2)
         .map(|_| verifier_state.read_digest())
-        .collect::<Result<Vec<MT::InnerDigest>, ProofError>>()?;
+        .collect::<Result<Vec<MT::InnerDigest>, WARPSumcheckProverError>>()?;
 
     let mut l2_alphas = vec![vec![F::default(); log_n]; l2];
     l2_alphas
@@ -267,14 +258,10 @@ pub fn derive_randomness<
         Vec<F>,
         Vec<[F; 3]>,
     ),
-    ProofError,
+    WARPSumcheckProverError,
 >
 where
-    VerifierState<'a>: UnitToBytes
-        + FieldToUnitDeserialize<F>
-        + UnitToField<F>
-        + DigestToUnitDeserialize<MT>
-        + BytesToUnitDeserialize,
+    VerifierState<'a>: DigestToUnitDeserialize<MT>
 {
     let rt_0 = verifier_state.read_digest()?;
     let mut l1_mus = vec![F::default(); l1];
@@ -361,19 +348,18 @@ where
     LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
     CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
 {
-    fn add_digest(&mut self, digest: GenericDigest<N>) -> ProofResult<()> {
+    fn add_digest(&mut self, digest: GenericDigest<N>) -> std::result::Result<(), ark_crypto_primitives::Error> {
         self.add_bytes(&digest.0)
-            .map_err(ProofError::InvalidDomainSeparator)
+            .map_err(WARPSumcheckProverError::InvalidDomainSeparator)
     }
 }
 
-impl<H, U, R> HintSerialize for ProverState<H, U, R>
+impl<H, R> HintSerialize for ProverState<H, R>
 where
-    U: Unit,
-    H: DuplexSpongeInterface<U>,
+    H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
 {
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()> {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> std::result::Result<(), ark_crypto_primitives::Error> {
         let mut bytes = Vec::new();
         hint.serialize_compressed(&mut bytes)?;
         self.hint_bytes(&bytes)?;
@@ -388,19 +374,18 @@ where
     LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
     CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
 {
-    fn read_digest(&mut self) -> ProofResult<GenericDigest<N>> {
+    fn read_digest(&mut self) -> std::result::Result<ark_crypto_primitives::crh::blake3::GenericDigest<N>, ark_crypto_primitives::Error> {
         let mut digest = [0u8; N];
         self.fill_next_bytes(&mut digest)?;
         Ok(digest.into())
     }
 }
 
-impl<H, U> HintDeserialize for VerifierState<'_, H, U>
+impl<H> HintDeserialize for VerifierState<'_, H>
 where
-    U: Unit,
-    H: DuplexSpongeInterface<U>,
+    H: DuplexSpongeInterface,
 {
-    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T> {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> std::result::Result<T, ark_crypto_primitives::Error> {
         let mut bytes = self.hint_bytes()?;
         Ok(T::deserialize_compressed(&mut bytes)?)
     }

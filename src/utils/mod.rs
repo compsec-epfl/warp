@@ -1,7 +1,6 @@
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::{Error, merkle_tree::Config};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use spongefish::ProofResult;
 
 pub mod errs;
 pub mod fields;
@@ -74,19 +73,19 @@ pub trait DigestDomainSeparator<MerkleConfig: Config> {
 
 // from whir
 pub trait DigestToUnitSerialize<MerkleConfig: Config> {
-    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
+    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> Result<(), Error>;
 }
 
 // from whir
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
-    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+    fn read_digest(&mut self) -> Result<MerkleConfig::InnerDigest, Error>;
 }
 
 // from whir
 pub trait HintSerialize {
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> Result<(), Error>;
 }
 // from whir
 pub trait HintDeserialize {
-    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
+    fn hint<T: CanonicalDeserialize>(&mut self) -> Result<T, Error>;
 }
