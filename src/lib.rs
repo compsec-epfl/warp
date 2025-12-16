@@ -12,7 +12,6 @@ use ark_poly::{
     univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
     MultilinearExtension, Polynomial,
 };
-use ark_serialize::CanonicalSerialize;
 use ark_std::log2;
 use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
@@ -344,13 +343,7 @@ impl<
             .map(|vals| binary_field_elements_to_usize(vals))
             .collect();
 
-        let binary_shift_queries_answers = binary_shift_queries
-            .iter()
-            .map(|zeta_i| f_hat.fix_variables(zeta_i)[0])
-            .collect::<Vec<F>>();
-
         zetas.extend(binary_shift_queries);
-        nus.extend(binary_shift_queries_answers);
 
         // l. sumcheck polynomials
         // compute evaluations for xi
@@ -463,7 +456,7 @@ impl<
             tau,
             gamma_sumcheck,
             coeffs_twinc_sumcheck,
-            _td,
+            _rt,
             eta,
             mut nus,
             ood_samples,
@@ -720,7 +713,7 @@ pub mod test {
         traits::LinearCode,
     };
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-    use ark_ff::{PrimeField, UniformRand};
+    use ark_ff::UniformRand;
     use ark_serialize::{CanonicalSerialize, Compress};
     use rand::thread_rng;
     use spongefish::DomainSeparator;
@@ -743,7 +736,7 @@ pub mod test {
         .unwrap();
         let code_config =
             ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
-        let code = ReedSolomon::new(code_config);
+        let code = ReedSolomon::new(code_config.clone());
 
         let instances_witnesses: (Vec<Vec<BLS12_381>>, Vec<Vec<BLS12_381>>) = (0..l1)
             .map(|_| {
@@ -821,7 +814,7 @@ pub mod test {
 
         let domainsep = DomainSeparator::new("test::warp");
         let warp_config =
-            WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
+            WARPConfig::<_, R1CS<BLS12_381>>::new(4, l1, s, t, r1cs.config(), code.code_len());
 
         let hash_chain_warp = WARP::<
             BLS12_381,
