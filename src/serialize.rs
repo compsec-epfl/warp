@@ -7,9 +7,9 @@ pub struct AccWitnessSerializer<
     F: Field + PrimeField,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 > {
-    td: Vec<MT::LeafDigest>,
-    f: Vec<F>,
-    w: Vec<F>,
+    pub td: Vec<MT::LeafDigest>,
+    pub f: Vec<F>,
+    pub w: Vec<F>,
 }
 
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
@@ -76,13 +76,13 @@ pub struct ProofSerializer<
     F: Field + PrimeField,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 > {
-    rt_0: MT::InnerDigest,
-    mu_i: Vec<F>,
-    nu_0: F,
-    nu_i: Vec<F>,
-    auth_0: Vec<Path<MT>>,
-    auth_j: Vec<Vec<Path<MT>>>,
-    f_i_x_j: Vec<Vec<F>>,
+    pub rt_0: MT::InnerDigest,
+    pub mu_i: Vec<F>,
+    pub nu_0: F,
+    pub nu_i: Vec<F>,
+    pub auth_0: Vec<Path<MT>>,
+    pub auth_j: Vec<Vec<Path<MT>>>,
+    pub f_i_x_j: Vec<Vec<F>>,
 }
 
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
