@@ -13,13 +13,14 @@ use ark_poly::{
 use ark_std::log2;
 use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
-use efficient_sumcheck::experimental::inner_product::batched_constraint_poly;
-use efficient_sumcheck::experimental::inner_product::inner_product;
-use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
-use protocol::domainsep::parse_statement;
-use protocol::sumcheck::generic::{
-    self, accumulate_sparse_evaluations, compute_hypercube_eq_evals, protogalaxy,
+use efficient_sumcheck::{
+    accumulate_sparse_evaluations, batched_constraint_poly,
+    coefficient_sumcheck::coefficient_sumcheck,
+    folding::protogalaxy,
+    inner_product_sumcheck, 
+    hypercube::Hypercube, order_strategy::AscendingOrder,
 };
+use protocol::domainsep::parse_statement;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
@@ -50,6 +51,17 @@ pub mod utils;
 
 use ark_crypto_primitives::Error;
 use utils::errs::{WARPDeciderError, WARPProverError, WARPSumcheckVerifierError, WARPVerifierError};
+
+fn compute_hypercube_eq_evals<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
+    Hypercube::<AscendingOrder>::new(num_variables)
+        .map(|(index, _)| {
+            (0..num_variables).fold(F::one(), |acc, j| {
+                let bit = F::from((index >> j & 1) as u64);
+                acc * (point[j] * bit + (F::one() - point[j]) * (F::one() - bit))
+            })
+        })
+        .collect()
+}
 
 
 
@@ -262,7 +274,7 @@ impl<
         let mut pw = [tau_eq_evals]; // tau
 
         let r1cs = self.p.constraints();
-        let gamma = generic::sumcheck_prove(
+        let sc = coefficient_sumcheck(
             |tablewise, pairwise| {
                 let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
                 let tau = &pairwise[0];
@@ -305,7 +317,8 @@ impl<
             &mut pw,
             log_l,
             prover_state,
-        )?;
+        );
+        let gamma = sc.verifier_messages;
 
         debug_assert_eq!(gamma.len(), log_l);
 
@@ -410,7 +423,7 @@ impl<
         let id_non_0_eval_sums = accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
 
         // call efficient sumcheck for batched_constraint checks
-        let alpha = inner_product(
+        let alpha = inner_product_sumcheck(
             &mut f.clone(),
             &mut batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
             prover_state,
