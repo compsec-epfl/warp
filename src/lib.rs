@@ -55,6 +55,24 @@ use utils::errs::{
     WARPDeciderError, WARPProverError, WARPSumcheckVerifierError, WARPVerifierError,
 };
 
+/// Degree-1 polynomial interpolating two field elements: `lo + (hi - lo)·X`.
+fn linear_poly<F: Field>(lo: F, hi: F) -> DensePolynomial<F> {
+    DensePolynomial::from_coefficients_vec(vec![lo, hi - lo])
+}
+
+/// Evaluate one R1CS constraint `Az·Bz - Cz` as a degree-2 polynomial
+/// from two witness vectors `z0`, `z1`.
+fn eval_r1cs_constraint_poly<F: Field>(
+    (a, b, c): &(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>),
+    z0: &[F],
+    z1: &[F],
+) -> DensePolynomial<F> {
+    let eval = |lc: &[(F, usize)], z: &[F]| lc.iter().map(|(t, i)| z[*i] * t).sum::<F>();
+    let (a0, b0, c0) = (eval(a, z0), eval(b, z0), eval(c, z0));
+    let (a1, b1, c1) = (eval(a, z1) - a0, eval(b, z1) - b0, eval(c, z1) - c0);
+    DensePolynomial::from_coefficients_vec(vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1])
+}
+
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
 }
@@ -267,35 +285,26 @@ impl<
             |tablewise, pairwise| {
                 let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
                 let tau = &pairwise[0];
+
                 let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
                     protogalaxy::fold(
                         a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
                         u[0].iter()
                             .zip(&u[1])
-                            .map(|(&l, &r)| DensePolynomial::from_coefficients_vec(vec![l, r - l]))
-                            .collect::<Vec<_>>(),
+                            .map(|(&l, &r)| linear_poly(l, r))
+                            .collect(),
                     )
                 });
                 let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
                     protogalaxy::fold(
                         b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
                         r1cs.iter()
-                            .map(|(a, b, c)| {
-                                let a0 = a.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
-                                let a1 = a.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - a0;
-                                let b0 = b.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
-                                let b1 = b.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - b0;
-                                let c0 = c.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
-                                let c1 = c.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - c0;
-                                vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1]
-                            })
-                            .map(DensePolynomial::from_coefficients_vec)
-                            .collect::<Vec<_>>(),
+                            .map(|c| eval_r1cs_constraint_poly(c, &z[0], &z[1]))
+                            .collect(),
                     )
                 });
-                let t_iter = tau
-                    .chunks(2)
-                    .map(|t| DensePolynomial::from_coefficients_vec(vec![t[0], t[1] - t[0]]));
+                let t_iter = tau.chunks(2).map(|t| linear_poly(t[0], t[1]));
+
                 f_iter
                     .zip(p_iter)
                     .zip(t_iter)
