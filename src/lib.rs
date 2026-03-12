@@ -73,6 +73,49 @@ fn eval_r1cs_constraint_poly<F: Field>(
     DensePolynomial::from_coefficients_vec(vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1])
 }
 
+/// Compute the twin-constraint round polynomial `h(X)`.
+///
+/// Proves `∑_i τ(i) · (f(i) + ω · p(i)) = 0` via protogalaxy folding, where:
+///   - `f(X)` = `fold(α, oracle_evals)` — folded codeword check
+///   - `p(X)` = `fold(β, Az·Bz - Cz)`  — folded R1CS constraint check
+///   - `t(X)` = linear interpolation of τ — equality polynomial
+///
+/// Returns `h(X) = Σ (f(X) + ω·p(X)) · t(X)`.
+fn twin_constraint_round_poly<F: Field>(
+    tablewise: &[Vec<Vec<F>>],
+    pairwise: &[Vec<F>],
+    r1cs: &R1CSConstraints<F>,
+    omega: F,
+) -> DensePolynomial<F> {
+    let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
+    let tau = &pairwise[0];
+
+    let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
+        protogalaxy::fold(
+            a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
+            u[0].iter()
+                .zip(&u[1])
+                .map(|(&l, &r)| linear_poly(l, r))
+                .collect(),
+        )
+    });
+    let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
+        protogalaxy::fold(
+            b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
+            r1cs.iter()
+                .map(|c| eval_r1cs_constraint_poly(c, &z[0], &z[1]))
+                .collect(),
+        )
+    });
+    let t_iter = tau.chunks(2).map(|t| linear_poly(t[0], t[1]));
+
+    f_iter
+        .zip(p_iter)
+        .zip(t_iter)
+        .map(|((f, p), t)| (f + p * omega).naive_mul(&t))
+        .fold(DensePolynomial::zero(), |acc, r| acc + r)
+}
+
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
 }
@@ -272,6 +315,7 @@ impl<
 
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
 
+        // Twin Constraint sumcheck
         let mut tablewise = [
             concat_slices(&acc_witnesses.1, &codewords), // u
             z_vecs,                                      // z
@@ -282,35 +326,7 @@ impl<
 
         let r1cs = self.p.constraints();
         let sc = coefficient_sumcheck(
-            |tablewise, pairwise| {
-                let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
-                let tau = &pairwise[0];
-
-                let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
-                    protogalaxy::fold(
-                        a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
-                        u[0].iter()
-                            .zip(&u[1])
-                            .map(|(&l, &r)| linear_poly(l, r))
-                            .collect(),
-                    )
-                });
-                let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
-                    protogalaxy::fold(
-                        b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
-                        r1cs.iter()
-                            .map(|c| eval_r1cs_constraint_poly(c, &z[0], &z[1]))
-                            .collect(),
-                    )
-                });
-                let t_iter = tau.chunks(2).map(|t| linear_poly(t[0], t[1]));
-
-                f_iter
-                    .zip(p_iter)
-                    .zip(t_iter)
-                    .map(|((f, p), t)| (f + p * omega).naive_mul(&t))
-                    .fold(DensePolynomial::zero(), |acc, r| acc + r)
-            },
+            |tw, pw| twin_constraint_round_poly(tw, pw, &r1cs, omega),
             &mut tablewise,
             &mut pw,
             log_l,
