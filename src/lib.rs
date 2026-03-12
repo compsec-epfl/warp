@@ -17,8 +17,9 @@ use efficient_sumcheck::{
     accumulate_sparse_evaluations, batched_constraint_poly,
     coefficient_sumcheck::coefficient_sumcheck,
     folding::protogalaxy,
-    inner_product_sumcheck, 
-    hypercube::Hypercube, order_strategy::AscendingOrder,
+    hypercube::{compute_hypercube_eq_evals, Hypercube},
+    inner_product_sumcheck,
+    order_strategy::AscendingOrder,
 };
 use protocol::domainsep::parse_statement;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
@@ -50,21 +51,9 @@ pub mod traits;
 pub mod utils;
 
 use ark_crypto_primitives::Error;
-use utils::errs::{WARPDeciderError, WARPProverError, WARPSumcheckVerifierError, WARPVerifierError};
-
-fn compute_hypercube_eq_evals<F: Field>(num_variables: usize, point: &[F]) -> Vec<F> {
-    Hypercube::<AscendingOrder>::new(num_variables)
-        .map(|(index, _)| {
-            (0..num_variables).fold(F::one(), |acc, j| {
-                let bit = F::from((index >> j & 1) as u64);
-                acc * (point[j] * bit + (F::one() - point[j]) * (F::one() - bit))
-            })
-        })
-        .collect()
-}
-
-
-
+use utils::errs::{
+    WARPDeciderError, WARPProverError, WARPSumcheckVerifierError, WARPVerifierError,
+};
 
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
@@ -267,9 +256,9 @@ impl<
 
         let mut tablewise = [
             concat_slices(&acc_witnesses.1, &codewords), // u
-            z_vecs,                                       // z
-            alpha_vecs,                                   // a
-            beta_vecs,                                    // b
+            z_vecs,                                      // z
+            alpha_vecs,                                  // a
+            beta_vecs,                                   // b
         ];
         let mut pw = [tau_eq_evals]; // tau
 
@@ -420,7 +409,8 @@ impl<
             .collect::<Vec<_>>();
 
         // [CBBZ23] optimization from hyperplonk
-        let id_non_0_eval_sums = accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
+        let id_non_0_eval_sums =
+            accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
 
         // call efficient sumcheck for batched_constraint checks
         let alpha = inner_product_sumcheck(
@@ -775,7 +765,7 @@ pub mod test {
         traits::LinearCode,
     };
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-    use ark_ff::{UniformRand};
+    use ark_ff::UniformRand;
     use ark_serialize::{CanonicalSerialize, Compress};
     use rand::thread_rng;
     use spongefish::DomainSeparator;
@@ -939,7 +929,7 @@ pub mod test {
         println!("narg_str size: {}", narg_str.len());
     }
 
-     #[test]
+    #[test]
     pub fn warp_test_small_field() {
         use crate::utils::fields::SmallGoldilocks;
 
@@ -988,14 +978,13 @@ pub mod test {
         .unwrap();
 
         let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-        let hash_chain_warp = WARP::<
-            SmallGoldilocks,
-            R1CS<SmallGoldilocks>,
-            _,
-            Blake3MerkleTreeParams<SmallGoldilocks>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
-        );
+        let hash_chain_warp =
+            WARP::<
+                SmallGoldilocks,
+                R1CS<SmallGoldilocks>,
+                _,
+                Blake3MerkleTreeParams<SmallGoldilocks>,
+            >::new(warp_config.clone(), code.clone(), r1cs.clone(), (), ());
 
         let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
             (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -1034,17 +1023,22 @@ pub mod test {
 
         let domainsep = DomainSeparator::new("test::warp");
         // Use 8 (2*l1) for the total accumulation size to test multi-instance accumulation
-        let warp_config =
-            WARPConfig::<_, R1CS<SmallGoldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-
-        let hash_chain_warp = WARP::<
-            SmallGoldilocks,
-            R1CS<SmallGoldilocks>,
-            _,
-            Blake3MerkleTreeParams<SmallGoldilocks>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
+        let warp_config = WARPConfig::<_, R1CS<SmallGoldilocks>>::new(
+            8,
+            l1,
+            s,
+            t,
+            r1cs.config(),
+            code.code_len(),
         );
+
+        let hash_chain_warp =
+            WARP::<
+                SmallGoldilocks,
+                R1CS<SmallGoldilocks>,
+                _,
+                Blake3MerkleTreeParams<SmallGoldilocks>,
+            >::new(warp_config.clone(), code.clone(), r1cs.clone(), (), ());
         let domainsep = WARPDomainSeparator::<
             SmallGoldilocks,
             ReedSolomon<SmallGoldilocks>,
