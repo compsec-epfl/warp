@@ -1,5 +1,3 @@
-use crate::protocol::sumcheck::cbbz23;
-use crate::protocol::sumcheck::compute_hypercube_evaluations;
 use crate::traits::AccumulationScheme;
 use crate::utils::errs::WARPError;
 use ark_codes::traits::LinearCode;
@@ -7,12 +5,11 @@ use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
 };
-use ark_ff::{Field, PrimeField};
+use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{
     univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
     MultilinearExtension, Polynomial,
 };
-use ark_serialize::CanonicalSerialize;
 use ark_std::log2;
 use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
@@ -20,7 +17,9 @@ use efficient_sumcheck::experimental::inner_product::batched_constraint_poly;
 use efficient_sumcheck::experimental::inner_product::inner_product;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 use protocol::domainsep::parse_statement;
-use protocol::sumcheck::WARPSumcheckVerifierError;
+use protocol::sumcheck::generic::{
+    self, accumulate_sparse_evaluations, compute_hypercube_eq_evals, protogalaxy,
+};
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
@@ -39,10 +38,6 @@ use utils::{
 
 use config::WARPConfig;
 use protocol::domainsep::{absorb_accumulated_instances, absorb_instances, derive_randomness};
-use protocol::sumcheck::{
-    twin_constraint_pseudo_batching::{Evals, TwinConstraintPseudoBatchingSumcheck},
-    Sumcheck,
-};
 
 pub mod config;
 pub mod constraints;
@@ -54,7 +49,10 @@ pub mod traits;
 pub mod utils;
 
 use ark_crypto_primitives::Error;
-use utils::errs::{WARPDeciderError, WARPProverError, WARPVerifierError};
+use utils::errs::{WARPDeciderError, WARPProverError, WARPSumcheckVerifierError, WARPVerifierError};
+
+
+
 
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
@@ -255,25 +253,68 @@ impl<
 
         let beta_vecs: Vec<Vec<F>> = acc_instances.3 .0.into_iter().chain(taus).collect();
 
-        let mut evals = Evals::new(
-            concat_slices(&acc_witnesses.1, &codewords),
-            z_vecs,
-            alpha_vecs,
-            beta_vecs,
-            tau_eq_evals,
-        );
+        let mut tablewise = [
+            concat_slices(&acc_witnesses.1, &codewords), // u
+            z_vecs,                                       // z
+            alpha_vecs,                                   // a
+            beta_vecs,                                    // b
+        ];
+        let mut pw = [tau_eq_evals]; // tau
 
-        let gamma = TwinConstraintPseudoBatchingSumcheck::prove(
-            prover_state,
-            &mut evals,
-            &(self.p.constraints(), omega),
+        let r1cs = self.p.constraints();
+        let gamma = generic::sumcheck_prove(
+            |tablewise, pairwise| {
+                let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
+                let tau = &pairwise[0];
+                let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
+                    protogalaxy::fold(
+                        a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
+                        u[0].iter()
+                            .zip(&u[1])
+                            .map(|(&l, &r)| DensePolynomial::from_coefficients_vec(vec![l, r - l]))
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
+                    protogalaxy::fold(
+                        b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
+                        r1cs.iter()
+                            .map(|(a, b, c)| {
+                                let a0 = a.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                                let a1 = a.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - a0;
+                                let b0 = b.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                                let b1 = b.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - b0;
+                                let c0 = c.iter().map(|(t, i)| z[0][*i] * t).sum::<F>();
+                                let c1 = c.iter().map(|(t, i)| z[1][*i] * t).sum::<F>() - c0;
+                                vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1]
+                            })
+                            .map(DensePolynomial::from_coefficients_vec)
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                let t_iter = tau
+                    .chunks(2)
+                    .map(|t| DensePolynomial::from_coefficients_vec(vec![t[0], t[1] - t[0]]));
+                f_iter
+                    .zip(p_iter)
+                    .zip(t_iter)
+                    .map(|((f, p), t)| (f + p * omega).naive_mul(&t))
+                    .fold(DensePolynomial::zero(), |acc, r| acc + r)
+            },
+            &mut tablewise,
+            &mut pw,
             log_l,
+            prover_state,
         )?;
 
         debug_assert_eq!(gamma.len(), log_l);
 
-        // e. new oracle and target
-        let (f, z, zeta_0, beta_tau) = evals.get_last_evals()?;
+        // e. new oracle and target — after log_l rounds each group has one table left
+        let [mut u_red, mut z_red, mut a_red, mut b_red] = tablewise;
+        let f = u_red.pop().unwrap();
+        let z = z_red.pop().unwrap();
+        let zeta_0 = a_red.pop().unwrap();
+        let beta_tau = b_red.pop().unwrap();
 
         // eval the bundled r1cs
         let beta_eq_evals = (0..M).map(|i| eq_poly(&beta_tau, i)).collect::<Vec<_>>();
@@ -366,7 +407,7 @@ impl<
             .collect::<Vec<_>>();
 
         // [CBBZ23] optimization from hyperplonk
-        let id_non_0_eval_sums = cbbz23(zetas, xi_eq_evals, self.config.s, r);
+        let id_non_0_eval_sums = accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
 
         // call efficient sumcheck for batched_constraint checks
         let alpha = inner_product(
@@ -490,7 +531,7 @@ impl<
         // b.
         let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
 
-        let gamma_eq_evals = compute_hypercube_evaluations(log_l, &gamma_sumcheck);
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck);
 
         let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
@@ -508,7 +549,7 @@ impl<
 
         // d. set \sigma^{(1)} and \sigma^{(2)}
         // compute eq(\tau, i) and eq(\xi, i)
-        let tau_eq_evals = compute_hypercube_evaluations(log_l, &tau);
+        let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
 
         let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
 
@@ -519,7 +560,7 @@ impl<
                 acc + eq_tau * (mu + omega * eta)
             });
 
-        let xi_eq_evals = compute_hypercube_evaluations(log_r, &xi);
+        let xi_eq_evals = compute_hypercube_eq_evals(log_r, &xi);
 
         let sigma_2 = xi_eq_evals
             .iter()

@@ -1,6 +1,27 @@
-use crate::protocol::sumcheck::{WARPSumcheckProverError, WARPSumcheckVerifierError};
 use ark_crypto_primitives::Error;
 use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum WARPSumcheckProverError {
+    #[error(transparent)]
+    SpongeFishProofError(#[from] spongefish::ProofError),
+    #[error(transparent)]
+    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+}
+
+#[derive(Error, Debug)]
+pub enum WARPSumcheckVerifierError {
+    #[error(transparent)]
+    SpongeFishProofError(#[from] spongefish::ProofError),
+    #[error(transparent)]
+    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Found invalid number of sumcheck rounds")]
+    NumSumcheckRounds,
+    #[error("Sumcheck round verification failed")]
+    SumcheckRound,
+    #[error("Incorrect target")]
+    Target,
+}
 
 #[derive(Error, Debug)]
 pub enum WARPError {
