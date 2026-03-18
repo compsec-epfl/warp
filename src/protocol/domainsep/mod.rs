@@ -168,6 +168,8 @@ where
     Ok(())
 }
 
+pub type ParsedStatement<F, MT> = (Vec<Vec<F>>, AccInstances<F, MT>);
+
 pub fn parse_statement<
     'a,
     F: Field,
@@ -179,19 +181,7 @@ pub fn parse_statement<
     instance_len: usize,
     log_n: usize,
     #[allow(non_snake_case)] log_M: usize,
-) -> Result<
-    (
-        Vec<Vec<F>>,
-        (
-            Vec<<MT as Config>::InnerDigest>,
-            Vec<Vec<F>>,
-            Vec<F>,
-            (Vec<Vec<F>>, Vec<Vec<F>>),
-            Vec<F>,
-        ),
-    ),
-    ProofError,
->
+) -> Result<ParsedStatement<F, MT>, ProofError>
 where
     VerifierState<'a>: UnitToBytes
         + FieldToUnitDeserialize<F>
@@ -237,6 +227,25 @@ where
     ))
 }
 
+#[allow(clippy::type_complexity)]
+pub type DerivedRandomness<F, MT> = (
+    <MT as Config>::InnerDigest,
+    Vec<F>,
+    Vec<Vec<F>>,
+    F,
+    Vec<F>,
+    Vec<F>,
+    Vec<Vec<F>>,
+    <MT as Config>::InnerDigest,
+    F,
+    Vec<F>,
+    Vec<F>,
+    Vec<u8>,
+    Vec<F>,
+    Vec<F>,
+    Vec<[F; 3]>,
+);
+
 pub fn derive_randomness<
     'a,
     F: Field,
@@ -249,26 +258,7 @@ pub fn derive_randomness<
     s: usize,
     t: usize,
     #[allow(non_snake_case)] log_M: usize,
-) -> Result<
-    (
-        <MT as Config>::InnerDigest,
-        Vec<F>,
-        Vec<Vec<F>>,
-        F,
-        Vec<F>,
-        Vec<F>,
-        Vec<Vec<F>>,
-        <MT as Config>::InnerDigest,
-        F,
-        Vec<F>,
-        Vec<F>,
-        Vec<u8>,
-        Vec<F>,
-        Vec<F>,
-        Vec<[F; 3]>,
-    ),
-    ProofError,
->
+) -> Result<DerivedRandomness<F, MT>, ProofError>
 where
     VerifierState<'a>: UnitToBytes
         + FieldToUnitDeserialize<F>
