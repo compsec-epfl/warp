@@ -31,13 +31,13 @@ efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck
 thiserror = "2.0.16"
 zeroize = { version = "1.5", features = ["derive"] }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
-ark-goldilocks = { git = "https://github.com/dmpierre/ark-goldilocks.git" }
+
 
 [patch.crates-io]
 ark-crypto-primitives = { git = "https://github.com/benbencik/crypto-primitives.git", branch = "smallfp-absorb-trait" }
-ark-ff = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-ff" }
-ark-poly = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-poly" }
-ark-serialize = { git = "https://github.com/benbencik/algebra", branch = "small_fp", package = "ark-serialize" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
 
 # resolve transitive pull of spongefish from efficient-sumcheck
 [patch."https://github.com/arkworks-rs/spongefish"]
