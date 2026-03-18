@@ -67,9 +67,7 @@ pub struct AccInstanceSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     AccInstanceSerializer<F, MT>
 {
-    pub fn new(
-        acc_instance: AccInstanceTuple<F, MT>,
-    ) -> Self {
+    pub fn new(acc_instance: AccInstanceTuple<F, MT>) -> Self {
         assert_eq!(acc_instance.0.len(), 1);
         assert_eq!(acc_instance.1.len(), 1);
         assert_eq!(acc_instance.2.len(), 1);
@@ -104,9 +102,7 @@ pub struct ProofSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     ProofSerializer<F, MT>
 {
-    pub fn new(
-        proof: ProofTuple<F, MT>,
-    ) -> Self {
+    pub fn new(proof: ProofTuple<F, MT>) -> Self {
         Self {
             rt_0: proof.0,
             mu_i: proof.1,
