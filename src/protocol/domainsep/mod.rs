@@ -6,8 +6,6 @@ use spongefish::{
     Decoding, Encoding, NargDeserialize, ProverState, VerificationResult, VerifierState,
 };
 
-
-
 pub type AccInstances<F, MT> = (
     Vec<<MT as Config>::InnerDigest>, // rt
     Vec<Vec<F>>,                      // alpha
@@ -247,4 +245,3 @@ pub fn derive_randomness<
         sums_batching_sumcheck,
     ))
 }
-
