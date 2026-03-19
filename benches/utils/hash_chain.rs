@@ -5,7 +5,7 @@ use ark_crypto_primitives::{
     sponge::{poseidon::PoseidonConfig, Absorb},
 };
 use ark_ff::PrimeField;
-use rand::Rng;
+use ark_std::rand::Rng;
 use warp::relations::{
     r1cs::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},

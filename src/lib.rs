@@ -801,7 +801,7 @@ pub mod test {
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
     use ark_ff::UniformRand;
     use ark_serialize::{CanonicalSerialize, Compress};
-    use rand::thread_rng;
+    use ark_std::rand::thread_rng;
 
     use std::marker::PhantomData;
 

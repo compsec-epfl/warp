@@ -4,7 +4,7 @@ use ark_crypto_primitives::{
     sponge::Absorb,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
+use ark_std::rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 use std::{hash::Hash, marker::PhantomData};
