@@ -1,6 +1,5 @@
 use ark_ff::{Field, PrimeField};
 
-pub mod errs;
 pub mod fields;
 pub mod poly;
 pub mod poseidon;

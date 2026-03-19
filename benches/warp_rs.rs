@@ -15,7 +15,7 @@ use warp::WARP;
 mod utils;
 use utils::poseidon;
 use warp::relations::BundledPESAT;
-use warp::utils::fields::Goldilocks as Field64;
+use warp::utils::fields::Goldilocks;
 
 const HASHCHAIN_SIZE: usize = 800;
 
@@ -73,7 +73,7 @@ pub fn bench_rs_warp(c: &mut Criterion) {
 }
 
 pub fn bench_rs_warp_fields(c: &mut Criterion) {
-    pub type F = Field64;
+    pub type F = Goldilocks;
     let mut rng = thread_rng();
     let poseidon_config = poseidon::initialize_poseidon_config::<F>();
     let r1cs = get_hashchain_r1cs(&poseidon_config, HASHCHAIN_SIZE);

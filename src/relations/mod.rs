@@ -6,7 +6,7 @@ pub use description::SerializableConstraintMatrices;
 use ark_ff::Field;
 use r1cs::R1CS;
 
-use crate::WARPError;
+use crate::error::WARPError;
 
 pub trait Relation<F: Field> {
     type Instance;

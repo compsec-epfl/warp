@@ -22,7 +22,7 @@ pub use witness::HashChainWitness;
 
 use super::R1CS;
 use crate::relations::ToPolySystem;
-use crate::utils::errs::WARPError;
+use crate::error::WARPError;
 
 impl<
         F: PrimeField + Absorb,

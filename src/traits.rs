@@ -2,7 +2,7 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use spongefish::{ProverState, VerificationResult, VerifierState};
 
-use crate::utils::errs::{WARPError, WARPProverError, WARPVerifierError};
+use crate::error::{ProverError, VerifierError, WARPError};
 
 pub type WARPAccumResult<F, MT, S> = (
     (
@@ -37,7 +37,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         instances: Self::Instances,
         acc_instances: Self::AccumulatorInstances,
         acc_witnesses: Self::AccumulatorWitnesses,
-    ) -> Result<WARPAccumResult<F, MT, Self>, WARPProverError>;
+    ) -> Result<WARPAccumResult<F, MT, Self>, ProverError>;
 
     fn verify<'a>(
         &self,
@@ -45,7 +45,7 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         verifier_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> Result<(), WARPVerifierError>;
+    ) -> Result<(), VerifierError>;
 
     fn decide(
         &self,
