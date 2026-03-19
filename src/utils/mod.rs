@@ -1,5 +1,4 @@
 use ark_ff::{Field, PrimeField};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod errs;
 pub mod fields;
@@ -54,12 +53,4 @@ pub fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     });
 
     result
-}
-
-pub trait HintSerialize {
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T);
-}
-
-pub trait HintDeserialize {
-    fn hint<T: CanonicalDeserialize>(&mut self) -> spongefish::VerificationResult<T>;
 }

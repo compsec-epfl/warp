@@ -1,14 +1,12 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 
 use spongefish::{
-    Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState, VerificationResult,
-    VerifierState,
+    Decoding, Encoding, NargDeserialize, ProverState, VerificationResult, VerifierState,
 };
 
-use crate::utils::{HintDeserialize, HintSerialize};
+
 
 pub type AccInstances<F, MT> = (
     Vec<<MT as Config>::InnerDigest>, // rt
@@ -250,36 +248,3 @@ pub fn derive_randomness<
     ))
 }
 
-// Hint implementations for the new ProverState / VerifierState
-impl<H, R> HintSerialize for ProverState<H, R>
-where
-    H: DuplexSpongeInterface<U = u8>,
-    R: rand::RngCore + rand::CryptoRng,
-{
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) {
-        let mut bytes = Vec::new();
-        hint.serialize_compressed(&mut bytes)
-            .expect("hint serialization failed");
-        // Write length as u32, then the raw bytes as a slice
-        self.prover_message(&(bytes.len() as u32));
-        self.prover_message(&bytes);
-    }
-}
-
-impl<H> HintDeserialize for VerifierState<'_, H>
-where
-    H: DuplexSpongeInterface<U = u8>,
-{
-    fn hint<T: CanonicalDeserialize>(&mut self) -> VerificationResult<T> {
-        // Read the length first
-        let len: u32 = self.prover_message()?;
-        // Read exact number of bytes one at a time
-        let bytes: Vec<u8> = (0..len)
-            .map(|_| self.prover_message::<[u8; 1]>())
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|b| b[0])
-            .collect();
-        T::deserialize_compressed(&mut bytes.as_slice()).map_err(|_| spongefish::VerificationError)
-    }
-}
