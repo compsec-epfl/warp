@@ -1,7 +1,5 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use spongefish::ProofResult;
 
 pub mod errs;
 pub mod fields;
@@ -64,29 +62,10 @@ pub fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
     result
 }
 
-// we copy instead of import from whir since we would like to implement the `DigestDomainSeparator` trait
-// as well on `DomainSeparator`
-// https://github.com/WizardOfMenlo/whir/blob/22c675807fc9295fef68a11945713dc3e184e1c1/src/whir/domainsep.rs#L11
-pub trait DigestDomainSeparator<MerkleConfig: Config> {
-    #[must_use]
-    fn add_digest(self, label: &str) -> Self;
-}
-
-// from whir
-pub trait DigestToUnitSerialize<MerkleConfig: Config> {
-    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
-}
-
-// from whir
-pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
-    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
-}
-
-// from whir
 pub trait HintSerialize {
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T);
 }
-// from whir
+
 pub trait HintDeserialize {
-    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
+    fn hint<T: CanonicalDeserialize>(&mut self) -> spongefish::VerificationResult<T>;
 }

@@ -2,7 +2,8 @@ use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::reed_solomon::config::ReedSolomonConfig;
 use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
-use ark_goldilocks::fields::fp::Fp as Field64;
+// use ark_goldilocks::fields::fp::Fp as Field64;
+
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_domain_sep;
@@ -15,6 +16,7 @@ use warp::WARP;
 mod utils;
 use utils::poseidon;
 use warp::relations::BundledPESAT;
+use warp::utils::fields::SmallGoldilocks as Field64;
 
 const HASHCHAIN_SIZE: usize = 800;
 

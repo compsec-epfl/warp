@@ -3,24 +3,32 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WARPSumcheckProverError {
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Spongefish verification error")]
+    SpongeFishVerificationError,
+}
+
+impl From<spongefish::VerificationError> for WARPSumcheckProverError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFishVerificationError
+    }
 }
 
 #[derive(Error, Debug)]
 pub enum WARPSumcheckVerifierError {
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Spongefish verification error")]
+    SpongeFishVerificationError,
     #[error("Found invalid number of sumcheck rounds")]
     NumSumcheckRounds,
     #[error("Sumcheck round verification failed")]
     SumcheckRound,
     #[error("Incorrect target")]
     Target,
+}
+
+impl From<spongefish::VerificationError> for WARPSumcheckVerifierError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFishVerificationError
+    }
 }
 
 #[derive(Error, Debug)]
@@ -51,24 +59,26 @@ pub enum WARPError {
 pub enum WARPProverError {
     #[error(transparent)]
     ArkError(#[from] Error),
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Spongefish verification error")]
+    SpongeFishVerificationError,
     #[error(transparent)]
     SumcheckError(#[from] WARPSumcheckProverError),
     #[error("Expected eval, got None")]
     EmptyEval,
 }
 
+impl From<spongefish::VerificationError> for WARPProverError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFishVerificationError
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum WARPVerifierError {
     #[error(transparent)]
     ArkError(#[from] Error),
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Spongefish verification error")]
+    SpongeFishVerificationError,
     #[error("Invalid new code evaluation point")]
     CodeEvaluationPoint,
     #[error("Invalid new circuit evaluation point")]
@@ -83,6 +93,12 @@ pub enum WARPVerifierError {
     NumL2Instances,
     #[error(transparent)]
     SumcheckError(#[from] WARPSumcheckVerifierError),
+}
+
+impl From<spongefish::VerificationError> for WARPVerifierError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFishVerificationError
+    }
 }
 
 #[derive(Error, Debug)]

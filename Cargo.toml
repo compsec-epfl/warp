@@ -23,11 +23,10 @@ rand = "0.8"
 rayon = { version = "1.11.0" }
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/benbencik/spongefish.git", branch = "smallfp-unit-impl", features = [
-    "arkworks-algebra",
+spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = [
+    "ark-ff",
 ] }
-spongefish-poseidon = { git = "https://github.com/benbencik/spongefish.git", package = "spongefish-poseidon", branch = "smallfp-unit-impl" }
-efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
+efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/bump-spongefish" }
 thiserror = "2.0.16"
 zeroize = { version = "1.5", features = ["derive"] }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
@@ -41,8 +40,7 @@ ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
 
 # resolve transitive pull of spongefish from efficient-sumcheck
 [patch."https://github.com/arkworks-rs/spongefish"]
-spongefish = { git = "https://github.com/benbencik/spongefish.git", branch = "smallfp-unit-impl" }
-spongefish-poseidon = { git = "https://github.com/benbencik/spongefish.git", package = "spongefish-poseidon", branch = "smallfp-unit-impl" }
+spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support" }
 
 [dev-dependencies]
 ark-bls12-381 = "0.5.0"

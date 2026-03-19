@@ -24,11 +24,7 @@ use efficient_sumcheck::{
 };
 use protocol::domainsep::parse_statement;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField},
-    BytesToUnitDeserialize, BytesToUnitSerialize, ProofError, ProofResult, ProverState,
-    UnitToBytes, VerifierState,
-};
+use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 use utils::binary_field_elements_to_usize;
 use utils::byte_to_binary_field_array;
@@ -36,7 +32,6 @@ use utils::scale_and_sum;
 use utils::{
     concat_slices,
     poly::{eq_poly, eq_poly_non_binary},
-    DigestToUnitDeserialize, DigestToUnitSerialize,
 };
 
 use config::WARPConfig;
@@ -85,11 +80,15 @@ fn eval_r1cs_constraint_poly<F: Field>(
 ///   - `t(X)` = linear interpolation of τ — equality polynomial
 ///
 /// Returns `h(X) = Σ (f(X) + ω·p(X)) · t(X)`.
+///
+/// `expected_num_coeffs` is the number of coefficients the verifier expects to read.
+/// The result is padded with zeros to ensure the prover always writes exactly that many.
 fn twin_constraint_round_poly<F: Field>(
     tablewise: &[Vec<Vec<F>>],
     pairwise: &[Vec<F>],
     r1cs: &R1CSConstraints<F>,
     omega: F,
+    expected_num_coeffs: usize,
 ) -> DensePolynomial<F> {
     let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
     let tau = &pairwise[0];
@@ -113,11 +112,16 @@ fn twin_constraint_round_poly<F: Field>(
     });
     let t_iter = tau.chunks(2).map(|t| linear_poly(t[0], t[1]));
 
-    f_iter
+    let mut h = f_iter
         .zip(p_iter)
         .zip(t_iter)
         .map(|((f, p), t)| (f + p * omega).naive_mul(&t))
-        .fold(DensePolynomial::zero(), |acc, r| acc + r)
+        .fold(DensePolynomial::zero(), |acc, r| acc + r);
+
+    // Pad coefficients to the expected count so the prover writes exactly
+    // as many field elements as the verifier reads in derive_randomness.
+    h.coeffs.resize(expected_num_coeffs, F::zero());
+    h
 }
 
 pub trait BoolResult {
@@ -170,7 +174,7 @@ impl<
 }
 
 impl<
-        F: Field + PrimeField,
+        F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
         P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
         MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
@@ -206,12 +210,14 @@ impl<
     fn index(
         prover_state: &mut ProverState,
         index: Self::Index,
-    ) -> ProofResult<(Self::ProverKey, Self::VerifierKey)> {
+    ) -> spongefish::VerificationResult<(Self::ProverKey, Self::VerifierKey)> {
         let (m, n, k) = index.config();
         // initialize prover state for fs
         // TODO for R1CS
-        prover_state.add_bytes(&index.description())?;
-        prover_state.add_scalars(&[F::from(m as u32), F::from(n as u32), F::from(k as u32)])?;
+        prover_state.public_message(&index.description());
+        prover_state.prover_message(&F::from(m as u32));
+        prover_state.prover_message(&F::from(n as u32));
+        prover_state.prover_message(&F::from(k as u32));
         Ok(((index.clone(), m, n, k), (m, n, k)))
     }
 
@@ -229,10 +235,7 @@ impl<
             Self::Proof,
         ),
         WARPProverError,
-    >
-    where
-        ProverState: UnitToField<F> + UnitToBytes + DigestToUnitSerialize<MT>,
-    {
+    > {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.0.len(), acc_instances.0.len());
@@ -256,8 +259,8 @@ impl<
 
         // b. and c. statements and accumulators
         // d. absorb parameters
-        absorb_instances(prover_state, &instances)?;
-        absorb_accumulated_instances(prover_state, &acc_instances)?;
+        absorb_instances(prover_state, &instances);
+        absorb_accumulated_instances::<F, MT>(prover_state, &acc_instances);
 
         ////////////////////////
         // 2. PESAT Reduction
@@ -279,25 +282,34 @@ impl<
         )?;
 
         // d. absorb commitment and code evaluations
-        prover_state.add_digest(td_0.root())?;
-        prover_state.add_scalars(&mus)?;
+        let root_bytes: [u8; 32] = td_0
+            .root()
+            .as_ref()
+            .try_into()
+            .expect("root must be 32 bytes");
+        prover_state.prover_message(&root_bytes);
+        for mu in &mus {
+            prover_state.prover_message(mu);
+        }
 
         // e. zero check randomness and f. bundled evaluations
         let mut taus = vec![vec![F::default(); log_M]; l1];
 
         for tau in taus.iter_mut().take(l1) {
-            let mut tau_i = vec![F::default(); log_M];
-            prover_state.fill_challenge_scalars(&mut tau_i)?;
-            *tau = tau_i; // bundled evaluations
+            *tau = (0..log_M)
+                .map(|_| prover_state.verifier_message::<F>())
+                .collect();
         }
 
         ////////////////////////
         // 3. Constrained Code Accumulation
         ////////////////////////
         // a. zero check randomness
-        let [omega] = prover_state.challenge_scalars::<1>()?;
-        let mut tau = vec![F::default(); log_l];
-        prover_state.fill_challenge_scalars(&mut tau)?;
+        let omega: F = prover_state.verifier_message();
+
+        let tau: Vec<F> = (0..log_l)
+            .map(|_| prover_state.verifier_message())
+            .collect();
 
         // b. define [...]
         // c. sumcheck protocol
@@ -329,8 +341,9 @@ impl<
         let mut pw = [tau_eq_evals]; // tau
 
         let r1cs = self.p.constraints();
+        let expected_num_coeffs = 2 + (log_n + 1).max(log_M + 2);
         let sc = coefficient_sumcheck(
-            |tw, pw| twin_constraint_round_poly(tw, pw, r1cs, omega),
+            |tw, pw| twin_constraint_round_poly(tw, pw, r1cs, omega, expected_num_coeffs),
             &mut tablewise,
             &mut pw,
             log_l,
@@ -353,7 +366,7 @@ impl<
         let eta = self
             .p
             .evaluate_bundled(&beta_eq_evals, &z)
-            .map_err(|_| ProofError::InvalidProof)?;
+            .map_err(|_| WARPProverError::SpongeFishVerificationError)?;
 
         let (x, w) = z.split_at(N - k);
         let beta = (vec![beta_tau], vec![x.to_vec()]);
@@ -368,13 +381,20 @@ impl<
         )?;
 
         // g. absorb new commitment and target
-        prover_state.add_digest(td.root())?;
-        prover_state.add_scalars(&[eta, nu_0])?;
+        let td_root_bytes: [u8; 32] = td
+            .root()
+            .as_ref()
+            .try_into()
+            .expect("root must be 32 bytes");
+        prover_state.prover_message(&td_root_bytes);
+        prover_state.prover_message(&eta);
+        prover_state.prover_message(&nu_0);
 
         // h. ood samples
         let n_ood_samples = self.config.s * log_n;
-        let mut ood_samples = vec![F::default(); n_ood_samples];
-        prover_state.fill_challenge_scalars(&mut ood_samples)?;
+        let ood_samples: Vec<F> = (0..n_ood_samples)
+            .map(|_| prover_state.verifier_message())
+            .collect();
         let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
 
         // i. ood answers
@@ -384,7 +404,9 @@ impl<
             .collect::<Vec<F>>();
 
         // j. absorb ood answers
-        prover_state.add_scalars(&ood_answers)?;
+        for ans in &ood_answers {
+            prover_state.prover_message(ans);
+        }
 
         let mut zetas = vec![zeta_0.as_slice()];
         let mut nus = vec![nu_0];
@@ -395,11 +417,12 @@ impl<
         let r = 1 + self.config.s + self.config.t;
         let log_r = log2(r) as usize;
         let n_shift_queries = (self.config.t * log_n).div_ceil(8);
-        let mut bytes_shift_queries = vec![0u8; n_shift_queries];
-        let mut xis = vec![F::default(); log_r];
-
-        prover_state.fill_challenge_bytes(&mut bytes_shift_queries)?;
-        prover_state.fill_challenge_scalars(&mut xis)?;
+        let bytes_shift_queries: Vec<u8> = (0..n_shift_queries)
+            .map(|_| prover_state.verifier_message::<[u8; 1]>()[0])
+            .collect();
+        let xis: Vec<F> = (0..log_r)
+            .map(|_| prover_state.verifier_message())
+            .collect();
 
         // get shift queries as binary field elements
         let binary_shift_queries = bytes_shift_queries
@@ -492,14 +515,7 @@ impl<
         verifier_state: &mut VerifierState<'a>,
         acc_instance: Self::AccumulatorInstances,
         proof: Self::Proof,
-    ) -> Result<(), WARPVerifierError>
-    where
-        VerifierState<'a>: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MT>
-            + BytesToUnitDeserialize,
-    {
+    ) -> Result<(), WARPVerifierError> {
         let (l1, l) = (self.config.l1, self.config.l);
         let l2 = l - l1;
 
@@ -517,7 +533,7 @@ impl<
 
         // f. absorb parameters
         let (l1_xs, (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas)) =
-            parse_statement(verifier_state, l1, l2, N - k, log_n, log_M)?;
+            parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_M)?;
 
         ////////////////////////
         // 2. Derive randomness
@@ -538,7 +554,7 @@ impl<
             xi,
             alpha_sumcheck,
             sums_batching_sumcheck,
-        ) = derive_randomness(
+        ) = derive_randomness::<F, MT>(
             verifier_state,
             l1,
             log_n,
@@ -764,10 +780,8 @@ impl<
 
 #[cfg(test)]
 pub mod test {
+    use super::crypto::merkle::blake3::Blake3MerkleTreeParams;
     use super::AccumulationScheme;
-    use super::{
-        crypto::merkle::blake3::Blake3MerkleTreeParams, protocol::domainsep::WARPDomainSeparator,
-    };
     use crate::serialize::{AccInstanceSerializer, AccWitnessSerializer, ProofSerializer};
     use crate::{
         relations::{
@@ -791,7 +805,7 @@ pub mod test {
     use ark_ff::UniformRand;
     use ark_serialize::{CanonicalSerialize, Compress};
     use rand::thread_rng;
-    use spongefish::DomainSeparator;
+
     use std::marker::PhantomData;
 
     use super::{WARPConfig, WARP};
@@ -857,14 +871,8 @@ pub mod test {
         let (mut acc_tds, mut acc_f, mut acc_ws) = (vec![], vec![], vec![]);
 
         for _ in 0..l1 {
-            let domainsep = DomainSeparator::new("test::warp");
-
-            let domainsep = WARPDomainSeparator::<
-                BLS12_381,
-                ReedSolomon<BLS12_381>,
-                Blake3MerkleTreeParams<BLS12_381>,
-            >::warp(domainsep, warp_config.clone());
-            let mut prover_state = domainsep.to_prover_state();
+            let domainsep = spongefish::domain_separator!("test::warp");
+            let mut prover_state = domainsep.instance(&0u32).std_prover();
             let ((acc_x, acc_w), _pf) = hash_chain_warp
                 .prove(
                     (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -887,9 +895,9 @@ pub mod test {
             acc_ws.push(acc_w.2[0].clone());
         }
 
-        let domainsep = DomainSeparator::new("test::warp");
+        let domainsep = spongefish::domain_separator!("test::warp");
         let warp_config =
-            WARPConfig::<_, R1CS<BLS12_381>>::new(4, l1, s, t, r1cs.config(), code.code_len());
+            WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
         let hash_chain_warp = WARP::<
             BLS12_381,
@@ -899,13 +907,8 @@ pub mod test {
         >::new(
             warp_config.clone(), code.clone(), r1cs.clone(), (), ()
         );
-        let domainsep = WARPDomainSeparator::<
-            BLS12_381,
-            ReedSolomon<BLS12_381>,
-            Blake3MerkleTreeParams<BLS12_381>,
-        >::warp(domainsep, warp_config);
 
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = domainsep.instance(&0u32).std_prover();
         let ((acc_x, acc_w), pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -917,8 +920,9 @@ pub mod test {
             )
             .unwrap();
 
-        let narg_str = prover_state.narg_string();
-        let mut verifier_state = domainsep.to_verifier_state(narg_str);
+        let narg_str = prover_state.narg_string().to_vec();
+        let domainsep_v = spongefish::domain_separator!("test::warp");
+        let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&narg_str);
         hash_chain_warp
             .verify(
                 (r1cs.m, r1cs.n, r1cs.k),
@@ -1015,14 +1019,8 @@ pub mod test {
         let (mut acc_tds, mut acc_f, mut acc_ws) = (vec![], vec![], vec![]);
 
         for _ in 0..l1 {
-            let domainsep = DomainSeparator::new("test::warp");
-
-            let domainsep = WARPDomainSeparator::<
-                Goldilocks,
-                ReedSolomon<Goldilocks>,
-                Blake3MerkleTreeParams<Goldilocks>,
-            >::warp(domainsep, warp_config.clone());
-            let mut prover_state = domainsep.to_prover_state();
+            let domainsep = spongefish::domain_separator!("test::warp");
+            let mut prover_state = domainsep.instance(&0u32).std_prover();
             let ((acc_x, acc_w), _pf) = hash_chain_warp
                 .prove(
                     (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -1045,7 +1043,7 @@ pub mod test {
             acc_ws.push(acc_w.2[0].clone());
         }
 
-        let domainsep = DomainSeparator::new("test::warp");
+        let domainsep = spongefish::domain_separator!("test::warp");
         // Use 8 (2*l1) for the total accumulation size to test multi-instance accumulation
         let warp_config =
             WARPConfig::<_, R1CS<Goldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
@@ -1058,13 +1056,8 @@ pub mod test {
         >::new(
             warp_config.clone(), code.clone(), r1cs.clone(), (), ()
         );
-        let domainsep = WARPDomainSeparator::<
-            Goldilocks,
-            ReedSolomon<Goldilocks>,
-            Blake3MerkleTreeParams<Goldilocks>,
-        >::warp(domainsep, warp_config);
 
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = domainsep.instance(&0u32).std_prover();
         let ((acc_x, acc_w), pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -1076,8 +1069,9 @@ pub mod test {
             )
             .unwrap();
 
-        let narg_str = prover_state.narg_string();
-        let mut verifier_state = domainsep.to_verifier_state(narg_str);
+        let narg_str = prover_state.narg_string().to_vec();
+        let domainsep_v = spongefish::domain_separator!("test::warp");
+        let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&narg_str);
         hash_chain_warp
             .verify(
                 (r1cs.m, r1cs.n, r1cs.k),
