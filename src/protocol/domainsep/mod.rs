@@ -1,4 +1,3 @@
-use ark_crypto_primitives::crh::blake3::GenericDigest;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

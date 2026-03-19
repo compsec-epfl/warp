@@ -1,10 +1,8 @@
-use ark_crypto_primitives::crh::blake3::GenericDigest;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, IdentityDigestConverter},
     sponge::Absorb,
 };
-use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use serde::Deserialize;
