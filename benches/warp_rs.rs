@@ -2,11 +2,10 @@ use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::reed_solomon::config::ReedSolomonConfig;
 use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
-// use ark_goldilocks::fields::fp::Fp as Field64;
 
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use utils::domainsep::init_domain_sep;
+use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WARPConfig;
 use warp::crypto::merkle::blake3::Blake3MerkleTreeParams;
@@ -16,7 +15,7 @@ use warp::WARP;
 mod utils;
 use utils::poseidon;
 use warp::relations::BundledPESAT;
-use warp::utils::fields::SmallGoldilocks as Field64;
+use warp::utils::fields::Goldilocks as Field64;
 
 const HASHCHAIN_SIZE: usize = 800;
 
@@ -52,13 +51,7 @@ pub fn bench_rs_warp(c: &mut Criterion) {
             |b, instance_witnesses| {
                 b.iter_with_setup(
                     || {
-                        let domainsep = init_domain_sep::<
-                            _,
-                            ReedSolomon<_>,
-                            Blake3MerkleTreeParams<BLS12_381>,
-                            _,
-                        >("warp::rs", warp_config.clone());
-                        let prover_state = domainsep.to_prover_state();
+                        let prover_state = init_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
                     |(mut prover_state, _x_w)| {
@@ -112,13 +105,7 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
             |b, instance_witnesses| {
                 b.iter_with_setup(
                     || {
-                        let domainsep = init_domain_sep::<
-                            _,
-                            ReedSolomon<_>,
-                            Blake3MerkleTreeParams<Field64>,
-                            _,
-                        >("warp::rs", warp_config.clone());
-                        let prover_state = domainsep.to_prover_state();
+                        let prover_state = init_prover_state();
                         (prover_state, instance_witnesses.clone())
                     },
                     |(mut prover_state, _x_w)| {
