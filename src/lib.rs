@@ -387,9 +387,7 @@ impl<
 
         // h. ood samples
         let n_ood_samples = self.config.s * log_n;
-        let ood_samples: Vec<F> = (0..n_ood_samples)
-            .map(|_| prover_state.verifier_message())
-            .collect();
+        let ood_samples = prover_state.verifier_messages_vec::<F>(n_ood_samples);
         let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
 
         // i. ood answers
