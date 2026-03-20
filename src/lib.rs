@@ -304,9 +304,7 @@ impl<
         // a. zero check randomness
         let omega: F = prover_state.verifier_message();
 
-        let tau: Vec<F> = (0..log_l)
-            .map(|_| prover_state.verifier_message())
-            .collect();
+        let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
         // b. define [...]
         // c. sumcheck protocol
