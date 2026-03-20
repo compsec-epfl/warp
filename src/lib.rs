@@ -290,13 +290,9 @@ impl<
         prover_state.prover_messages(&mus);
 
         // e. zero check randomness and f. bundled evaluations
-        let mut taus = vec![vec![F::default(); log_M]; l1];
-
-        for tau in taus.iter_mut().take(l1) {
-            *tau = (0..log_M)
-                .map(|_| prover_state.verifier_message::<F>())
-                .collect();
-        }
+        let taus = (0..l1)
+            .map(|_| prover_state.verifier_messages_vec::<F>(log_M))
+            .collect::<Vec<_>>();
 
         ////////////////////////
         // 3. Constrained Code Accumulation
