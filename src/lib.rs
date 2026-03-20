@@ -397,9 +397,7 @@ impl<
             .collect::<Vec<F>>();
 
         // j. absorb ood answers
-        for ans in &ood_answers {
-            prover_state.prover_message(ans);
-        }
+        prover_state.prover_messages(&ood_answers);
 
         let mut zetas = vec![zeta_0.as_slice()];
         let mut nus = vec![nu_0];
