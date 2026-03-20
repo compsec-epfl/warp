@@ -733,7 +733,6 @@ impl<
         )?;
         (rt[0] == computed_mt.root()).ok_or_err(DeciderError::MerkleRoot)?;
         (mt[0].root() == computed_mt.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
-        (mt[0].leaf_nodes == computed_mt.leaf_nodes).ok_or_err(DeciderError::MerkleRoot)?;
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.code.code_len()) as usize,

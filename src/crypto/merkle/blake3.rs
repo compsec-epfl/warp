@@ -1,7 +1,6 @@
 use super::parameters::MerkleTreeParams;
-use ark_crypto_primitives::crh::blake3::fields::Blake3F;
-use ark_crypto_primitives::crh::blake3::Blake3;
-use ark_crypto_primitives::crh::blake3::GenericDigest;
+use crate::crypto::blake3_crh::fields::Blake3F;
+use crate::crypto::blake3_crh::{Blake3, GenericDigest};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config as MerkleConfig, IdentityDigestConverter},
