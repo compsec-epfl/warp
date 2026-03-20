@@ -1,15 +1,14 @@
-use crate::protocol::sumcheck::{WARPSumcheckProverError, WARPSumcheckVerifierError};
 use ark_crypto_primitives::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WARPError {
     #[error(transparent)]
-    ProverError(#[from] WARPProverError),
+    ProverError(#[from] ProverError),
     #[error(transparent)]
-    VerifierError(#[from] WARPVerifierError),
+    VerifierError(#[from] VerifierError),
     #[error(transparent)]
-    DeciderError(#[from] WARPDeciderError),
+    DeciderError(#[from] DeciderError),
     #[error(transparent)]
     ArkError(#[from] Error),
     #[error("z.len() is {0}, but tried accessing at {1}")]
@@ -27,27 +26,27 @@ pub enum WARPError {
 }
 
 #[derive(Error, Debug)]
-pub enum WARPProverError {
+pub enum ProverError {
     #[error(transparent)]
     ArkError(#[from] Error),
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
-    #[error(transparent)]
-    SumcheckError(#[from] WARPSumcheckProverError),
+    #[error("Spongefish verification error")]
+    SpongeFish,
     #[error("Expected eval, got None")]
     EmptyEval,
 }
 
+impl From<spongefish::VerificationError> for ProverError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFish
+    }
+}
+
 #[derive(Error, Debug)]
-pub enum WARPVerifierError {
+pub enum VerifierError {
     #[error(transparent)]
     ArkError(#[from] Error),
-    #[error(transparent)]
-    SpongeFishProofError(#[from] spongefish::ProofError),
-    #[error(transparent)]
-    SpongeFishDomainSeparatorError(#[from] spongefish::DomainSeparatorMismatch),
+    #[error("Spongefish verification error")]
+    SpongeFish,
     #[error("Invalid new code evaluation point")]
     CodeEvaluationPoint,
     #[error("Invalid new circuit evaluation point")]
@@ -60,12 +59,22 @@ pub enum WARPVerifierError {
     ShiftQuery,
     #[error("Found invalid number of l2 accumulated instances")]
     NumL2Instances,
-    #[error(transparent)]
-    SumcheckError(#[from] WARPSumcheckVerifierError),
+    #[error("Found invalid number of sumcheck rounds")]
+    NumSumcheckRounds,
+    #[error("Sumcheck round verification failed")]
+    SumcheckRound,
+    #[error("Incorrect target")]
+    Target,
+}
+
+impl From<spongefish::VerificationError> for VerifierError {
+    fn from(_: spongefish::VerificationError) -> Self {
+        Self::SpongeFish
+    }
 }
 
 #[derive(Error, Debug)]
-pub enum WARPDeciderError {
+pub enum DeciderError {
     #[error("Invalid merkle root")]
     MerkleRoot,
     #[error("Invalid merkle trapdoor")]

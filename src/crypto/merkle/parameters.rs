@@ -1,18 +1,13 @@
-use ark_crypto_primitives::crh::blake3::GenericDigest;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, IdentityDigestConverter},
     sponge::Absorb,
 };
-use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
+use ark_std::rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
-use spongefish::{ByteDomainSeparator, DomainSeparator};
 use std::{hash::Hash, marker::PhantomData};
-
-use crate::utils::DigestDomainSeparator;
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
 ///
@@ -52,18 +47,6 @@ where
 
     type LeafHash = LeafH;
     type TwoToOneHash = CompressH;
-}
-
-impl<F: Field, LeafH, CompressH, const N: usize>
-    DigestDomainSeparator<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
-    for DomainSeparator
-where
-    LeafH: CRHScheme<Input = [F], Output = GenericDigest<N>>,
-    CompressH: TwoToOneCRHScheme<Input = GenericDigest<N>, Output = GenericDigest<N>>,
-{
-    fn add_digest(self, label: &str) -> Self {
-        self.add_bytes(N, label)
-    }
 }
 
 /// Returns the `(leaf_hash_params, two_to_one_hash_params)` for any compatible Merkle tree.

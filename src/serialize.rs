@@ -2,6 +2,28 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, Path};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
 
+pub type AccWitnessTuple<F, MT> = (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>);
+
+#[allow(clippy::type_complexity)]
+pub type AccInstanceTuple<F, MT> = (
+    Vec<<MT as Config>::InnerDigest>,
+    Vec<Vec<F>>,
+    Vec<F>,
+    (Vec<Vec<F>>, Vec<Vec<F>>),
+    Vec<F>,
+);
+
+#[allow(clippy::type_complexity)]
+pub type ProofTuple<F, MT> = (
+    <MT as Config>::InnerDigest,
+    Vec<F>,
+    F,
+    Vec<F>,
+    Vec<Path<MT>>,
+    Vec<Vec<Path<MT>>>,
+    Vec<Vec<F>>,
+);
+
 #[derive(CanonicalSerialize)]
 pub struct AccWitnessSerializer<
     F: Field + PrimeField,
@@ -15,7 +37,7 @@ pub struct AccWitnessSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     AccWitnessSerializer<F, MT>
 {
-    pub fn new(acc_witness: (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>)) -> Self {
+    pub fn new(acc_witness: AccWitnessTuple<F, MT>) -> Self {
         assert_eq!(acc_witness.0.len(), 1);
         assert_eq!(acc_witness.1.len(), 1);
         assert_eq!(acc_witness.2.len(), 1);
@@ -45,15 +67,7 @@ pub struct AccInstanceSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     AccInstanceSerializer<F, MT>
 {
-    pub fn new(
-        acc_instance: (
-            Vec<MT::InnerDigest>,
-            Vec<Vec<F>>,
-            Vec<F>,
-            (Vec<Vec<F>>, Vec<Vec<F>>),
-            Vec<F>,
-        ),
-    ) -> Self {
+    pub fn new(acc_instance: AccInstanceTuple<F, MT>) -> Self {
         assert_eq!(acc_instance.0.len(), 1);
         assert_eq!(acc_instance.1.len(), 1);
         assert_eq!(acc_instance.2.len(), 1);
@@ -88,17 +102,7 @@ pub struct ProofSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     ProofSerializer<F, MT>
 {
-    pub fn new(
-        proof: (
-            MT::InnerDigest,
-            Vec<F>,
-            F,
-            Vec<F>,
-            Vec<Path<MT>>,
-            Vec<Vec<Path<MT>>>,
-            Vec<Vec<F>>,
-        ),
-    ) -> Self {
+    pub fn new(proof: ProofTuple<F, MT>) -> Self {
         Self {
             rt_0: proof.0,
             mu_i: proof.1,

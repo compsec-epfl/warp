@@ -4,7 +4,7 @@ use ark_ff::Field;
 use ark_relations::r1cs::ConstraintSystemRef;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
-use crate::WARPError;
+use crate::error::WARPError;
 
 use super::BundledPESAT;
 
