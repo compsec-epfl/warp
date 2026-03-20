@@ -287,9 +287,7 @@ impl<
             .try_into()
             .expect("root must be 32 bytes");
         prover_state.prover_message(&root_bytes);
-        for mu in &mus {
-            prover_state.prover_message(mu);
-        }
+        prover_state.prover_messages(&mus);
 
         // e. zero check randomness and f. bundled evaluations
         let mut taus = vec![vec![F::default(); log_M]; l1];
