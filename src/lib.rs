@@ -408,12 +408,8 @@ impl<
         let r = 1 + self.config.s + self.config.t;
         let log_r = log2(r) as usize;
         let n_shift_queries = (self.config.t * log_n).div_ceil(8);
-        let bytes_shift_queries: Vec<u8> = (0..n_shift_queries)
-            .map(|_| prover_state.verifier_message::<[u8; 1]>()[0])
-            .collect();
-        let xis: Vec<F> = (0..log_r)
-            .map(|_| prover_state.verifier_message())
-            .collect();
+        let bytes_shift_queries = prover_state.verifier_messages_vec(n_shift_queries);
+        let xis = prover_state.verifier_messages_vec(log_r);
 
         // get shift queries as binary field elements
         let binary_shift_queries = bytes_shift_queries
