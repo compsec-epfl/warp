@@ -29,7 +29,7 @@ ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 
 
 [patch.crates-io]
-ark-crypto-primitives = { git = "https://github.com/benbencik/crypto-primitives.git", branch = "smallfp-absorb-clean" }
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "z-tech/smallfp-absorb" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }

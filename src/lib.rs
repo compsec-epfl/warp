@@ -795,7 +795,6 @@ impl<
 
 #[cfg(test)]
 pub mod test {
-    use super::crypto::merkle::blake3::Blake3MerkleTreeParams;
     use super::AccumulationScheme;
     use crate::serialize::{AccInstanceSerializer, AccWitnessSerializer, ProofSerializer};
     use crate::types::{AccumulatorInstance, AccumulatorWitness};
@@ -811,6 +810,7 @@ pub mod test {
         },
         utils::poseidon,
     };
+    use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 
     use ark_bls12_381::Fr as BLS12_381;
     use ark_codes::{
@@ -873,14 +873,14 @@ pub mod test {
         .unwrap();
 
         let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-        let hash_chain_warp = WARP::<
-            BLS12_381,
-            R1CS<BLS12_381>,
-            _,
-            Blake3MerkleTreeParams<BLS12_381>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
-        );
+        let hash_chain_warp =
+            WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
+                warp_config.clone(),
+                code.clone(),
+                r1cs.clone(),
+                (),
+                (),
+            );
 
         let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
             (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -915,14 +915,14 @@ pub mod test {
         let warp_config =
             WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-        let hash_chain_warp = WARP::<
-            BLS12_381,
-            R1CS<BLS12_381>,
-            _,
-            Blake3MerkleTreeParams<BLS12_381>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
-        );
+        let hash_chain_warp =
+            WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
+                warp_config.clone(),
+                code.clone(),
+                r1cs.clone(),
+                (),
+                (),
+            );
 
         let mut prover_state = domainsep.instance(&0u32).std_prover();
         let ((acc_x, acc_w), pf) = hash_chain_warp
@@ -961,10 +961,8 @@ pub mod test {
             .decide(acc_w.clone(), acc_x.clone())
             .unwrap();
 
-        let acc_x_to_serde =
-            AccInstanceSerializer::<_, Blake3MerkleTreeParams<BLS12_381>>::new(acc_x);
-        let acc_w_to_serde =
-            AccWitnessSerializer::<_, Blake3MerkleTreeParams<BLS12_381>>::new(acc_w);
+        let acc_x_to_serde = AccInstanceSerializer::<_, Blake3MerkleConfig<BLS12_381>>::new(acc_x);
+        let acc_w_to_serde = AccWitnessSerializer::<_, Blake3MerkleConfig<BLS12_381>>::new(acc_w);
         let proof_to_serde = ProofSerializer::new(pf);
 
         println!(
@@ -1031,14 +1029,14 @@ pub mod test {
         .unwrap();
 
         let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-        let hash_chain_warp = WARP::<
-            Goldilocks,
-            R1CS<Goldilocks>,
-            _,
-            Blake3MerkleTreeParams<Goldilocks>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
-        );
+        let hash_chain_warp =
+            WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3MerkleConfig<Goldilocks>>::new(
+                warp_config.clone(),
+                code.clone(),
+                r1cs.clone(),
+                (),
+                (),
+            );
 
         let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
             (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -1074,14 +1072,14 @@ pub mod test {
         let warp_config =
             WARPConfig::<_, R1CS<Goldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-        let hash_chain_warp = WARP::<
-            Goldilocks,
-            R1CS<Goldilocks>,
-            _,
-            Blake3MerkleTreeParams<Goldilocks>,
-        >::new(
-            warp_config.clone(), code.clone(), r1cs.clone(), (), ()
-        );
+        let hash_chain_warp =
+            WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3MerkleConfig<Goldilocks>>::new(
+                warp_config.clone(),
+                code.clone(),
+                r1cs.clone(),
+                (),
+                (),
+            );
 
         let mut prover_state = domainsep.instance(&0u32).std_prover();
         let ((acc_x, acc_w), pf) = hash_chain_warp
@@ -1120,10 +1118,8 @@ pub mod test {
             .decide(acc_w.clone(), acc_x.clone())
             .unwrap();
 
-        let acc_x_to_serde =
-            AccInstanceSerializer::<_, Blake3MerkleTreeParams<Goldilocks>>::new(acc_x);
-        let acc_w_to_serde =
-            AccWitnessSerializer::<_, Blake3MerkleTreeParams<Goldilocks>>::new(acc_w);
+        let acc_x_to_serde = AccInstanceSerializer::<_, Blake3MerkleConfig<Goldilocks>>::new(acc_x);
+        let acc_w_to_serde = AccWitnessSerializer::<_, Blake3MerkleConfig<Goldilocks>>::new(acc_w);
         let proof_to_serde = ProofSerializer::new(pf);
 
         println!(
