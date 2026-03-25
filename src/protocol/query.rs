@@ -24,7 +24,8 @@ impl<F: Field> QueryIndices<F> {
 
     // format the queries from squeezed bytes
     pub fn from_squeezed_bytes(squeezed_bytes: &[u8], log_n: usize, count: usize) -> Self {
-        let evaluation_points = Self::evaluation_points_from_squeezed_bytes(squeezed_bytes, log_n, count);
+        let evaluation_points =
+            Self::evaluation_points_from_squeezed_bytes(squeezed_bytes, log_n, count);
         // Compute all leaf positions in one batch
         let leaf_positions = Self::leaf_positions_from_evaluation_points(&evaluation_points);
         Self {
@@ -63,9 +64,9 @@ impl<F: Field> QueryIndices<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::fields::Goldilocks;
     use ark_bls12_381::Fr as BLS12_381;
     use ark_std::{One, Zero};
-    use crate::utils::fields::Goldilocks;
 
     // check dimensions, binary values, and leaf position range
     fn check_query_indices<F: Field>(bytes: &[u8], log_n: usize, num_queries: usize) {

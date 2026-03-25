@@ -7,7 +7,17 @@ use ark_ff::Field;
 use std::marker::PhantomData;
 
 use crate::config::WARPConfig;
+use crate::error::ProverError;
 use crate::relations::BundledPESAT;
+
+// result of a prove call: (new accumulator instance + witness, proof)
+pub type ProveResult<F, MT> = Result<
+    (
+        (AccumulatorInstance<F, MT>, AccumulatorWitness<F, MT>),
+        WARPProof<F, MT>,
+    ),
+    ProverError,
+>;
 
 /// Protocol parameters for WARP — the shared configuration used by all IOR phases.
 pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
