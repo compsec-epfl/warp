@@ -1,7 +1,7 @@
 pub mod hashchain;
 
 use ark_ff::Field;
-use ark_relations::r1cs::ConstraintSystemRef;
+use ark_relations::gr1cs::ConstraintSystemRef;
 use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
 
 use crate::error::WARPError;
@@ -27,21 +27,31 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
     type Error = WARPError;
 
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
-        let matrices = cs.to_matrices().unwrap();
+        use ark_relations::gr1cs::R1CS_PREDICATE_LABEL;
+
+        let inner = cs.into_inner().unwrap();
+        let all_matrices = inner.to_matrices().unwrap();
+        let r1cs_matrices = all_matrices
+            .get(R1CS_PREDICATE_LABEL)
+            .expect("R1CS predicate must exist");
+
+        let num_constraints = inner
+            .get_predicate_num_constraints(R1CS_PREDICATE_LABEL)
+            .unwrap_or(0);
 
         // number of constraints should be to be power of 2
-        let m = matrices.num_constraints.next_power_of_two();
-        let n = matrices.num_instance_variables + matrices.num_witness_variables;
-        let k = matrices.num_witness_variables;
+        let m = num_constraints.next_power_of_two();
+        let n = inner.num_instance_variables() + inner.num_witness_variables();
+        let k = inner.num_witness_variables();
 
         // both `unwrap()` calls below are safe since warp/lib.rs forbids compiling on platforms
         // with 16-bits pointers width
         let log_m = m.ilog2().try_into().unwrap();
         let log_n = n.ilog2().try_into().unwrap();
 
-        let mut a = matrices.a.into_iter();
-        let mut b = matrices.b.into_iter();
-        let mut c = matrices.c.into_iter();
+        let mut a = r1cs_matrices[0].clone().into_iter();
+        let mut b = r1cs_matrices[1].clone().into_iter();
+        let mut c = r1cs_matrices[2].clone().into_iter();
         let mut p = vec![];
         for _ in 0..m {
             // when there are no constraints left, we store an empty one

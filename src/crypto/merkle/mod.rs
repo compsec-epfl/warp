@@ -5,10 +5,6 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 
-pub mod blake3;
-pub mod parameters;
-pub mod poseidon;
-
 pub fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
     code: &C,
     witnesses: &[Vec<F>],

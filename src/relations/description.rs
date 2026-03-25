@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use ark_relations::r1cs::{ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem, R1CS_PREDICATE_LABEL};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -37,22 +37,26 @@ impl SerializableConstraintMatrices {
             .generate_constraints(constraint_system.clone())
             .unwrap();
         constraint_system.finalize();
-        let matrices: ConstraintMatrices<F> = constraint_system.to_matrices().unwrap();
-        let serializable = SerializableConstraintMatrices::from(matrices);
+
+        let cs = constraint_system.into_inner().unwrap();
+        let all_matrices = cs.to_matrices().unwrap();
+        let r1cs_matrices = all_matrices
+            .get(R1CS_PREDICATE_LABEL)
+            .expect("R1CS predicate must exist");
+
+        let num_constraints = cs
+            .get_predicate_num_constraints(R1CS_PREDICATE_LABEL)
+            .unwrap_or(0);
+
+        let serializable = SerializableConstraintMatrices {
+            num_instance_variables: cs.num_instance_variables(),
+            num_witness_variables: cs.num_witness_variables(),
+            num_constraints,
+            a: Self::serialize_nested_field(r1cs_matrices[0].clone()),
+            b: Self::serialize_nested_field(r1cs_matrices[1].clone()),
+            c: Self::serialize_nested_field(r1cs_matrices[2].clone()),
+        };
         let serialized = serde_json::to_string(&serializable).unwrap();
         serialized.into_bytes()
-    }
-}
-
-impl<F: Field> From<ConstraintMatrices<F>> for SerializableConstraintMatrices {
-    fn from(m: ConstraintMatrices<F>) -> Self {
-        Self {
-            num_instance_variables: m.num_instance_variables,
-            num_witness_variables: m.num_witness_variables,
-            num_constraints: m.num_constraints,
-            a: SerializableConstraintMatrices::serialize_nested_field(m.a),
-            b: SerializableConstraintMatrices::serialize_nested_field(m.b),
-            c: SerializableConstraintMatrices::serialize_nested_field(m.c),
-        }
     }
 }
