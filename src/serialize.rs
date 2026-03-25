@@ -1,28 +1,8 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, Path};
+use ark_crypto_primitives::merkle_tree::{Config, Path};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
 
-pub type AccWitnessTuple<F, MT> = (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>);
-
-#[allow(clippy::type_complexity)]
-pub type AccInstanceTuple<F, MT> = (
-    Vec<<MT as Config>::InnerDigest>,
-    Vec<Vec<F>>,
-    Vec<F>,
-    (Vec<Vec<F>>, Vec<Vec<F>>),
-    Vec<F>,
-);
-
-#[allow(clippy::type_complexity)]
-pub type ProofTuple<F, MT> = (
-    <MT as Config>::InnerDigest,
-    Vec<F>,
-    F,
-    Vec<F>,
-    Vec<Path<MT>>,
-    Vec<Vec<Path<MT>>>,
-    Vec<Vec<F>>,
-);
+use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 #[derive(CanonicalSerialize)]
 pub struct AccWitnessSerializer<
@@ -37,13 +17,13 @@ pub struct AccWitnessSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     AccWitnessSerializer<F, MT>
 {
-    pub fn new(acc_witness: AccWitnessTuple<F, MT>) -> Self {
-        assert_eq!(acc_witness.0.len(), 1);
-        assert_eq!(acc_witness.1.len(), 1);
-        assert_eq!(acc_witness.2.len(), 1);
+    pub fn new(acc_witness: AccumulatorWitness<F, MT>) -> Self {
+        assert_eq!(acc_witness.td.len(), 1);
+        assert_eq!(acc_witness.f.len(), 1);
+        assert_eq!(acc_witness.w.len(), 1);
         Self {
-            f: acc_witness.1[0].clone(),
-            w: acc_witness.2[0].clone(),
+            f: acc_witness.f.into_iter().next().unwrap(),
+            w: acc_witness.w.into_iter().next().unwrap(),
             _mt: std::marker::PhantomData,
         }
     }
@@ -64,20 +44,23 @@ pub struct AccInstanceSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     AccInstanceSerializer<F, MT>
 {
-    pub fn new(acc_instance: AccInstanceTuple<F, MT>) -> Self {
-        assert_eq!(acc_instance.0.len(), 1);
-        assert_eq!(acc_instance.1.len(), 1);
-        assert_eq!(acc_instance.2.len(), 1);
-        assert_eq!(acc_instance.3 .0.len(), 1);
-        assert_eq!(acc_instance.3 .1.len(), 1);
-        assert_eq!(acc_instance.4.len(), 1);
-        let beta = (acc_instance.3 .0[0].clone(), acc_instance.3 .1[0].clone());
+    pub fn new(acc_instance: AccumulatorInstance<F, MT>) -> Self {
+        assert_eq!(acc_instance.rt.len(), 1);
+        assert_eq!(acc_instance.alpha.len(), 1);
+        assert_eq!(acc_instance.mu.len(), 1);
+        assert_eq!(acc_instance.beta.0.len(), 1);
+        assert_eq!(acc_instance.beta.1.len(), 1);
+        assert_eq!(acc_instance.eta.len(), 1);
+        let beta = (
+            acc_instance.beta.0.into_iter().next().unwrap(),
+            acc_instance.beta.1.into_iter().next().unwrap(),
+        );
         Self {
-            rt: acc_instance.0[0].clone(),
-            alpha: acc_instance.1[0].clone(),
-            mu: acc_instance.2[0],
+            rt: acc_instance.rt.into_iter().next().unwrap(),
+            alpha: acc_instance.alpha.into_iter().next().unwrap(),
+            mu: acc_instance.mu[0],
             beta,
-            eta: acc_instance.4[0],
+            eta: acc_instance.eta[0],
         }
     }
 }
@@ -99,15 +82,15 @@ pub struct ProofSerializer<
 impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
     ProofSerializer<F, MT>
 {
-    pub fn new(proof: ProofTuple<F, MT>) -> Self {
+    pub fn new(proof: WARPProof<F, MT>) -> Self {
         Self {
-            rt_0: proof.0,
-            mu_i: proof.1,
-            nu_0: proof.2,
-            nu_i: proof.3,
-            auth_0: proof.4,
-            auth_j: proof.5,
-            f_i_x_j: proof.6,
+            rt_0: proof.rt_0,
+            mu_i: proof.mu_i,
+            nu_0: proof.nu_0,
+            nu_i: proof.nu_i,
+            auth_0: proof.auth_0,
+            auth_j: proof.auth_j,
+            f_i_x_j: proof.shift_query_answers,
         }
     }
 }

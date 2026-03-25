@@ -6,13 +6,7 @@ use spongefish::{
     Decoding, Encoding, NargDeserialize, ProverState, VerificationResult, VerifierState,
 };
 
-pub type AccInstances<F, MT> = (
-    Vec<<MT as Config>::InnerDigest>, // rt
-    Vec<Vec<F>>,                      // alpha
-    Vec<F>,                           // mu
-    (Vec<Vec<F>>, Vec<Vec<F>>),       // (tau, x)
-    Vec<F>,                           // eta
-);
+use crate::types::AccumulatorInstance;
 
 pub fn absorb_instances<F: Field + Encoding<[u8]>>(
     prover_state: &mut ProverState,
@@ -30,47 +24,47 @@ pub fn absorb_accumulated_instances<
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 >(
     prover_state: &mut ProverState,
-    acc_instances: &AccInstances<F, MT>,
+    acc_instance: &AccumulatorInstance<F, MT>,
 ) {
     // digests (rt)
-    for digest in &acc_instances.0 {
+    for digest in &acc_instance.rt {
         let bytes: [u8; 32] = digest.as_ref().try_into().expect("digest must be 32 bytes");
         prover_state.prover_message(&bytes);
     }
 
     // alpha
-    for alpha in &acc_instances.1 {
+    for alpha in &acc_instance.alpha {
         for f in alpha {
             prover_state.prover_message(f);
         }
     }
 
     // mu
-    for f in &acc_instances.2 {
+    for f in &acc_instance.mu {
         prover_state.prover_message(f);
     }
 
     // taus
-    for tau in &acc_instances.3 .0 {
+    for tau in &acc_instance.beta.0 {
         for f in tau {
             prover_state.prover_message(f);
         }
     }
 
     // xs
-    for x in &acc_instances.3 .1 {
+    for x in &acc_instance.beta.1 {
         for f in x {
             prover_state.prover_message(f);
         }
     }
 
     // etas
-    for f in &acc_instances.4 {
+    for f in &acc_instance.eta {
         prover_state.prover_message(f);
     }
 }
 
-pub type ParsedStatement<F, MT> = (Vec<Vec<F>>, AccInstances<F, MT>);
+pub type ParsedStatement<F, MT> = (Vec<Vec<F>>, AccumulatorInstance<F, MT>);
 
 pub fn parse_statement<
     F: Field + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>,
@@ -121,7 +115,13 @@ pub fn parse_statement<
 
     Ok((
         l1_xs,
-        (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas),
+        AccumulatorInstance {
+            rt: l2_roots,
+            alpha: l2_alphas,
+            mu: l2_mus,
+            beta: (l2_taus, l2_xs),
+            eta: l2_etas,
+        },
     ))
 }
 
