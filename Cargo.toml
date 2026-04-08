@@ -23,7 +23,7 @@ serde_json = "1.0"
 spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = [
     "ark-ff",
 ] }
-efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", rev = "913b26d" }
+efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/simd_goldilocks_experimental" }
 thiserror = "2.0.16"
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 
