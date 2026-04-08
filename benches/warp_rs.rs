@@ -2,12 +2,12 @@ use ark_codes::reed_solomon::config::ReedSolomonConfig;
 use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
 
+use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 use ark_std::rand::thread_rng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WARPConfig;
-use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 use warp::traits::AccumulationScheme;
 use warp::WARP;
 
