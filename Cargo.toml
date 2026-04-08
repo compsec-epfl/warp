@@ -23,16 +23,16 @@ serde_json = "1.0"
 spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = [
     "ark-ff",
 ] }
-efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
+efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/simd_goldilocks_experimental" }
 thiserror = "2.0.16"
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 
 
 [patch.crates-io]
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "z-tech/smallfp-absorb" }
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
 ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
 ark-snark = { git = "https://github.com/arkworks-rs/snark.git" }

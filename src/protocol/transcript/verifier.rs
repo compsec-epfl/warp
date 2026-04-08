@@ -92,7 +92,7 @@ pub struct DerivedRandomness<F: Field, MT: Config> {
     pub bytes_shift_queries: Vec<u8>,
     pub xi: Vec<F>,
     pub alpha_sumcheck: Vec<F>,
-    pub sums_batching_sumcheck: Vec<[F; 3]>,
+    pub sums_batching_sumcheck: Vec<[F; 2]>,
 }
 
 pub fn derive_randomness<
@@ -173,7 +173,7 @@ pub fn derive_randomness<
     let mut alpha_sumcheck = Vec::new();
     let mut sums_batching_sumcheck = Vec::new();
     for _ in 0..log_n {
-        let sums: [F; 3] = verifier_state.prover_messages()?;
+        let sums: [F; 2] = verifier_state.prover_messages()?;
         let c: F = verifier_state.verifier_message();
         alpha_sumcheck.push(c);
         sums_batching_sumcheck.push(sums);

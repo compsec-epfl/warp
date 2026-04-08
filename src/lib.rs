@@ -708,13 +708,10 @@ impl<
         // multilinear batching sumcheck
         (sums_batching_sumcheck.len() == log_n).ok_or_err(VerifierError::NumSumcheckRounds)?;
         let mut target_2 = sigma_2;
-        for ([sum_00, sum_11, sum_0110], alpha) in
-            sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck)
-        {
-            (sum_00 + sum_11 == target_2).ok_or_err(VerifierError::SumcheckRound)?;
-            target_2 = (target_2 - sum_0110) * alpha.square()
-                + sum_00 * (F::one() - alpha.double())
-                + sum_0110 * alpha;
+        for ([a, b], alpha) in sums_batching_sumcheck.into_iter().zip(&alpha_sumcheck) {
+            target_2 = (target_2 - b) * alpha.square()
+                + a * (F::one() - alpha.double())
+                + b * alpha;
         }
 
         // e. new target decision
