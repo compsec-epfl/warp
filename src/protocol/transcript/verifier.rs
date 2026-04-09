@@ -133,7 +133,7 @@ pub fn derive_randomness<
     let mut coeffs_twinc_sumcheck = Vec::new();
     for _ in 0..log_l {
         let h_coeffs: Vec<F> =
-            verifier_state.prover_messages_vec(2 + (log_n + 1).max(log_m + 2))?;
+            verifier_state.prover_messages_vec(1 + (log_n + 1).max(log_m + 2))?;
         let c: F = verifier_state.verifier_message();
         gamma_sumcheck.push(c);
         coeffs_twinc_sumcheck.push(h_coeffs);

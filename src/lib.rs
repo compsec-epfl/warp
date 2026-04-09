@@ -9,7 +9,7 @@ use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::{Config, MerkleTree, Path},
 };
-use ark_ff::{Field, PrimeField, Zero};
+use ark_ff::{Field, PrimeField};
 use ark_poly::{
     univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial,
     MultilinearExtension, Polynomial,
@@ -20,7 +20,7 @@ use crypto::merkle::build_codeword_leaves;
 use crypto::merkle::compute_auth_paths;
 use efficient_sumcheck::{
     accumulate_sparse_evaluations, batched_constraint_poly,
-    coefficient_sumcheck::coefficient_sumcheck,
+    coefficient_sumcheck::{coefficient_sumcheck, RoundPolyEvaluator},
     folding::protogalaxy,
     hypercube::{compute_hypercube_eq_evals, Hypercube},
     inner_product_sumcheck,
@@ -74,56 +74,64 @@ fn eval_r1cs_constraint_poly<F: Field>(
     DensePolynomial::from_coefficients_vec(vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1])
 }
 
-/// Compute the twin-constraint round polynomial `h(X)`.
+/// Evaluator for the twin-constraint sumcheck round polynomial.
 ///
 /// Proves `∑_i τ(i) · (f(i) + ω · p(i)) = 0` via protogalaxy folding, where:
 ///   - `f(X)` = `fold(α, oracle_evals)` — folded codeword check
 ///   - `p(X)` = `fold(β, Az·Bz - Cz)`  — folded R1CS constraint check
 ///   - `t(X)` = linear interpolation of τ — equality polynomial
 ///
-/// Returns `h(X) = Σ (f(X) + ω·p(X)) · t(X)`.
-///
-/// `expected_num_coeffs` is the number of coefficients the verifier expects to read.
-/// The result is padded with zeros to ensure the prover always writes exactly that many.
-fn twin_constraint_round_poly<F: Field>(
-    tablewise: &[Vec<Vec<F>>],
-    pairwise: &[Vec<F>],
-    r1cs: &R1CSConstraints<F>,
+/// Each pair contributes `h(X) = (f(X) + ω·p(X)) · t(X)`.
+struct TwinConstraintEvaluator<'a, F: Field> {
+    r1cs: &'a R1CSConstraints<F>,
     omega: F,
-    expected_num_coeffs: usize,
-) -> DensePolynomial<F> {
-    let (u, z, a, b) = (&tablewise[0], &tablewise[1], &tablewise[2], &tablewise[3]);
-    let tau = &pairwise[0];
+    degree: usize,
+}
 
-    let f_iter = u.chunks(2).zip(a.chunks(2)).map(|(u, a)| {
-        protogalaxy::fold(
-            a[0].iter().zip(&a[1]).map(|(&l, &r)| (l, r - l)),
-            u[0].iter()
-                .zip(&u[1])
+impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
+    fn degree(&self) -> usize {
+        self.degree
+    }
+
+    fn accumulate_pair(&self, coeffs: &mut [F], tw: &[(&[F], &[F])], pw: &[(F, F)]) {
+        // tw[0] = (u_even, u_odd), tw[1] = (z_even, z_odd),
+        // tw[2] = (a_even, a_odd), tw[3] = (b_even, b_odd)
+        // pw[0] = (tau_even, tau_odd)
+        let (u_even, u_odd) = tw[0];
+        let (z_even, z_odd) = tw[1];
+        let (a_even, a_odd) = tw[2];
+        let (b_even, b_odd) = tw[3];
+        let (tau_even, tau_odd) = pw[0];
+
+        // f(X) = fold(α, oracle_evals): protogalaxy fold over α pairs and linear polys from u
+        let f = protogalaxy::fold(
+            a_even.iter().zip(a_odd).map(|(&l, &r)| (l, r - l)),
+            u_even
+                .iter()
+                .zip(u_odd)
                 .map(|(&l, &r)| linear_poly(l, r))
                 .collect(),
-        )
-    });
-    let p_iter = b.chunks(2).zip(z.chunks(2)).map(|(b, z)| {
-        protogalaxy::fold(
-            b[0].iter().zip(&b[1]).map(|(&l, &r)| (l, r - l)),
-            r1cs.iter()
-                .map(|c| eval_r1cs_constraint_poly(c, &z[0], &z[1]))
+        );
+
+        // p(X) = fold(β, Az·Bz - Cz): protogalaxy fold over β pairs and R1CS constraint polys
+        let p = protogalaxy::fold(
+            b_even.iter().zip(b_odd).map(|(&l, &r)| (l, r - l)),
+            self.r1cs
+                .iter()
+                .map(|c| eval_r1cs_constraint_poly(c, z_even, z_odd))
                 .collect(),
-        )
-    });
-    let t_iter = tau.chunks(2).map(|t| linear_poly(t[0], t[1]));
+        );
 
-    let mut h = f_iter
-        .zip(p_iter)
-        .zip(t_iter)
-        .map(|((f, p), t)| (f + p * omega).naive_mul(&t))
-        .fold(DensePolynomial::zero(), |acc, r| acc + r);
+        // t(X) = tau_even + (tau_odd - tau_even) · X
+        let t = linear_poly(tau_even, tau_odd);
 
-    // Pad coefficients to the expected count so the prover writes exactly
-    // as many field elements as the verifier reads in derive_randomness.
-    h.coeffs.resize(expected_num_coeffs, F::zero());
-    h
+        // h(X) = (f(X) + ω·p(X)) · t(X)
+        let h = (f + p * self.omega).naive_mul(&t);
+
+        for (c, &hc) in coeffs.iter_mut().zip(h.coeffs.iter()) {
+            *c += hc;
+        }
+    }
 }
 
 pub trait BoolResult {
@@ -191,19 +199,24 @@ impl<
         log_m: usize,
     ) -> Result<PesatOutput<F, MT>, ProverError> {
         // a. encode witnesses
+        let t1 = std::time::Instant::now();
         let (codewords, leaves) = build_codeword_leaves(&self.params.code, witnesses, l1);
+        eprintln!("[PROFILE]     rs_encode (FFT): {:?}", t1.elapsed());
 
         // b. evaluation claims
         let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
 
         // c. commit to witnesses
+        let t1 = std::time::Instant::now();
         let td_0 = MerkleTree::<MT>::new(
             &self.params.mt_leaf_hash_params,
             &self.params.mt_two_to_one_hash_params,
             leaves.chunks_exact(l1).collect::<Vec<_>>(),
         )?;
+        eprintln!("[PROFILE]     pesat_merkle_tree: {:?}", t1.elapsed());
 
         // d. absorb commitment and code evaluations
+        let t1 = std::time::Instant::now();
         let root_bytes: [u8; 32] = td_0
             .root()
             .as_ref()
@@ -216,6 +229,10 @@ impl<
         let taus = (0..l1)
             .map(|_| prover_state.verifier_messages_vec::<F>(log_m))
             .collect::<Vec<_>>();
+        eprintln!(
+            "[PROFILE]     pesat_absorb + transcript: {:?}",
+            t1.elapsed()
+        );
 
         Ok(PesatOutput {
             codewords,
@@ -253,6 +270,11 @@ impl<
         let log_m = log2(M) as usize;
         let l1 = pesat.codewords.len();
 
+        let _t_total = std::time::Instant::now();
+        eprintln!(
+            "[PROFILE] M={M}, N={N}, k={k}, n(code_len)={n}, log_n={log_n}, log_l={log_l}, l1={l1}"
+        );
+
         // a. zero check randomness
         let omega: F = prover_state.verifier_message();
         let tau = prover_state.verifier_messages_vec::<F>(log_l);
@@ -287,15 +309,16 @@ impl<
         let mut pw = [tau_eq_evals]; // tau
 
         let r1cs = self.params.p.constraints();
-        let expected_num_coeffs = 2 + (log_n + 1).max(log_m + 2);
-        let sc = coefficient_sumcheck(
-            |tw, pw| twin_constraint_round_poly(tw, pw, r1cs, omega, expected_num_coeffs),
-            &mut tablewise,
-            &mut pw,
-            log_l,
-            prover_state,
-        );
+        let degree = 1 + (log_n + 1).max(log_m + 2);
+        let evaluator = TwinConstraintEvaluator {
+            r1cs,
+            omega,
+            degree,
+        };
+        let t1 = std::time::Instant::now();
+        let sc = coefficient_sumcheck(&evaluator, &mut tablewise, &mut pw, log_l, prover_state);
         let gamma = sc.verifier_messages;
+        eprintln!("[PROFILE]   twin_constraint_sumcheck: {:?}", t1.elapsed());
 
         debug_assert_eq!(gamma.len(), log_l);
 
@@ -307,6 +330,7 @@ impl<
         let beta_tau = b_red.pop().unwrap();
 
         // eval the bundled r1cs
+        let t1 = std::time::Instant::now();
         let beta_eq_evals = (0..M).map(|i| eq_poly(&beta_tau, i)).collect::<Vec<_>>();
 
         let eta = self
@@ -320,7 +344,10 @@ impl<
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(log_n, &f);
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
 
+        eprintln!("[PROFILE]   eval_bundled_r1cs: {:?}", t1.elapsed());
+
         // f. new commitment
+        let t1 = std::time::Instant::now();
         let td = MerkleTree::<MT>::new(
             &self.params.mt_leaf_hash_params,
             &self.params.mt_two_to_one_hash_params,
@@ -337,7 +364,10 @@ impl<
         prover_state.prover_message(&eta);
         prover_state.prover_message(&nu_0);
 
+        eprintln!("[PROFILE]   merkle_commit: {:?}", t1.elapsed());
+
         // h. ood samples
+        let t1 = std::time::Instant::now();
         let n_ood_samples = self.params.config.s * log_n;
         let ood_samples = prover_state.verifier_messages_vec::<F>(n_ood_samples);
         let ood_samples = ood_samples.chunks(log_n).collect::<Vec<_>>();
@@ -347,8 +377,10 @@ impl<
             .iter()
             .map(|ood_p| f_hat.fix_variables(ood_p)[0])
             .collect::<Vec<F>>();
+        eprintln!("[PROFILE]     ood fix_variables: {:?}", t1.elapsed());
 
         // j. absorb ood answers
+        let t1 = std::time::Instant::now();
         prover_state.prover_messages(&ood_answers);
 
         let mut zetas = vec![zeta_0.as_slice()];
@@ -360,6 +392,9 @@ impl<
         let r = 1 + self.params.config.s + self.params.config.t;
         let log_r = log2(r) as usize;
         let queries = QueryIndices::sample(prover_state, log_n, self.params.config.t);
+        eprintln!("[PROFILE]     query_sampling: {:?}", t1.elapsed());
+
+        let t1 = std::time::Instant::now();
         let xis = prover_state.verifier_messages_vec(log_r);
 
         zetas.extend(queries.evaluation_points.iter().map(|v| v.as_slice()));
@@ -377,7 +412,13 @@ impl<
             })
             .collect::<Vec<_>>();
 
+        eprintln!(
+            "[PROFILE]     eq_poly_evals + ood_evals_vec: {:?}",
+            t1.elapsed()
+        );
+
         // [CBBZ23] optimization from hyperplonk
+        let t1 = std::time::Instant::now();
         let id_non_0_eval_sums =
             accumulate_sparse_evaluations(zetas, xi_eq_evals, self.params.config.s, r);
 
@@ -389,10 +430,16 @@ impl<
         )
         .verifier_messages;
 
+        eprintln!(
+            "[PROFILE]   batching_sumcheck (inner product): {:?}",
+            t1.elapsed()
+        );
+
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
 
         // n. compute authentication paths
+        let t1 = std::time::Instant::now();
         let auth_0 = compute_auth_paths(&pesat.td_0, &queries.leaf_positions)?;
 
         let auth = acc_witness
@@ -413,6 +460,8 @@ impl<
             let answers = all_codewords.iter().map(|f| f[*idx]).collect::<Vec<F>>();
             shift_queries_answers[i] = answers;
         }
+
+        eprintln!("[PROFILE]   auth_paths + shift_queries: {:?}", t1.elapsed());
 
         let new_acc_instance = AccumulatorInstance {
             rt: vec![td.root()],
@@ -507,12 +556,15 @@ impl<
         ////////////////////////
         // 2. PESAT Reduction
         ////////////////////////
+        let t0 = std::time::Instant::now();
         let pesat = self.pesat_reduce(prover_state, &witnesses, l1, log_m)?;
+        eprintln!("[PROFILE] pesat_reduce: {:?}", t0.elapsed());
 
         ////////////////////////
         // 3. Constrained Code Accumulation
         ////////////////////////
-        self.constrained_code_accumulate(
+        let t0 = std::time::Instant::now();
+        let result = self.constrained_code_accumulate(
             prover_state,
             pesat,
             &instances,
@@ -523,7 +575,9 @@ impl<
             N,
             k,
             log_l,
-        )
+        );
+        eprintln!("[PROFILE] constrained_code_accumulate: {:?}", t0.elapsed());
+        result
     }
 
     fn verify<'a>(
@@ -698,10 +752,12 @@ impl<
         (coeffs_twinc_sumcheck.len() == log_l).ok_or_err(VerifierError::NumSumcheckRounds)?;
 
         let mut target_1 = sigma_1;
-        for (coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
+        for (mut coeffs, gamma) in coeffs_twinc_sumcheck.into_iter().zip(&gamma_sumcheck) {
+            // Derive leading coefficient: c_d = claim - 2*c_0 - c_1 - ... - c_{d-1}
+            let partial_sum: F = coeffs.iter().skip(1).copied().sum();
+            let leading = target_1 - coeffs[0].double() - partial_sum;
+            coeffs.push(leading);
             let h = DensePolynomial::from_coefficients_vec(coeffs);
-            (h.evaluate(&F::one()) + h.evaluate(&F::zero()) == target_1)
-                .ok_or_err(VerifierError::SumcheckRound)?;
             target_1 = h.evaluate(gamma);
         }
 
