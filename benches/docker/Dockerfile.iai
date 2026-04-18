@@ -1,0 +1,26 @@
+# Dockerfile for running iai-callgrind benches on hosts without valgrind
+# (primarily macOS). Build + run via the repo-root Makefile:
+#
+#     make bench-ci-local
+#
+# The image caches the iai-callgrind-runner binary + valgrind so repeat
+# runs only re-build the warp crate.
+FROM rust:1.81-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        valgrind \
+        pkg-config \
+        libssl-dev \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Match the version in Cargo.toml dev-dependencies.
+ARG IAI_RUNNER_VERSION=0.14.0
+RUN cargo install iai-callgrind-runner --version ${IAI_RUNNER_VERSION} --locked
+
+WORKDIR /workspace
+
+# Default: run the bench. The repo is expected to be mounted at /workspace.
+CMD ["cargo", "bench", "--bench", "iai_phases"]

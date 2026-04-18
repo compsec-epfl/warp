@@ -48,6 +48,11 @@ spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "small
 ark-bls12-381 = "0.5.0"
 ark-bn254 = "0.5.0"
 criterion = "0.8"
+# Deterministic instruction-count benches. Requires valgrind + the
+# `iai-callgrind-runner` binary at runtime (see benches/README.md).
+# Unused on macOS except via Docker — `cargo build --bench iai_phases`
+# still works everywhere, only `cargo bench` fails without valgrind.
+iai-callgrind = "0.14"
 
 [features]
 default = ["asm"]
@@ -62,4 +67,10 @@ profile = ["dep:tracing-subscriber", "dep:libc"]
 
 [[bench]]
 name = "warp_rs"
+harness = false
+
+# iai-callgrind: deterministic instruction counts per prove phase. Runs
+# under valgrind; use `make bench-ci-local` on macOS to run inside Docker.
+[[bench]]
+name = "iai_phases"
 harness = false
