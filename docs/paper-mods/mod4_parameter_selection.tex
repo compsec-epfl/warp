@@ -1,29 +1,90 @@
 \documentclass{article}
 \input{notation.tex}
 
-\title{Modification 4: \\ Soundness-driven parameter selection (stub)}
+\title{Modification 4: \\ Soundness-driven parameter selection}
 \author{Warp paper-mods}
 \date{}
 
 \begin{document}
 \maketitle
 
-\paragraph{Status.} Stub. Full spec authored in Plan P. Paired code:
-\codemod{src/params/} (to be created).
+\paragraph{Paired Rust module.} \codemod{src/params/}, with a CLI front-end
+at \codemod{src/bin/warp-params.rs}.
 
-\section*{Abstract}
+\section{Motivation}
 
-The paper states security bounds symbolically; the implementation currently
-hard-codes parameter values (e.g.\ \(s = 8\), \(t = 7\)) with no derivation
-record. Modification 4 introduces, both in the paper and in code, an
-\emph{inverse} to the soundness analysis: given a security target
-\(\lambda\), a field \(\F\), a code rate \(\rho\), and an accumulation
-depth, produce the minimum-cost parameter tuple \((s, t, l, l_1)\) hitting
-that target. Both list-decoding regimes (provable and conjectured) are
-supported via a user toggle.
+The paper states the soundness bound of Warp symbolically; the implementation
+has so far hard-coded parameter values (for instance, \(s = 8\), \(t = 7\)
+in the regression tests). There is no record of which security target those
+choices correspond to, nor is there a way to ask the code for the minimum
+parameter tuple that hits a chosen target \(\lambda\).
 
-The code module \codemod{src/params/} will expose pure \texttt{select} and
-\texttt{validate} functions plus a preset table to replace the ad-hoc
-constants currently appearing in tests. See Plan P for the full treatment.
+Modification 4 adds, on both sides, an \emph{inverse} to the soundness
+analysis. Given
+\(\lambda \in \mathbb{N}\), field size \(\size{\F}\), Reed--Solomon code rate
+\(\rho = k/n\), and a choice of \emph{list-decoding regime}, produce the
+smallest parameter tuple \((s,\ t)\) that provably (or conjecturally) gives
+\(\lambda\) bits of soundness. The workload parameters \((l,\ l_1)\) remain
+caller-chosen; Modification 4 does not select them.
+
+\section{Regimes}
+
+\begin{description}
+  \item[\IOR{Provable}.] Each proximity query rejects a word at distance
+        \(e\) from the nearest codeword with probability at least \(e\).
+        Taking the Johnson bound \(e = 1 - \sqrt{\rho}\) as the largest
+        value supported by a proof for Reed--Solomon codes, the soundness
+        error of \(t\) independent proximity queries is at most
+        \(\bigl(1 - e\bigr)^{t} = \rho^{t/2}\). Therefore
+        \[
+            t \;\geq\; \frac{2\lambda}{\log_2(1/\rho)}.
+        \]
+  \item[\IOR{Conjectured}.] The list-decodability conjecture for
+        Reed--Solomon codes extends the argument up to radius
+        \(e = 1 - \rho\). The same calculation gives
+        \[
+            t \;\geq\; \frac{\lambda}{\log_2(1/\rho)}.
+        \]
+\end{description}
+
+For \(s\) (OOD samples) we use the conservative constant \(s = 8\),
+which dominates the round-complexity of batching without materially
+affecting soundness at the scales we run. A tighter bound is deferred to
+a follow-up; the current code documents this choice explicitly.
+
+\section{Field-size admissibility}
+
+Several other soundness terms are each at most
+\(\mathrm{polylog}(\cdot) / \size{\F}\) (sumcheck rounds, zero-check
+randomness absorbs, transcript-squeezed challenges). They are negligible
+provided \(\log_2 \size{\F} \geq \lambda + \epsilon\) for a small constant
+\(\epsilon\); the code rejects any choice that violates this admissibility.
+
+\section{References used, and scope limits}
+
+The formulas above are the standard proximity-gap / list-decoding bounds
+from the Reed--Solomon STARK lineage, in the precise formulation used in
+STIR~\cite{STIR} and WHIR~\cite{WHIR}. They are \emph{not} a full
+re-derivation of the Warp paper's soundness proof; they capture the
+dominant term (proximity queries) and ignore polylogarithmic noise
+controlled by the field-size check. The Rust module
+\codemod{src/params/} uses the same formulas and marks every constant
+it uses, so refining against the paper's exact proof reduces to editing
+one table.
+
+\paragraph{Deferred.} Calibration of \(s\) against the batching-sumcheck
+soundness, derivation for non-Reed--Solomon codes, and a reference
+table of attested parameter tuples with matching proofs.
+
+\begin{thebibliography}{9}
+\bibitem{STIR}
+  Arnon, Chiesa, Fenzi, Yogev.
+  \emph{STIR: Reed--Solomon Proximity Testing with Fewer Queries.}
+  CRYPTO 2024.
+\bibitem{WHIR}
+  Arnon, Chiesa, Fenzi, Yogev.
+  \emph{WHIR: Reed--Solomon Proximity Testing with Super-Fast Verification.}
+  2024.
+\end{thebibliography}
 
 \end{document}

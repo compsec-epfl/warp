@@ -32,6 +32,7 @@ pub mod config;
 pub mod constraints;
 pub mod crypto;
 pub mod error;
+pub mod params;
 pub mod profile;
 pub mod protocol;
 pub mod relations;
