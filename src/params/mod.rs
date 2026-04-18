@@ -137,12 +137,13 @@ mod tests {
 
     #[test]
     fn lookup_round_trips() {
-        let p = lookup(
-            SecurityLevel::STANDARD_128,
-            0.5,
-            Regime::Conjectured,
-        )
-        .unwrap();
+        let p = lookup(SecurityLevel::STANDARD_128, 1, 2, Regime::Conjectured).unwrap();
         assert_eq!(p.params.t, 128);
+    }
+
+    #[test]
+    fn lookup_misses_on_unknown_rate() {
+        // We have 1/2 and 1/8 on file; 1/4 is not a preset.
+        assert!(lookup(SecurityLevel::STANDARD_128, 1, 4, Regime::Provable).is_none());
     }
 }

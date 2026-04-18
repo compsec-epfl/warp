@@ -102,7 +102,7 @@ where
     skip_all,
     fields(t = t, l2 = l2)
 )]
-pub(crate) fn verify<F, MT>(
+pub fn verify<F, MT>(
     queries: &QueryIndices<F>,
     rt_0: &MT::InnerDigest,
     l2_roots: &[MT::InnerDigest],

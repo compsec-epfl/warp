@@ -104,7 +104,7 @@ pub struct WARPProof<F: Field, MT: Config> {
 /// Intermediate output of the PESAT reduction phase.
 ///
 /// This data flows from Phase 2 (PESAT Reduction) into Phase 3 (Constrained Code Accumulation).
-pub(crate) struct PesatOutput<F: Field, MT: Config> {
+pub struct PesatOutput<F: Field, MT: Config> {
     /// Encoded codewords from fresh witnesses.
     pub codewords: Vec<Vec<F>>,
     /// Merkle tree over the interleaved codeword leaves.

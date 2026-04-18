@@ -92,10 +92,17 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
-/// Look up a preset by `(λ, code_rate, regime)`. Returns `None` if no
-/// exact row matches; use [`super::select`] for arbitrary inputs.
-pub fn lookup(lambda: SecurityLevel, code_rate: f64, regime: Regime) -> Option<&'static Preset> {
+/// Look up a preset by `(λ, num/den, regime)`. Exact-rational match —
+/// callers that parsed the rate as a fraction preserve the exact form
+/// and get a hit. Returns `None` if no exact row matches; use
+/// [`super::select`] for arbitrary inputs.
+pub fn lookup(
+    lambda: SecurityLevel,
+    num: u32,
+    den: u32,
+    regime: Regime,
+) -> Option<&'static Preset> {
     PRESETS.iter().find(|p| {
-        p.lambda == lambda && (p.code_rate() - code_rate).abs() < 1e-9 && p.regime == regime
+        p.lambda == lambda && p.code_rate_num == num && p.code_rate_den == den && p.regime == regime
     })
 }

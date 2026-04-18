@@ -65,16 +65,18 @@ fn cmd_select(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match select(lambda, field_bits, rate, regime) {
+    match select(lambda, field_bits, rate.as_f64(), regime) {
         Ok(p) => {
-            // Prefer a preset if we happen to have one on file — lets
-            // users see the canonical attested row, not just a recomputed
-            // tuple. (The two are identical by `presets_match_select_output`.)
-            if let Some(preset) = lookup(lambda, rate, regime) {
+            // Prefer a preset if we have an exact-rational match on file —
+            // lets users see the canonical attested row, not just a
+            // recomputed tuple. (Equal by `presets_match_select_output`.)
+            let preset = rate.ratio().and_then(|(n, d)| lookup(lambda, n, d, regime));
+            if let Some(preset) = preset {
                 println!(
-                    "λ={} rate={:.4} regime={:?} → s={} t={} (preset)",
+                    "λ={} rate={}/{} regime={:?} → s={} t={} (preset)",
                     preset.lambda.bits(),
-                    preset.code_rate(),
+                    preset.code_rate_num,
+                    preset.code_rate_den,
                     preset.regime,
                     preset.params.s,
                     preset.params.t
@@ -83,7 +85,7 @@ fn cmd_select(args: &[String]) -> ExitCode {
                 println!(
                     "λ={} rate={:.4} regime={:?} → s={} t={}",
                     lambda.bits(),
-                    rate,
+                    rate.as_f64(),
                     regime,
                     p.s,
                     p.t
@@ -123,7 +125,7 @@ fn cmd_validate(args: &[String]) -> ExitCode {
         }
     };
     let params = Params { s, t };
-    match validate(&params, field_bits, rate, regime, lambda) {
+    match validate(&params, field_bits, rate.as_f64(), regime, lambda) {
         Ok(bound) => {
             println!(
                 "proximity_bits={:.2} field_admissible={} ood_admissible={} meets_target={}",
@@ -164,11 +166,34 @@ fn cmd_table() -> ExitCode {
 #[derive(Default)]
 struct Flags {
     lambda: Option<u32>,
-    rate: Option<f64>,
+    rate: Option<Rate>,
     field_bits: Option<u32>,
     regime: Option<Regime>,
     s: Option<usize>,
     t: Option<usize>,
+}
+
+/// Parsed rate that remembers whether it was written as `num/den` or as
+/// a decimal. Exact-rational form enables preset lookup.
+#[derive(Clone, Copy)]
+enum Rate {
+    Ratio { num: u32, den: u32 },
+    Float(f64),
+}
+
+impl Rate {
+    fn as_f64(self) -> f64 {
+        match self {
+            Rate::Ratio { num, den } => num as f64 / den as f64,
+            Rate::Float(x) => x,
+        }
+    }
+    fn ratio(self) -> Option<(u32, u32)> {
+        match self {
+            Rate::Ratio { num, den } => Some((num, den)),
+            Rate::Float(_) => None,
+        }
+    }
 }
 
 fn parse_flags(args: &[String]) -> Result<Flags, String> {
@@ -195,16 +220,18 @@ fn parse_u32(s: &str) -> Result<u32, String> {
     s.parse().map_err(|e| format!("expected u32, got `{s}`: {e}"))
 }
 
-fn parse_rate(s: &str) -> Result<f64, String> {
+fn parse_rate(s: &str) -> Result<Rate, String> {
     if let Some((num, den)) = s.split_once('/') {
-        let n: f64 = num.parse().map_err(|e| format!("rate num `{num}`: {e}"))?;
-        let d: f64 = den.parse().map_err(|e| format!("rate den `{den}`: {e}"))?;
-        if d == 0.0 {
+        let n: u32 = num.parse().map_err(|e| format!("rate num `{num}`: {e}"))?;
+        let d: u32 = den.parse().map_err(|e| format!("rate den `{den}`: {e}"))?;
+        if d == 0 {
             return Err("rate denominator must be non-zero".into());
         }
-        Ok(n / d)
+        Ok(Rate::Ratio { num: n, den: d })
     } else {
-        s.parse().map_err(|e| format!("rate `{s}`: {e}"))
+        s.parse::<f64>()
+            .map(Rate::Float)
+            .map_err(|e| format!("rate `{s}`: {e}"))
     }
 }
 

@@ -224,7 +224,7 @@ where
 /// `c_d = T − 2·c_0 − c_1 − … − c_{d−1}`. Matches the encoding in
 /// `src/protocol/transcript/verifier.rs::derive_randomness`.
 #[tracing::instrument(name = "twin_constraint.verify", skip_all)]
-pub(crate) fn verify_claim<F>(
+pub fn verify_claim<F>(
     sigma_1: F,
     coeffs_per_round: Vec<Vec<F>>,
     gamma: &[F],

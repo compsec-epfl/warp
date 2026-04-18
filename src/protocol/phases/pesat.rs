@@ -32,7 +32,7 @@ use crate::types::PesatOutput;
     skip_all,
     fields(l1 = l1, log_m = log_m, n_witnesses = witnesses.len())
 )]
-pub(crate) fn prove<F, C, MT>(
+pub fn prove<F, C, MT>(
     prover_state: &mut ProverState,
     code: &C,
     mt_leaf_hash_params: &<MT::LeafHash as CRHScheme>::Parameters,

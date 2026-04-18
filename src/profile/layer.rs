@@ -34,7 +34,7 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-use crate::profile::counters::{self, Counter, Snapshot};
+use crate::profile::counters::{self, Snapshot};
 use crate::profile::{rss, timing};
 
 /// What we stash on each span at enter-time.
@@ -165,8 +165,6 @@ where
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.write_all(&out);
         }
-        // ignore counter on unused-import warning for Counter when delta is empty
-        let _ = Counter::ALL.len();
     }
 }
 

@@ -103,7 +103,7 @@ where
 /// `[a, b]` where `h(X) = a·(1-2X) + b·X + (prev_target - b)·X²`; the
 /// caller's `a, b` unpacking mirrors `src/protocol/transcript/verifier.rs`.
 #[tracing::instrument(name = "batching.verify", skip_all)]
-pub(crate) fn verify_claim<F>(sigma_2: F, sums_per_round: Vec<[F; 2]>, alpha: &[F]) -> F
+pub fn verify_claim<F>(sigma_2: F, sums_per_round: Vec<[F; 2]>, alpha: &[F]) -> F
 where
     F: Field,
 {
