@@ -16,6 +16,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 
+use crate::count_ops;
 use crate::crypto::merkle::compute_auth_paths;
 use crate::error::VerifierError;
 use crate::protocol::query::QueryIndices;
@@ -55,11 +56,16 @@ where
 {
     let auth_0 = {
         let _s = tracing::info_span!("proximity.auth_0").entered();
+        count_ops!(MerklePathsGenerated, queries.leaf_positions.len() as u64);
         compute_auth_paths(td_0, &queries.leaf_positions)?
     };
 
     let auth_j = {
         let _s = tracing::info_span!("proximity.auth_j").entered();
+        count_ops!(
+            MerklePathsGenerated,
+            (acc_td.len() * queries.leaf_positions.len()) as u64
+        );
         acc_td
             .iter()
             .map(|td| compute_auth_paths(td, &queries.leaf_positions))
@@ -118,6 +124,7 @@ where
         (path.leaf_index == queries.leaf_positions[i])
             .ok_or_err(VerifierError::ShiftQueryIndex)?;
 
+        count_ops!(MerklePathsVerified);
         let is_valid = path.verify(
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,
@@ -134,6 +141,7 @@ where
         for (j, path) in paths.iter().enumerate() {
             (path.leaf_index == queries.leaf_positions[j])
                 .ok_or_err(VerifierError::ShiftQueryIndex)?;
+            count_ops!(MerklePathsVerified);
             let is_valid = path.verify(
                 mt_leaf_hash_params,
                 mt_two_to_one_hash_params,

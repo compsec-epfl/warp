@@ -22,6 +22,7 @@ use efficient_sumcheck::{
 };
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
+use crate::count_ops;
 use crate::protocol::oracle::Oracle;
 use crate::utils::poly::eq_poly;
 
@@ -82,6 +83,8 @@ where
     // call efficient sumcheck for batched_constraint checks
     let alpha = {
         let _s = tracing::info_span!("batching.sumcheck").entered();
+        let log_n = ark_std::log2(n) as u64;
+        count_ops!(BatchingRounds, log_n);
         inner_product_sumcheck(
             &mut oracle.evals().to_vec(),
             &mut batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),

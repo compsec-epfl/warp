@@ -27,6 +27,7 @@ use efficient_sumcheck::{
 };
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
+use crate::count_ops;
 use crate::protocol::oracle::Oracle;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
@@ -195,6 +196,7 @@ where
     // c. run the sumcheck
     let sc = {
         let _s = tracing::info_span!("twin_constraint.sumcheck").entered();
+        count_ops!(TwinConstraintRounds, log_l as u64);
         coefficient_sumcheck(&evaluator, &mut tablewise, &mut pw, log_l, prover_state)
     };
     debug_assert_eq!(sc.verifier_messages.len(), log_l);

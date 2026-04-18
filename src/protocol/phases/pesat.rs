@@ -21,6 +21,7 @@ use ark_crypto_primitives::{
 use ark_ff::{Field, PrimeField};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
+use crate::count_ops;
 use crate::crypto::merkle::build_codeword_leaves;
 use crate::error::ProverError;
 use crate::types::PesatOutput;
@@ -48,6 +49,7 @@ where
     // a. encode witnesses
     let (codewords, leaves) = {
         let _s = tracing::info_span!("pesat.encode").entered();
+        count_ops!(EncodeCalls, witnesses.len() as u64);
         build_codeword_leaves(code, witnesses, l1)
     };
 
@@ -57,6 +59,7 @@ where
     // c. commit to witnesses
     let td_0 = {
         let _s = tracing::info_span!("pesat.merkle_commit").entered();
+        count_ops!(MerkleTreeBuilds);
         MerkleTree::<MT>::new(
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,

@@ -20,6 +20,8 @@ use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::log2;
 use std::cell::OnceCell;
 
+use crate::count_ops;
+
 /// A Warp oracle: a committed codeword together with its lazily-materialised
 /// multilinear extension.
 pub struct Oracle<F: Field> {
@@ -57,13 +59,16 @@ impl<F: Field> Oracle<F> {
 
     /// Index query: `f[i]`.
     pub fn query_at_leaf(&self, idx: usize) -> F {
+        count_ops!(OracleLeafQueries);
         self.evals[idx]
     }
 
     /// Point query on the multilinear extension: `\hat f(ζ)` for
     /// `ζ ∈ F^{log n}`. Materialises the MLE on first call and caches it.
     pub fn query_at_point(&self, point: &[F]) -> F {
+        count_ops!(OraclePointQueries);
         let mle = self.mle.get_or_init(|| {
+            count_ops!(MleMaterializations);
             let log_n = log2(self.evals.len()) as usize;
             DenseMultilinearExtension::from_evaluations_slice(log_n, &self.evals)
         });

@@ -8,6 +8,7 @@
 use ark_ff::{Field, PrimeField};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
+use crate::count_ops;
 use crate::protocol::oracle::Oracle;
 
 /// Output of the OOD phase: the flat challenge vector and the prover's
@@ -32,6 +33,7 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     let samples_flat = prover_state.verifier_messages_vec::<F>(s * log_n);
+    count_ops!(OodPointQueries, s as u64);
     let answers = samples_flat
         .chunks(log_n)
         .map(|zeta| oracle.query_at_point(zeta))

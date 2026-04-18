@@ -197,6 +197,7 @@ impl<
 
         let td = {
             let _s = tracing::info_span!("warp.commit_new_oracle").entered();
+            count_ops!(MerkleTreeBuilds);
             MerkleTree::<MT>::new(
                 &self.params.mt_leaf_hash_params,
                 &self.params.mt_two_to_one_hash_params,
