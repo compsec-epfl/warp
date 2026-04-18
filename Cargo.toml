@@ -25,6 +25,8 @@ spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "small
 ] }
 efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/simd_goldilocks_experimental" }
 thiserror = "2.0.16"
+tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter"], optional = true }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
 
 
@@ -50,6 +52,11 @@ criterion = "0.8"
 default = ["asm"]
 
 asm = ["ark-ff/asm"]
+
+# Turns on a `tracing-subscriber` that emits phase timing and dimension fields
+# to stderr in the same spirit as the old `[PROFILE]` eprintln! lines.
+# Plan O replaces this with structured JSON + op counters.
+profile = ["dep:tracing-subscriber"]
 
 [[bench]]
 name = "warp_rs"

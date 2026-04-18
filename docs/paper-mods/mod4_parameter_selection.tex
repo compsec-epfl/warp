@@ -1,0 +1,29 @@
+\documentclass{article}
+\input{notation.tex}
+
+\title{Modification 4: \\ Soundness-driven parameter selection (stub)}
+\author{Warp paper-mods}
+\date{}
+
+\begin{document}
+\maketitle
+
+\paragraph{Status.} Stub. Full spec authored in Plan P. Paired code:
+\codemod{src/params/} (to be created).
+
+\section*{Abstract}
+
+The paper states security bounds symbolically; the implementation currently
+hard-codes parameter values (e.g.\ \(s = 8\), \(t = 7\)) with no derivation
+record. Modification 4 introduces, both in the paper and in code, an
+\emph{inverse} to the soundness analysis: given a security target
+\(\lambda\), a field \(\F\), a code rate \(\rho\), and an accumulation
+depth, produce the minimum-cost parameter tuple \((s, t, l, l_1)\) hitting
+that target. Both list-decoding regimes (provable and conjectured) are
+supported via a user toggle.
+
+The code module \codemod{src/params/} will expose pure \texttt{select} and
+\texttt{validate} functions plus a preset table to replace the ad-hoc
+constants currently appearing in tests. See Plan P for the full treatment.
+
+\end{document}
