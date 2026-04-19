@@ -41,6 +41,7 @@ pub mod config;
 pub mod constraints;
 pub mod crypto;
 pub mod error;
+pub mod profile;
 pub mod protocol;
 pub mod relations;
 pub mod serialize;
@@ -281,6 +282,11 @@ impl<
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witnesses.0.len(), acc_instances.0.len());
 
+        // Rollup checkpoints for the PR-shape profile table — real wall
+        // times, not a sum of the inner phases below.
+        #[cfg(feature = "profile")]
+        let __prove_start = std::time::Instant::now();
+
         let (l1, l) = (self.config.l1, self.config.l);
         let l2 = l - l1;
         debug_assert_eq!(l1 + l2, l);
@@ -310,17 +316,21 @@ impl<
         let log_n = log2(n) as usize;
 
         // a. encode witnesses
-        let (codewords, leaves) = build_codeword_leaves(&self.code, &witnesses, l1);
+        let (codewords, leaves) = crate::phase!("rs_encode", {
+            build_codeword_leaves(&self.code, &witnesses, l1)
+        });
 
         // b. evaluation claims
         let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
 
         // c. commit to witnesses
-        let td_0 = MerkleTree::<MT>::new(
-            &self.mt_leaf_hash_params,
-            &self.mt_two_to_one_hash_params,
-            leaves.chunks_exact(l1).collect::<Vec<_>>(),
-        )?;
+        let td_0 = crate::phase!("pesat_merkle_tree", {
+            MerkleTree::<MT>::new(
+                &self.mt_leaf_hash_params,
+                &self.mt_two_to_one_hash_params,
+                leaves.chunks_exact(l1).collect::<Vec<_>>(),
+            )?
+        });
 
         // d. absorb commitment and code evaluations
         let root_bytes: [u8; 32] = td_0
@@ -335,6 +345,9 @@ impl<
         let taus = (0..l1)
             .map(|_| prover_state.verifier_messages_vec::<F>(log_M))
             .collect::<Vec<_>>();
+
+        #[cfg(feature = "profile")]
+        let __pesat_done = std::time::Instant::now();
 
         ////////////////////////
         // 3. Constrained Code Accumulation
@@ -385,7 +398,9 @@ impl<
             degree,
         };
         let mut cc = CoefficientProverLSB::new(&evaluator, tablewise, pw);
-        let gamma = sumcheck(&mut cc, log_l, prover_state, noop_hook).challenges;
+        let gamma = crate::phase!("twin_constraint_sumcheck", {
+            sumcheck(&mut cc, log_l, prover_state, noop_hook).challenges
+        });
         debug_assert_eq!(gamma.len(), log_l);
 
         // e. new oracle and target — after log_l rounds each group has one
@@ -399,12 +414,12 @@ impl<
         let beta_tau = reduced_tw[3][0].clone();
 
         // eval the bundled r1cs
-        let beta_eq_evals = compute_hypercube_eq_evals(log_M, &beta_tau);
-
-        let eta = self
-            .p
-            .evaluate_bundled(&beta_eq_evals, &z)
-            .map_err(|_| ProverError::SpongeFish)?;
+        let eta = crate::phase!("eval_bundled_r1cs", {
+            let beta_eq_evals = compute_hypercube_eq_evals(log_M, &beta_tau);
+            self.p
+                .evaluate_bundled(&beta_eq_evals, &z)
+                .map_err(|_| ProverError::SpongeFish)?
+        });
 
         let (x, w) = z.split_at(N - k);
         let beta = (vec![beta_tau], vec![x.to_vec()]);
@@ -412,11 +427,13 @@ impl<
         let nu_0 = f_hat.fix_variables(&zeta_0)[0];
 
         // f. new commitment
-        let td = MerkleTree::<MT>::new(
-            &self.mt_leaf_hash_params,
-            &self.mt_two_to_one_hash_params,
-            f.chunks(1).collect::<Vec<_>>(),
-        )?;
+        let td = crate::phase!("merkle_commit", {
+            MerkleTree::<MT>::new(
+                &self.mt_leaf_hash_params,
+                &self.mt_two_to_one_hash_params,
+                f.chunks(1).collect::<Vec<_>>(),
+            )?
+        });
 
         // g. absorb new commitment and target
         let td_root_bytes: [u8; 32] = td
@@ -478,33 +495,37 @@ impl<
         // eq-evals table are consumed (`r ≤ 2^log_r`). The incremental
         // builder is still a net win: O(2^log_r) ≤ O(2r) vs the previous
         // O(r · log_r).
-        let xi_eq_evals: Vec<F> = compute_hypercube_eq_evals(log_r, &xis)
-            .into_iter()
-            .take(r)
-            .collect();
+        let batched_g = crate::phase!("eq_poly_evals_and_ood_evals_vec", {
+            let xi_eq_evals: Vec<F> = compute_hypercube_eq_evals(log_r, &xis)
+                .into_iter()
+                .take(r)
+                .collect();
 
-        let ood_evals_vec = (0..1 + self.config.s)
-            .map(|i| {
-                let table = compute_hypercube_eq_evals(log_n, zetas[i]);
-                let scale = xi_eq_evals[i];
-                table.into_iter().map(|v| v * scale).collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+            let ood_evals_vec = (0..1 + self.config.s)
+                .map(|i| {
+                    let table = compute_hypercube_eq_evals(log_n, zetas[i]);
+                    let scale = xi_eq_evals[i];
+                    table.into_iter().map(|v| v * scale).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
 
-        // [CBBZ23] optimization from hyperplonk
-        let id_non_0_eval_sums =
-            accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
+            // [CBBZ23] optimization from hyperplonk
+            let id_non_0_eval_sums =
+                accumulate_sparse_evaluations(zetas, xi_eq_evals, self.config.s, r);
+
+            batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums)
+        });
 
         // Batching inner-product sumcheck via the new `SumcheckProver` trait.
         // `InnerProductProver` is MSB half-split, so the challenge vector is
         // returned in MSB order; reverse once to arkworks' LSB-first
         // convention before feeding it to the MLE.
-        let mut ip = InnerProductProver::new(
-            f.clone(),
-            batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
-        );
-        let mut alpha = sumcheck(&mut ip, log_n, prover_state, noop_hook).challenges;
-        alpha.reverse();
+        let alpha = crate::phase!("batching_sumcheck", {
+            let mut ip = InnerProductProver::new(f.clone(), batched_g);
+            let mut alpha = sumcheck(&mut ip, log_n, prover_state, noop_hook).challenges;
+            alpha.reverse();
+            alpha
+        });
 
         // m. new target
         let mu = f_hat.fix_variables(&alpha)[0];
@@ -533,6 +554,17 @@ impl<
 
         let acc_instance = (vec![td.root()], vec![alpha], vec![mu], beta, vec![eta]);
         let acc_witness = (vec![td], vec![f], vec![w.to_vec()]);
+
+        #[cfg(feature = "profile")]
+        {
+            let end = std::time::Instant::now();
+            crate::profile::record("pesat_reduce", __pesat_done.duration_since(__prove_start));
+            crate::profile::record(
+                "constrained_code_accumulate",
+                end.duration_since(__pesat_done),
+            );
+            crate::profile::record("prove_total", end.duration_since(__prove_start));
+        }
 
         // 4. return
         Ok((
