@@ -28,6 +28,7 @@ use efficient_sumcheck::{
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
 use crate::count_ops;
+use crate::hasher::WarpHasher;
 use crate::protocol::oracle::Oracle;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
@@ -135,11 +136,11 @@ pub struct TwinConstraintOutput<F: Field> {
     skip_all,
     fields(log_l = log_l, log_m = log_m, log_n = log_n)
 )]
-pub fn prove<F>(
+pub fn prove<F, H>(
     prover_state: &mut ProverState,
     fresh_codewords: &[Vec<F>],
     fresh_taus: Vec<Vec<F>>,
-    acc_instance: AccumulatorInstance<F>,
+    acc_instance: AccumulatorInstance<F, H>,
     acc_witness_f: &[Vec<F>],
     acc_witness_w: &[Vec<F>],
     instances: &[Vec<F>],
@@ -151,6 +152,7 @@ pub fn prove<F>(
 ) -> TwinConstraintOutput<F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    H: WarpHasher<F>,
 {
     let l1 = fresh_codewords.len();
 

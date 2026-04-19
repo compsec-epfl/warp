@@ -21,6 +21,7 @@ use ark_codes::{
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_ff::UniformRand;
+use ark_vc::blake3::Blake3FieldHasher;
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::thread_rng;
 
@@ -84,10 +85,11 @@ fn warp_test() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _>::new(
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
+        Blake3FieldHasher::<BLS12_381>::new(),
     );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
@@ -126,10 +128,11 @@ fn warp_test() {
     let warp_config =
         WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _>::new(
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
+        Blake3FieldHasher::<BLS12_381>::new(),
     );
 
     let mut prover_state = domainsep.instance(&0u32).std_prover();
@@ -165,13 +168,14 @@ fn warp_test() {
             pf.clone(),
         )
         .unwrap();
-    hash_chain_warp
-        .decide(acc_w.clone(), acc_x.clone())
-        .unwrap();
+    // Serializers take refs (AccumulatorWitness is not Clone: ark-vc
+    // `Committed` lacks a Clone impl). Compute sizes first, then consume
+    // acc_w / acc_x into decide.
+    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x);
+    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w);
+    let proof_to_serde = ProofSerializer::new(&pf);
 
-    let acc_x_to_serde = AccInstanceSerializer::<_>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_>::new(acc_w);
-    let proof_to_serde = ProofSerializer::new(pf);
+    hash_chain_warp.decide(acc_w, acc_x).unwrap();
 
     println!(
         "acc_x size: {}",
@@ -237,10 +241,11 @@ fn warp_test_goldilocks() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _>::new(
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
+        Blake3FieldHasher::<Goldilocks>::new(),
     );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
@@ -280,10 +285,11 @@ fn warp_test_goldilocks() {
     let warp_config =
         WARPConfig::<_, R1CS<Goldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _>::new(
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
+        Blake3FieldHasher::<Goldilocks>::new(),
     );
 
     let mut prover_state = domainsep.instance(&0u32).std_prover();
@@ -319,13 +325,14 @@ fn warp_test_goldilocks() {
             pf.clone(),
         )
         .unwrap();
-    hash_chain_warp
-        .decide(acc_w.clone(), acc_x.clone())
-        .unwrap();
+    // Serializers take refs (AccumulatorWitness is not Clone: ark-vc
+    // `Committed` lacks a Clone impl). Compute sizes first, then consume
+    // acc_w / acc_x into decide.
+    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x);
+    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w);
+    let proof_to_serde = ProofSerializer::new(&pf);
 
-    let acc_x_to_serde = AccInstanceSerializer::<_>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_>::new(acc_w);
-    let proof_to_serde = ProofSerializer::new(pf);
+    hash_chain_warp.decide(acc_w, acc_x).unwrap();
 
     println!(
         "Goldilocks acc_x size: {}",

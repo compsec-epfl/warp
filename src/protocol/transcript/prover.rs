@@ -1,6 +1,7 @@
-use ark_ff::Field;
-use spongefish::{Encoding, ProverState};
+use ark_ff::{Field, PrimeField};
+use spongefish::{Encoding, NargSerialize, ProverState};
 
+use crate::hasher::WarpHasher;
 use crate::types::AccumulatorInstance;
 
 // absorb a list of plain instances into the transcript
@@ -16,10 +17,12 @@ pub fn absorb_instances<F: Field + Encoding<[u8]>>(
 }
 
 // absorb an AccumulatorInstance into the transcript
-impl<F: Field + Encoding<[u8]>> AccumulatorInstance<F> {
+impl<F: PrimeField + Encoding<[u8]>, H: WarpHasher<F>> AccumulatorInstance<F, H>
+where
+    H::Digest: NargSerialize,
+{
     pub fn absorb_into(&self, prover_state: &mut ProverState) {
         for digest in &self.rt {
-            // ark-vc roots are already `[u8; 32]`; no conversion needed.
             prover_state.prover_message(digest);
         }
 

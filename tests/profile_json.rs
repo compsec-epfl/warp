@@ -18,6 +18,7 @@ use ark_codes::{
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
+use ark_vc::blake3::Blake3FieldHasher;
 use std::marker::PhantomData;
 
 use warp::config::WARPConfig;
@@ -92,10 +93,11 @@ fn json_layer_emits_phase_records() {
         .unzip();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _>::new(
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
         warp_config,
         code,
         r1cs.clone(),
+        Blake3FieldHasher::<BLS12_381>::new(),
     );
 
     let domainsep = spongefish::domain_separator!("test::profile_json");

@@ -27,6 +27,7 @@ use utils::{
 pub mod config;
 pub mod constraints;
 pub mod error;
+pub mod hasher;
 pub mod params;
 pub mod profile;
 pub mod protocol;
@@ -54,20 +55,25 @@ impl BoolResult for bool {
     }
 }
 
-pub struct WARP<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone> {
-    pub params: WARPParams<F, P, C>,
+pub struct WARP<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: hasher::WarpHasher<F>> {
+    pub params: WARPParams<F, P, C, H>,
 }
 
 impl<
         F: PrimeField,
         P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
-    > WARP<F, P, C>
+        H: hasher::WarpHasher<F>,
+    > WARP<F, P, C, H>
 {
-    /// Create a fresh WARP instance. The ark-vc Blake3 scheme is built
-    /// here with `code.code_len()` leaves.
-    pub fn new(config: WARPConfig<F, P>, code: C, p: P) -> WARP<F, P, C> {
-        let scheme = ark_vc::blake3::binary::scheme::<F>(code.code_len());
+    /// Create a fresh WARP instance from a user-supplied hasher. The
+    /// hasher choice drives the prove/verify cost profile: Blake3 for
+    /// prover speed, Poseidon2 for circuit-friendly recursion.
+    pub fn new(config: WARPConfig<F, P>, code: C, p: P, hasher: H) -> WARP<F, P, C, H> {
+        use ark_vc::shape::PerfectBinary;
+        use ark_vc::MerkleCommitment;
+        let scheme =
+            MerkleCommitment::<H, PerfectBinary>::new(hasher, PerfectBinary::with_num_leaves(code.code_len()));
         Self {
             params: WARPParams {
                 _f: PhantomData,
@@ -84,7 +90,8 @@ impl<
         F: PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
         P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
         C: LinearCode<F> + Clone,
-    > AccumulationScheme<F> for WARP<F, P, C>
+        H: hasher::WarpHasher<F>,
+    > AccumulationScheme<F, H> for WARP<F, P, C, H>
 {
     type Index = P;
     type ProverKey = (P, usize, usize, usize);
@@ -113,9 +120,9 @@ impl<
         prover_state: &mut ProverState,
         witnesses: Self::Witnesses,
         instances: Self::Instances,
-        acc_instance: AccumulatorInstance<F>,
-        acc_witness: AccumulatorWitness<F>,
-    ) -> ProveResult<F> {
+        acc_instance: AccumulatorInstance<F, H>,
+        acc_witness: AccumulatorWitness<F, H>,
+    ) -> ProveResult<F, H> {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witness.td.len(), acc_instance.rt.len());
@@ -142,7 +149,7 @@ impl<
         } = acc_witness;
 
         // Phase 2: PESAT — emit oracles (codewords), commit, squeeze τs.
-        let pesat = pesat::prove::<F, C>(
+        let pesat = pesat::prove::<F, C, H>(
             prover_state,
             &self.params.code,
             &self.params.scheme,
@@ -152,7 +159,7 @@ impl<
         );
 
         // Phase 3a: twin-constraint sumcheck.
-        let tc = twin_constraint::prove::<F>(
+        let tc = twin_constraint::prove::<F, H>(
             prover_state,
             &pesat.codewords,
             pesat.taus,
@@ -188,7 +195,7 @@ impl<
             let leaves: Vec<Vec<F>> = tc.f.evals().iter().map(|&x| vec![x]).collect();
             self.params.scheme.commit(&leaves)
         };
-        let td_root: [u8; 32] = *td.root();
+        let td_root: H::Digest = td.root().clone();
         prover_state.prover_message(&td_root);
         prover_state.prover_message(&eta);
         prover_state.prover_message(&nu_0);
@@ -219,7 +226,7 @@ impl<
         // Phase 3e: proximity — ark-vc scheme.open produces one pruned
         // proof per committed tree.
         let all_codewords: Vec<Vec<F>> = acc_fs.into_iter().chain(pesat.codewords).collect();
-        let prox = proximity::prove::<F>(
+        let prox = proximity::prove::<F, H>(
             &self.params.scheme,
             &queries,
             &pesat.td_0,
@@ -245,7 +252,7 @@ impl<
             w: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: *pesat.td_0.root(),
+            rt_0: pesat.td_0.root().clone(),
             mu_i: pesat.mus,
             nu_0,
             nu_i: nus,
@@ -261,8 +268,8 @@ impl<
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: AccumulatorInstance<F>,
-        proof: WARPProof<F>,
+        acc_instance: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError> {
         let (l1, l) = (self.params.config.l1, self.params.config.l);
         let l2 = l - l1;
@@ -288,7 +295,7 @@ impl<
                 beta: (l2_taus, l2_xs),
                 eta: l2_etas,
             },
-        ) = parse_statement::<F>(verifier_state, l1, l2, N - k, log_n, log_m)?;
+        ) = parse_statement::<F, H>(verifier_state, l1, l2, N - k, log_n, log_m)?;
 
         ////////////////////////
         // 2. Derive randomness
@@ -309,7 +316,7 @@ impl<
             xi,
             alpha_sumcheck,
             sums_batching_sumcheck,
-        } = derive_randomness::<F>(
+        } = derive_randomness::<F, H>(
             verifier_state,
             l1,
             log_n,
@@ -385,7 +392,7 @@ impl<
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
 
-        proximity::verify::<F>(
+        proximity::verify::<F, H>(
             &self.params.scheme,
             &queries,
             &rt_0,
@@ -441,8 +448,8 @@ impl<
 
     fn decide(
         &self,
-        acc_witness: AccumulatorWitness<F>,
-        acc_instance: AccumulatorInstance<F>,
+        acc_witness: AccumulatorWitness<F, H>,
+        acc_instance: AccumulatorInstance<F, H>,
     ) -> Result<(), WARPError> {
         // Rebuild the Merkle tree from the stored witness and compare
         // against the accumulator's root, and also against the stored
@@ -450,7 +457,7 @@ impl<
         // the trapdoor was tampered with but the root claim is consistent).
         let leaves: Vec<Vec<F>> = acc_witness.f[0].iter().map(|&x| vec![x]).collect();
         let computed = self.params.scheme.commit(&leaves);
-        (acc_instance.rt[0] == *computed.root()).ok_or_err(DeciderError::MerkleRoot)?;
+        (&acc_instance.rt[0] == computed.root()).ok_or_err(DeciderError::MerkleRoot)?;
         (acc_witness.td[0].root() == computed.root())
             .ok_or_err(DeciderError::MerkleTrapDoor)?;
 

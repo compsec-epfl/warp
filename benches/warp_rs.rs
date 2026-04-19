@@ -3,6 +3,7 @@ use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
 
 use ark_std::rand::thread_rng;
+use ark_vc::blake3::Blake3FieldHasher;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
@@ -31,10 +32,11 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
     for l in [32, 64, 128, 256, 512] {
         let warp_config = WARPConfig::new(l, l, s, t, r1cs.config(), code.code_len());
 
-        let hash_chain_warp = WARP::<F, _, _>::new(
+        let hash_chain_warp = WARP::<F, _, _, Blake3FieldHasher<F>>::new(
             warp_config.clone(),
             code.clone(),
             r1cs.clone(),
+            Blake3FieldHasher::<F>::new(),
         );
 
         let instances_witnesses =

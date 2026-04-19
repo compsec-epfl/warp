@@ -7,10 +7,12 @@
 
 use ark_codes::traits::LinearCode;
 use ark_ff::PrimeField;
-use ark_vc::blake3::binary::Scheme;
+use ark_vc::shape::PerfectBinary;
+use ark_vc::MerkleCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
 use crate::count_ops;
+use crate::hasher::WarpHasher;
 use crate::types::PesatOutput;
 
 /// Encode each witness into a codeword, then zip them into per-position
@@ -50,17 +52,18 @@ fn build_codeword_leaves<F: PrimeField, C: LinearCode<F>>(
     skip_all,
     fields(l1 = l1, log_m = log_m, n_witnesses = witnesses.len())
 )]
-pub fn prove<F, C>(
+pub fn prove<F, C, H>(
     prover_state: &mut ProverState,
     code: &C,
-    scheme: &Scheme<F>,
+    scheme: &MerkleCommitment<H, PerfectBinary>,
     witnesses: &[Vec<F>],
     l1: usize,
     log_m: usize,
-) -> PesatOutput<F>
+) -> PesatOutput<F, H>
 where
     F: PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     C: LinearCode<F>,
+    H: WarpHasher<F>,
 {
     // a. encode witnesses + interleave positions into leaves
     let (codewords, leaves) = {

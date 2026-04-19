@@ -2,9 +2,10 @@ use ark_ff::PrimeField;
 use spongefish::{ProverState, VerificationResult, VerifierState};
 
 use crate::error::{VerifierError, WARPError};
+use crate::hasher::WarpHasher;
 use crate::types::{AccumulatorInstance, AccumulatorWitness, ProveResult, WARPProof};
 
-pub trait AccumulationScheme<F: PrimeField> {
+pub trait AccumulationScheme<F: PrimeField, H: WarpHasher<F>> {
     type Index;
     type ProverKey;
     type VerifierKey;
@@ -24,21 +25,21 @@ pub trait AccumulationScheme<F: PrimeField> {
         prover_state: &mut ProverState,
         witnesses: Self::Witnesses,
         instances: Self::Instances,
-        acc_instance: AccumulatorInstance<F>,
-        acc_witness: AccumulatorWitness<F>,
-    ) -> ProveResult<F>;
+        acc_instance: AccumulatorInstance<F, H>,
+        acc_witness: AccumulatorWitness<F, H>,
+    ) -> ProveResult<F, H>;
 
     fn verify<'a>(
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: AccumulatorInstance<F>,
-        proof: WARPProof<F>,
+        acc_instance: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError>;
 
     fn decide(
         &self,
-        acc_witness: AccumulatorWitness<F>,
-        acc_instance: AccumulatorInstance<F>,
+        acc_witness: AccumulatorWitness<F, H>,
+        acc_instance: AccumulatorInstance<F, H>,
     ) -> Result<(), WARPError>;
 }

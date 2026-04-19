@@ -17,17 +17,18 @@
 //! computation), but the auth proof covers only the unique positions.
 
 use ark_ff::PrimeField;
-use ark_vc::Opening;
+use ark_vc::shape::PerfectBinary;
+use ark_vc::{Committed, MerkleCommitment, Opening, OpeningProof};
 
 use crate::count_ops;
-use ark_vc::blake3::binary::{Committed, Hasher, Proof, Scheme};
 use crate::error::VerifierError;
+use crate::hasher::WarpHasher;
 use crate::protocol::query::QueryIndices;
 use crate::BoolResult;
 
-pub struct ProximityOutput<F: PrimeField> {
-    pub auth_0: Proof<F>,
-    pub auth_j: Vec<Proof<F>>,
+pub struct ProximityOutput<F: PrimeField, H: WarpHasher<F>> {
+    pub auth_0: OpeningProof<H>,
+    pub auth_j: Vec<OpeningProof<H>>,
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
@@ -62,15 +63,16 @@ fn canonicalise(positions: &[usize]) -> (Vec<usize>, Vec<usize>) {
         n_codewords = all_codewords.len(),
     )
 )]
-pub fn prove<F>(
-    scheme: &Scheme<F>,
+pub fn prove<F, H>(
+    scheme: &MerkleCommitment<H, PerfectBinary>,
     queries: &QueryIndices<F>,
-    td_0: &Committed<F>,
-    acc_td: &[Committed<F>],
+    td_0: &Committed<H, PerfectBinary>,
+    acc_td: &[Committed<H, PerfectBinary>],
     all_codewords: &[Vec<F>],
-) -> ProximityOutput<F>
+) -> ProximityOutput<F, H>
 where
     F: PrimeField,
+    H: WarpHasher<F>,
 {
     let (unique_indices, _first_occurrence) = canonicalise(&queries.leaf_positions);
 
@@ -118,19 +120,20 @@ where
     skip_all,
     fields(t = t, l2 = l2)
 )]
-pub fn verify<F>(
-    scheme: &Scheme<F>,
+pub fn verify<F, H>(
+    scheme: &MerkleCommitment<H, PerfectBinary>,
     queries: &QueryIndices<F>,
-    rt_0: &[u8; 32],
-    l2_roots: &[[u8; 32]],
-    auth_0: &Proof<F>,
-    auth_j: &[Proof<F>],
+    rt_0: &H::Digest,
+    l2_roots: &[H::Digest],
+    auth_0: &OpeningProof<H>,
+    auth_j: &[OpeningProof<H>],
     shift_query_answers: &[Vec<F>],
     l2: usize,
     t: usize,
 ) -> Result<(), VerifierError>
 where
     F: PrimeField,
+    H: WarpHasher<F>,
 {
     (shift_query_answers.len() == t).ok_or_err(VerifierError::NumShiftQueries)?;
 
@@ -143,7 +146,7 @@ where
         .iter()
         .map(|&first_i| shift_query_answers[first_i][l2..].to_vec())
         .collect();
-    let fresh_opening = Opening::<Hasher<F>>::new(unique_indices.clone(), fresh_values)
+    let fresh_opening = Opening::<H>::new(unique_indices.clone(), fresh_values)
         .map_err(|_| VerifierError::ShiftQueryIndex)?;
 
     count_ops!(MerklePathsVerified, unique_indices.len() as u64);
@@ -158,7 +161,7 @@ where
             .iter()
             .map(|&first_i| vec![shift_query_answers[first_i][j]])
             .collect();
-        let opening = Opening::<Hasher<F>>::new(unique_indices.clone(), values)
+        let opening = Opening::<H>::new(unique_indices.clone(), values)
             .map_err(|_| VerifierError::ShiftQueryIndex)?;
 
         count_ops!(MerklePathsVerified, unique_indices.len() as u64);

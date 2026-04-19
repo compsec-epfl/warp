@@ -1,34 +1,42 @@
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_std::log2;
 
 use spongefish::{Decoding, Encoding, NargDeserialize, VerificationResult, VerifierState};
 
-use ark_vc::blake3::binary::DIGEST_BYTES;
+use crate::hasher::WarpHasher;
 use crate::types::AccumulatorInstance;
 
 // (l1 instances, accumulated instance)
-pub type ParsedStatement<F> = (Vec<Vec<F>>, AccumulatorInstance<F>);
+pub type ParsedStatement<F, H> = (Vec<Vec<F>>, AccumulatorInstance<F, H>);
 
 // parse l1 plain instances + an AccumulatorInstance from the transcript
-pub fn parse_statement<F: Field + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>>(
+pub fn parse_statement<F, H>(
     verifier_state: &mut VerifierState<'_>,
     l1: usize,
     l2: usize,
     instance_len: usize,
     log_n: usize,
     log_m: usize,
-) -> VerificationResult<ParsedStatement<F>> {
+) -> VerificationResult<ParsedStatement<F, H>>
+where
+    F: PrimeField + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>,
+    H: WarpHasher<F>,
+{
     let l1_xs: Vec<Vec<F>> = (0..l1)
         .map(|_| verifier_state.prover_messages_vec(instance_len))
         .collect::<Result<_, _>>()?;
 
-    let acc = AccumulatorInstance::<F>::parse_from(verifier_state, l2, log_n, log_m, instance_len)?;
+    let acc = AccumulatorInstance::<F, H>::parse_from(verifier_state, l2, log_n, log_m, instance_len)?;
 
     Ok((l1_xs, acc))
 }
 
 // parse an AccumulatorInstance from the verifier transcript
-impl<F: Field + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>> AccumulatorInstance<F> {
+impl<F, H> AccumulatorInstance<F, H>
+where
+    F: PrimeField + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>,
+    H: WarpHasher<F>,
+{
     pub fn parse_from(
         verifier_state: &mut VerifierState<'_>,
         l2: usize,
@@ -36,7 +44,7 @@ impl<F: Field + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>> AccumulatorIn
         log_m: usize,
         instance_len: usize,
     ) -> VerificationResult<Self> {
-        let rt: Vec<[u8; DIGEST_BYTES]> = (0..l2)
+        let rt: Vec<H::Digest> = (0..l2)
             .map(|_| -> VerificationResult<_> { verifier_state.prover_message() })
             .collect::<Result<_, _>>()?;
 
@@ -66,15 +74,18 @@ impl<F: Field + NargDeserialize + Encoding<[u8]> + Decoding<[u8]>> AccumulatorIn
     }
 }
 
-pub struct DerivedRandomness<F: Field> {
-    pub rt_0: [u8; DIGEST_BYTES],
+pub struct DerivedRandomness<F: Field, H: WarpHasher<F>>
+where
+    F: PrimeField,
+{
+    pub rt_0: H::Digest,
     pub l1_mus: Vec<F>,
     pub l1_taus: Vec<Vec<F>>,
     pub omega: F,
     pub tau: Vec<F>,
     pub gamma_sumcheck: Vec<F>,
     pub coeffs_twinc_sumcheck: Vec<Vec<F>>,
-    pub td: [u8; DIGEST_BYTES],
+    pub td: H::Digest,
     pub eta: F,
     pub nus: Vec<F>,
     pub ood_samples: Vec<F>,
@@ -84,7 +95,7 @@ pub struct DerivedRandomness<F: Field> {
     pub sums_batching_sumcheck: Vec<[F; 2]>,
 }
 
-pub fn derive_randomness<F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize>(
+pub fn derive_randomness<F, H>(
     verifier_state: &mut VerifierState<'_>,
     l1: usize,
     log_n: usize,
@@ -92,9 +103,13 @@ pub fn derive_randomness<F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeseri
     s: usize,
     t: usize,
     log_m: usize,
-) -> VerificationResult<DerivedRandomness<F>> {
+) -> VerificationResult<DerivedRandomness<F, H>>
+where
+    F: PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
+    H: WarpHasher<F>,
+{
     // commitment digest
-    let rt_0: [u8; DIGEST_BYTES] = verifier_state.prover_message()?;
+    let rt_0: H::Digest = verifier_state.prover_message()?;
 
     // mus
     let l1_mus: Vec<F> = verifier_state.prover_messages_vec(l1)?;
@@ -125,7 +140,7 @@ pub fn derive_randomness<F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeseri
     }
 
     // td digest
-    let td: [u8; DIGEST_BYTES] = verifier_state.prover_message()?;
+    let td: H::Digest = verifier_state.prover_message()?;
 
     // eta and nu_0
     let eta: F = verifier_state.prover_message()?;

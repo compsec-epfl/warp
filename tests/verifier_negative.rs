@@ -30,6 +30,7 @@ use ark_codes::{
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
+use ark_vc::blake3::Blake3FieldHasher;
 
 use warp::config::WARPConfig;
 use warp::error::VerifierError;
@@ -46,20 +47,21 @@ use warp::utils::poseidon;
 use warp::WARP;
 
 type F = BLS12_381;
-type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>>;
+type H = Blake3FieldHasher<F>;
+type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, H>;
 
 /// Everything the verifier needs to re-check, plus enough dimensions
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
     vk: (usize, usize, usize),
-    acc_x: AccumulatorInstance<F>,
-    proof: WARPProof<F>,
+    acc_x: AccumulatorInstance<F, H>,
+    proof: WARPProof<F, H>,
     narg_str: Vec<u8>,
 }
 
 impl Fixture {
-    fn verify(&self, acc_x: AccumulatorInstance<F>, proof: WARPProof<F>) -> Result<(), VerifierError> {
+    fn verify(&self, acc_x: AccumulatorInstance<F, H>, proof: WARPProof<F, H>) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&self.narg_str);
         self.warp.verify(self.vk, &mut verifier_state, acc_x, proof)
@@ -109,7 +111,8 @@ fn make_fixture() -> Fixture {
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
     let warp_cfg1 = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let w1 = WARP::<F, R1CS<F>, _>::new(warp_cfg1, code.clone(), r1cs.clone());
+    let w1 =
+        WARP::<F, R1CS<F>, _, H>::new(warp_cfg1, code.clone(), r1cs.clone(), Blake3FieldHasher::<F>::new());
 
     let (mut roots, mut alphas, mut mus, mut taus, mut xs, mut etas) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -142,7 +145,7 @@ fn make_fixture() -> Fixture {
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _>::new(warp_cfg2, code, r1cs.clone());
+    let warp = WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.instance(&0u32).std_prover();
