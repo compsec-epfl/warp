@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 
-use crate::crypto::vc::{AuthProof, DIGEST_BYTES};
+use crate::crypto::vc::{Proof, DIGEST_BYTES};
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 #[derive(CanonicalSerialize)]
@@ -59,8 +59,8 @@ pub struct ProofSerializer<F: PrimeField> {
     pub mu_i: Vec<F>,
     pub nu_0: F,
     pub nu_i: Vec<F>,
-    pub auth_0: AuthProof<F>,
-    pub auth_j: Vec<AuthProof<F>>,
+    pub auth_0: Proof<F>,
+    pub auth_j: Vec<Proof<F>>,
     pub f_i_x_j: Vec<Vec<F>>,
 }
 

@@ -3,7 +3,7 @@ use ark_ff::{Field, PrimeField};
 use std::marker::PhantomData;
 
 use crate::config::WARPConfig;
-use crate::crypto::vc::{AuthProof, CommittedOracle, Scheme, DIGEST_BYTES};
+use crate::crypto::vc::{Committed, Proof, Scheme, DIGEST_BYTES};
 use crate::error::ProverError;
 use crate::relations::BundledPESAT;
 
@@ -60,15 +60,15 @@ impl<F: Field> AccumulatorInstance<F> {
 
 /// Accumulator witness — the private part of an accumulated claim.
 ///
-/// `td` holds one ark-vc [`CommittedOracle`] per accumulated oracle. It
+/// `td` holds one ark-vc [`Committed`] per accumulated oracle. It
 /// still fills the role of the old `MerkleTree<MT>` (opening new paths,
 /// re-deriving the root on `decide`), plus it now carries the message
 /// via `Committed::leaves()` — fixing arkworks issue #144 where users
 /// had to keep a parallel `Vec<Leaf>`.
 pub struct AccumulatorWitness<F: PrimeField> {
-    pub td: Vec<CommittedOracle<F>>,
+    pub td: Vec<Committed<F>>,
     /// Oracle evaluations (codewords). Kept alongside `td` for convenience
-    /// — `CommittedOracle::leaves()` also returns them, but having the
+    /// — `Committed::leaves()` also returns them, but having the
     /// raw `Vec<F>` avoids an extra clone in the prover hot path where we
     /// concat accumulated with fresh codewords to produce
     /// `shift_query_answers`.
@@ -136,9 +136,9 @@ pub struct WARPProof<F: PrimeField> {
     /// Evaluation claims (OOD + shift query answers).
     pub nu_i: Vec<F>,
     /// Pruned authentication proof for the fresh PESAT commitment.
-    pub auth_0: AuthProof<F>,
+    pub auth_0: Proof<F>,
     /// Pruned authentication proofs for each accumulated commitment.
-    pub auth_j: Vec<AuthProof<F>>,
+    pub auth_j: Vec<Proof<F>>,
     /// Shift query answers: `f_i(x_j)` for each query position `j` and oracle `i`.
     pub shift_query_answers: Vec<Vec<F>>,
 }
@@ -150,7 +150,7 @@ pub struct PesatOutput<F: PrimeField> {
     /// Encoded codewords from fresh witnesses.
     pub codewords: Vec<Vec<F>>,
     /// Committed ark-vc state for the interleaved codeword tree.
-    pub td_0: CommittedOracle<F>,
+    pub td_0: Committed<F>,
     /// Code evaluation claims: `f_i(0)` for each codeword.
     pub mus: Vec<F>,
     /// PESAT evaluation challenges (one per fresh instance).

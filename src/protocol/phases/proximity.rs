@@ -4,7 +4,7 @@
 //! committed oracles.
 //!
 //! Post ark-vc migration: `auth_0` / `auth_j` are *single* pruned
-//! [`AuthProof`]s (one per tree), not per-query path vectors. ark-vc
+//! [`Proof`]s (one per tree), not per-query path vectors. ark-vc
 //! calls `DeriveVertexSet(indices)` on each open, so all `t` queries
 //! share a minimal authenticating-digest set.
 //!
@@ -20,14 +20,14 @@ use ark_ff::PrimeField;
 use ark_vc::Opening;
 
 use crate::count_ops;
-use crate::crypto::vc::{AuthProof, CommittedOracle, Hasher, Scheme};
+use crate::crypto::vc::{Committed, Hasher, Proof, Scheme};
 use crate::error::VerifierError;
 use crate::protocol::query::QueryIndices;
 use crate::BoolResult;
 
 pub struct ProximityOutput<F: PrimeField> {
-    pub auth_0: AuthProof<F>,
-    pub auth_j: Vec<AuthProof<F>>,
+    pub auth_0: Proof<F>,
+    pub auth_j: Vec<Proof<F>>,
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
@@ -65,8 +65,8 @@ fn canonicalise(positions: &[usize]) -> (Vec<usize>, Vec<usize>) {
 pub fn prove<F>(
     scheme: &Scheme<F>,
     queries: &QueryIndices<F>,
-    td_0: &CommittedOracle<F>,
-    acc_td: &[CommittedOracle<F>],
+    td_0: &Committed<F>,
+    acc_td: &[Committed<F>],
     all_codewords: &[Vec<F>],
 ) -> ProximityOutput<F>
 where
@@ -123,8 +123,8 @@ pub fn verify<F>(
     queries: &QueryIndices<F>,
     rt_0: &[u8; 32],
     l2_roots: &[[u8; 32]],
-    auth_0: &AuthProof<F>,
-    auth_j: &[AuthProof<F>],
+    auth_0: &Proof<F>,
+    auth_j: &[Proof<F>],
     shift_query_answers: &[Vec<F>],
     l2: usize,
     t: usize,
