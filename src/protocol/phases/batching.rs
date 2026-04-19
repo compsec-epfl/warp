@@ -24,7 +24,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 
 use crate::count_ops;
 use crate::protocol::oracle::Oracle;
-use crate::utils::poly::eq_poly;
+use crate::utils::poly::EqPolyPrep;
 
 /// Output of the batching sumcheck: the reduced point `α` and the target
 /// `μ = \hat f(α)`.
@@ -63,11 +63,16 @@ where
     // compute evaluations for xi and the dense ood_evals_vec for the first 1+s zetas
     let (xi_eq_evals, ood_evals_vec) = {
         let _s = tracing::info_span!("batching.eq_evals").entered();
-        let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
+        let xi_prep = EqPolyPrep::new(&xis);
+        let xi_eq_evals = (0..r).map(|i| xi_prep.eval(i)).collect::<Vec<_>>();
         let ood_evals_vec = (0..1 + s)
             .map(|i| {
+                // One EqPolyPrep per outer-i; reused across the inner
+                // `a ∈ 0..n` loop — saves `n` reverses + `n` tau_hat
+                // allocations per outer step.
+                let zeta_prep = EqPolyPrep::new(zetas_prefix[i]);
                 (0..n)
-                    .map(|a| eq_poly(zetas_prefix[i], a) * xi_eq_evals[i])
+                    .map(|a| zeta_prep.eval(a) * xi_eq_evals[i])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();

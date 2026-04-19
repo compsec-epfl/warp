@@ -22,7 +22,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use utils::scale_and_sum;
 use utils::{
     concat_slices,
-    poly::{eq_poly, eq_poly_non_binary},
+    poly::{eq_poly_non_binary, EqPolyPrep},
 };
 
 pub mod config;
@@ -184,7 +184,8 @@ impl<
         );
 
         // Phase 3b: bundled η, ν₀, new commitment, absorb.
-        let beta_eq_evals = (0..M).map(|i| eq_poly(&tc.beta_tau, i)).collect::<Vec<_>>();
+        let beta_prep = EqPolyPrep::new(&tc.beta_tau);
+        let beta_eq_evals = (0..M).map(|i| beta_prep.eval(i)).collect::<Vec<_>>();
         let eta = self
             .p
             .evaluate_bundled(&beta_eq_evals, &tc.z)
@@ -479,8 +480,9 @@ impl<
 
         let tau = &acc_instance.beta.0[0];
 
+        let tau_prep = EqPolyPrep::new(tau);
         let tau_zero_evader = Hypercube::<AscendingOrder>::new(tau.len())
-            .map(|(index, _point)| eq_poly(tau, index))
+            .map(|(index, _point)| tau_prep.eval(index))
             .collect::<Vec<F>>();
 
         let mut z = acc_instance.beta.1[0].clone();

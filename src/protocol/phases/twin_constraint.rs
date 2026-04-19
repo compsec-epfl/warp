@@ -32,7 +32,7 @@ use crate::hasher::WarpHasher;
 use crate::protocol::oracle::Oracle;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
-use crate::utils::{concat_slices, poly::eq_poly};
+use crate::utils::{concat_slices, poly::EqPolyPrep};
 
 /// Degree-1 polynomial interpolating two field elements: `lo + (hi - lo)·X`.
 fn linear_poly<F: Field>(lo: F, hi: F) -> DensePolynomial<F> {
@@ -161,8 +161,9 @@ where
     let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
     // b. assemble sumcheck tables
+    let tau_prep = EqPolyPrep::new(&tau);
     let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
-        .map(|(index, _point)| eq_poly(&tau, index))
+        .map(|(index, _point)| tau_prep.eval(index))
         .collect::<Vec<F>>();
 
     let alpha_vecs = concat_slices(&acc_instance.alpha, &vec![vec![F::zero(); log_n]; l1]);

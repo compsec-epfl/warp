@@ -3,17 +3,44 @@ use efficient_sumcheck::{
     hypercube::HypercubeMember, interpolation::LagrangePolynomial, order_strategy::AscendingOrder,
 };
 
+/// Precomputed state for repeated `eq(tau, point)` queries on the
+/// same `tau`. Pays the reverse-and-tau-hat cost once instead of
+/// per call — five of warp's `eq_poly` callers sit in hot loops of
+/// length up to `n` (code length), so hoisting the setup out of the
+/// loop is a straight win.
+///
+/// Use `EqPolyPrep::new(tau)` once, then `.eval(point)` per query.
+/// For one-off calls, [`eq_poly`] is a convenience wrapper.
+pub struct EqPolyPrep<F: Field> {
+    tau_reversed: Vec<F>,
+    tau_hat: Vec<F>,
+}
+
+impl<F: Field> EqPolyPrep<F> {
+    pub fn new(tau: &[F]) -> Self {
+        let mut tau_reversed = tau.to_vec();
+        tau_reversed.reverse();
+        let tau_hat: Vec<F> = tau_reversed.iter().map(|t| F::ONE - *t).collect();
+        Self {
+            tau_reversed,
+            tau_hat,
+        }
+    }
+
+    pub fn eval(&self, point: usize) -> F {
+        LagrangePolynomial::<F, AscendingOrder>::lag_poly(
+            self.tau_reversed.clone(),
+            self.tau_hat.clone(),
+            HypercubeMember::new(self.tau_reversed.len(), point),
+        )
+    }
+}
+
+/// Single-shot `eq(tau, point)`. Non-hot-path callers should use
+/// this; hot-path callers building multiple values against the same
+/// `tau` should build an [`EqPolyPrep`] once and reuse it.
 pub fn eq_poly<F: Field>(original_tau: &[F], point: usize) -> F {
-    // TODO (z-tech): will fix and get rid of this function
-    let num_variables = original_tau.len();
-    let mut tau = original_tau.to_vec();
-    tau.reverse();
-    let tau_hat: Vec<F> = tau.iter().map(|t| F::ONE - *t).collect();
-    LagrangePolynomial::<F, AscendingOrder>::lag_poly(
-        tau,
-        tau_hat,
-        HypercubeMember::new(num_variables, point),
-    )
+    EqPolyPrep::new(original_tau).eval(point)
 }
 
 pub fn eq_poly_non_binary<F: Field>(x: &[F], y: &[F]) -> F {

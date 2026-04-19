@@ -19,7 +19,21 @@ pub fn concat_slices<F: Clone>(a: &[F], b: &[F]) -> Vec<F> {
     v
 }
 
+/// `sum_k scalars[k] · vectors[k]`, computed component-wise.
+///
+/// `vectors` and `scalars` must have the same outer length; a
+/// mismatch would otherwise silently truncate to the shorter (via
+/// `zip`) and return a wrong-but-not-erroring result. Debug-only
+/// check because every hot-path caller in warp constructs the two
+/// together; this is a tripwire for refactors.
 pub fn scale_and_sum<F: Field>(vectors: &[Vec<F>], scalars: &[F]) -> Vec<F> {
+    debug_assert_eq!(
+        vectors.len(),
+        scalars.len(),
+        "scale_and_sum: vectors.len() ({}) != scalars.len() ({})",
+        vectors.len(),
+        scalars.len()
+    );
     let n = vectors[0].len();
     let mut result = vec![F::default(); n];
 
