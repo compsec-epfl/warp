@@ -6,7 +6,6 @@ edition = "2021"
 
 [dependencies]
 ark-crypto-primitives = { version = "0.5.0", features = [
-    "merkle_tree",
     "crh",
     "constraints",
     "sponge",

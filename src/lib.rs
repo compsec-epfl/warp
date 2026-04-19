@@ -25,7 +25,6 @@ use utils::{
 };
 
 pub mod config;
-pub mod constraints;
 pub mod error;
 pub mod hasher;
 pub mod params;

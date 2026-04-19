@@ -56,11 +56,12 @@ object:
 caches. See \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_point}.
 
 \paragraph{Implementation note: commitments and oracles are not 1:1.} Warp's
-\Pesat{} phase interleaves \(l_1\) codewords into a single Merkle tree
-(\codemod{src/crypto/merkle/mod.rs}, \texttt{build\_codeword\_leaves}), so one
-commitment covers many oracles. The Rust \codemod{Oracle} struct therefore
-stores only \(f\) and the lazy \(\MLE{f}\); the Merkle tree implementing
-\(\Commit{f}\) is tracked by the enclosing data structure
+\Pesat{} phase interleaves \(l_1\) codewords into a single ark-vc
+commitment (see \texttt{build\_codeword\_leaves} in
+\codemod{src/protocol/phases/pesat.rs}), so one commitment covers many
+oracles. The Rust \codemod{Oracle} struct therefore stores only \(f\)
+and the lazy \(\MLE{f}\); the \texttt{ark\_vc::Committed} state
+implementing \(\Commit{f}\) is tracked by the enclosing data structure
 (\codemod{src/types.rs} --- \texttt{PesatOutput}, \texttt{AccumulatorWitness}).
 This is an orthogonal implementation choice; the IOR composition rule in
 \S4 is unchanged.

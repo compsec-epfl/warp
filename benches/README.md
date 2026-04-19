@@ -56,7 +56,5 @@ build check + bench time.
 per-phase attribution are deferred — see the docstring at the top of
 `iai_phases.rs` for why.
 
-Baseline instruction counts are not yet committed; the plan is to
-capture them in a follow-up once the CI workflow is wired up. See
-`~/.claude/plans/nested-conjuring-scott.md` → Plan B for the full
-roadmap, and the TODO about a GitHub Actions workflow.
+Baseline instruction counts are not yet committed; capture them in a
+follow-up once the CI workflow is wired up.

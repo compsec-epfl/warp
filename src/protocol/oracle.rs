@@ -9,11 +9,11 @@
 //! materialised lazily on first point query and cached.
 //!
 //! The Merkle commitment of the codeword is **not** held here. In PESAT a
-//! single Merkle tree covers many interleaved codewords
-//! (`src/crypto/merkle/mod.rs::build_codeword_leaves`), so the tree is
-//! tracked by the enclosing data structure (`PesatOutput`,
-//! `AccumulatorWitness`) rather than 1:1 with the oracle. See the
-//! Implementation note in `mod1_oracle.tex` §2.
+//! single ark-vc commitment covers many interleaved codewords (see
+//! `build_codeword_leaves` in `src/protocol/phases/pesat.rs`), so the
+//! `Committed` state is tracked by the enclosing data structure
+//! (`PesatOutput`, `AccumulatorWitness`) rather than 1:1 with the
+//! oracle. See the Implementation note in `mod1_oracle.tex` §2.
 
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};

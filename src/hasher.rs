@@ -11,10 +11,10 @@
 //! The [`WarpHasher`] trait below is a marker: it bundles the trait
 //! bounds into one name so every generic signature in the crate can
 //! write `H: WarpHasher<F>` instead of repeating the full bound list.
-//! Bounds on the associated `Digest` type are expressed via the
-//! `MerkleHasher<..., Digest: ...>` associated-type-bounds syntax so
-//! they propagate through generic use sites without callers having to
-//! re-state them.
+//! Bounds on the associated `Digest` and `Salt` types are expressed
+//! via the `MerkleHasher<..., Digest: ..., Salt: ...>` associated-type-
+//! bounds syntax so they propagate through generic use sites without
+//! callers having to re-state them.
 //!
 //! There's a blanket impl for anything that satisfies the component
 //! bounds, so callers don't need to implement it explicitly — they
@@ -23,14 +23,30 @@
 //! do).
 
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_vc::MerkleHasher;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize};
 
 /// Hasher bound used throughout warp's generic API.
+///
+/// The `CanonicalSerialize` / `CanonicalDeserialize` bounds on
+/// `Digest` and `Salt` are redundant with the `MerkleHasher` super-
+/// trait (which requires them) but Rust doesn't reliably propagate
+/// super-trait bounds on associated types through marker traits —
+/// restating them here makes downstream uses compile cleanly under
+/// ark-vc's `#[derive(CanonicalSerialize)]` on `OpeningProof<H>`.
 pub trait WarpHasher<F: PrimeField>:
     MerkleHasher<
         Symbol = Vec<F>,
-        Digest: Clone + Eq + Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize,
+        Digest: Clone
+            + Eq
+            + Encoding<[u8]>
+            + Decoding<[u8]>
+            + NargSerialize
+            + NargDeserialize
+            + CanonicalSerialize
+            + CanonicalDeserialize,
+        Salt: CanonicalSerialize + CanonicalDeserialize,
     > + Clone
 {
 }
@@ -39,6 +55,14 @@ impl<F, H> WarpHasher<F> for H
 where
     F: PrimeField,
     H: MerkleHasher<Symbol = Vec<F>> + Clone,
-    H::Digest: Clone + Eq + Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize,
+    H::Digest: Clone
+        + Eq
+        + Encoding<[u8]>
+        + Decoding<[u8]>
+        + NargSerialize
+        + NargDeserialize
+        + CanonicalSerialize
+        + CanonicalDeserialize,
+    H::Salt: CanonicalSerialize + CanonicalDeserialize,
 {
 }
