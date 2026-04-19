@@ -1,5 +1,5 @@
 use ark_codes::traits::LinearCode;
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use ark_vc::shape::PerfectBinary;
 use ark_vc::{Committed, MerkleCommitment, OpeningProof};
 use std::marker::PhantomData;
@@ -22,7 +22,7 @@ pub type ProveResult<F, H> = Result<
 ///
 /// Generic over the Merkle hasher `H`: callers pick Blake3 for prover
 /// speed or Poseidon2 for circuit-friendly recursion.
-pub struct WARPParams<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: WarpHasher<F>>
+pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: WarpHasher<F>>
 {
     pub _f: PhantomData<F>,
     pub config: WARPConfig<F, P>,
@@ -37,10 +37,7 @@ pub struct WARPParams<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clon
 /// hasher's digest type; for Blake3 this is `[u8; 32]`, for Poseidon
 /// it's `F`.
 #[derive(Clone)]
-pub struct AccumulatorInstance<F: Field, H: WarpHasher<F>>
-where
-    F: PrimeField,
-{
+pub struct AccumulatorInstance<F: Field, H: WarpHasher<F>> {
     /// Merkle roots (one per accumulated oracle).
     pub rt: Vec<H::Digest>,
     /// Code evaluation points (one per accumulated oracle).
@@ -53,7 +50,7 @@ where
     pub eta: Vec<F>,
 }
 
-impl<F: PrimeField, H: WarpHasher<F>> AccumulatorInstance<F, H> {
+impl<F: Field, H: WarpHasher<F>> AccumulatorInstance<F, H> {
     pub fn empty() -> Self {
         Self {
             rt: vec![],
@@ -72,7 +69,7 @@ impl<F: PrimeField, H: WarpHasher<F>> AccumulatorInstance<F, H> {
 /// re-deriving the root on `decide`), plus it now carries the message
 /// via `Committed::leaves()` — fixing arkworks issue #144 where users
 /// had to keep a parallel `Vec<Leaf>`.
-pub struct AccumulatorWitness<F: PrimeField, H: WarpHasher<F>> {
+pub struct AccumulatorWitness<F: Field, H: WarpHasher<F>> {
     pub td: Vec<Committed<H, PerfectBinary>>,
     /// Oracle evaluations (codewords). Kept alongside `td` for convenience
     /// — `Committed::leaves()` also returns them, but having the
@@ -84,7 +81,7 @@ pub struct AccumulatorWitness<F: PrimeField, H: WarpHasher<F>> {
     pub w: Vec<Vec<F>>,
 }
 
-impl<F: PrimeField, H: WarpHasher<F>> AccumulatorWitness<F, H> {
+impl<F: Field, H: WarpHasher<F>> AccumulatorWitness<F, H> {
     pub fn empty() -> Self {
         Self {
             td: vec![],
@@ -106,7 +103,7 @@ impl<F: PrimeField, H: WarpHasher<F>> AccumulatorWitness<F, H> {
 /// Corresponds to `(rt₀, μᵢ, ν₀, νᵢ, auth₀, authⱼ, f_i(x_j))` in the
 /// paper. Opening proofs are path-pruned, one per committed tree.
 #[derive(Clone)]
-pub struct WARPProof<F: PrimeField, H: WarpHasher<F>> {
+pub struct WARPProof<F: Field, H: WarpHasher<F>> {
     /// Fresh commitment root.
     pub rt_0: H::Digest,
     /// Fresh code evaluations at 0.
@@ -127,7 +124,7 @@ pub struct WARPProof<F: PrimeField, H: WarpHasher<F>> {
 ///
 /// This data flows from Phase 2 (PESAT Reduction) into Phase 3
 /// (Constrained Code Accumulation).
-pub struct PesatOutput<F: PrimeField, H: WarpHasher<F>> {
+pub struct PesatOutput<F: Field, H: WarpHasher<F>> {
     pub codewords: Vec<Vec<F>>,
     pub td_0: Committed<H, PerfectBinary>,
     pub mus: Vec<F>,

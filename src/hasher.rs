@@ -22,12 +22,18 @@
 //! `Blake3FieldHasher<F>` and `Poseidon2Hasher<F>` from ark-vc both
 //! do).
 
-use ark_ff::PrimeField;
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_vc::MerkleHasher;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize};
 
 /// Hasher bound used throughout warp's generic API.
+///
+/// `F: Field` — not `PrimeField`. The hasher trait itself doesn't
+/// depend on prime-field structure; upstream's `Blake3FieldHasher<F>`
+/// was recently relaxed to `F: Field` and we follow. Warp *callers*
+/// that need prime-field structure (transcript, poseidon relations,
+/// `chunk_size`) add the `PrimeField` bound locally.
 ///
 /// The `CanonicalSerialize` / `CanonicalDeserialize` bounds on
 /// `Digest` and `Salt` are redundant with the `MerkleHasher` super-
@@ -35,7 +41,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize};
 /// super-trait bounds on associated types through marker traits —
 /// restating them here makes downstream uses compile cleanly under
 /// ark-vc's `#[derive(CanonicalSerialize)]` on `OpeningProof<H>`.
-pub trait WarpHasher<F: PrimeField>:
+pub trait WarpHasher<F: Field>:
     MerkleHasher<
         Symbol = Vec<F>,
         Digest: Clone
@@ -53,7 +59,7 @@ pub trait WarpHasher<F: PrimeField>:
 
 impl<F, H> WarpHasher<F> for H
 where
-    F: PrimeField,
+    F: Field,
     H: MerkleHasher<Symbol = Vec<F>> + Clone,
     H::Digest: Clone
         + Eq
