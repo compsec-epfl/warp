@@ -39,13 +39,13 @@ pub trait WarpHasher<F: PrimeField>:
     MerkleHasher<
         Symbol = Vec<F>,
         Digest: Clone
-            + Eq
-            + Encoding<[u8]>
-            + Decoding<[u8]>
-            + NargSerialize
-            + NargDeserialize
-            + CanonicalSerialize
-            + CanonicalDeserialize,
+                    + Eq
+                    + Encoding<[u8]>
+                    + Decoding<[u8]>
+                    + NargSerialize
+                    + NargDeserialize
+                    + CanonicalSerialize
+                    + CanonicalDeserialize,
         Salt: CanonicalSerialize + CanonicalDeserialize,
     > + Clone
 {

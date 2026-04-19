@@ -47,7 +47,10 @@ impl<F: PrimeField, H: WarpHasher<F>> AccInstanceSerializer<F, H> {
             rt: acc_instance.rt[0].clone(),
             alpha: acc_instance.alpha[0].clone(),
             mu: acc_instance.mu[0],
-            beta: (acc_instance.beta.0[0].clone(), acc_instance.beta.1[0].clone()),
+            beta: (
+                acc_instance.beta.0[0].clone(),
+                acc_instance.beta.1[0].clone(),
+            ),
             eta: acc_instance.eta[0],
         }
     }

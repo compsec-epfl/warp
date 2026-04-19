@@ -61,7 +61,11 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn verify(&self, acc_x: AccumulatorInstance<F, H>, proof: WARPProof<F, H>) -> Result<(), VerifierError> {
+    fn verify(
+        &self,
+        acc_x: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
+    ) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&self.narg_str);
         self.warp.verify(self.vk, &mut verifier_state, acc_x, proof)
@@ -111,8 +115,12 @@ fn make_fixture() -> Fixture {
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
     let warp_cfg1 = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let w1 =
-        WARP::<F, R1CS<F>, _, H>::new(warp_cfg1, code.clone(), r1cs.clone(), Blake3FieldHasher::<F>::new());
+    let w1 = WARP::<F, R1CS<F>, _, H>::new(
+        warp_cfg1,
+        code.clone(),
+        r1cs.clone(),
+        Blake3FieldHasher::<F>::new(),
+    );
 
     let (mut roots, mut alphas, mut mus, mut taus, mut xs, mut etas) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -137,7 +145,11 @@ fn make_fixture() -> Fixture {
         taus.push(acc_x.beta.0[0].clone());
         xs.push(acc_x.beta.1[0].clone());
         etas.push(acc_x.eta[0]);
-        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        let AccumulatorWitness {
+            mut td,
+            mut f,
+            mut w,
+        } = acc_w;
         tds.push(td.pop().unwrap());
         fs.push(f.pop().unwrap());
         ws.push(w.pop().unwrap());
@@ -145,7 +157,8 @@ fn make_fixture() -> Fixture {
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
+    let warp =
+        WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.instance(&0u32).std_prover();
@@ -184,10 +197,7 @@ fn assert_err(result: Result<(), VerifierError>, expected: &str) {
         Ok(()) => panic!("expected `{expected}`, got Ok(())"),
         Err(err) => {
             let dbg = format!("{err:?}");
-            assert!(
-                dbg.contains(expected),
-                "expected `{expected}`, got `{dbg}`"
-            );
+            assert!(dbg.contains(expected), "expected `{expected}`, got `{dbg}`");
         }
     }
 }

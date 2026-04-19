@@ -21,9 +21,9 @@ use ark_codes::{
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_ff::UniformRand;
-use ark_vc::blake3::Blake3FieldHasher;
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::thread_rng;
+use ark_vc::blake3::Blake3FieldHasher;
 
 use warp::config::WARPConfig;
 use warp::relations::{
@@ -118,7 +118,11 @@ fn warp_test() {
 
         // ark-vc `Committed` is not Clone; destructure and move the
         // single-element Vecs out of acc_w instead of cloning in place.
-        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        let AccumulatorWitness {
+            mut td,
+            mut f,
+            mut w,
+        } = acc_w;
         acc_tds.push(td.pop().unwrap());
         acc_f.push(f.pop().unwrap());
         acc_ws.push(w.pop().unwrap());
@@ -207,8 +211,7 @@ fn warp_test_goldilocks() {
         hash_chain_size,
     ))
     .unwrap();
-    let code_config =
-        ReedSolomonConfig::<Goldilocks>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<Goldilocks>::default(r1cs.k, r1cs.k.next_power_of_two());
     let code = ReedSolomon::new(code_config);
 
     let instances_witnesses: (Vec<Vec<Goldilocks>>, Vec<Vec<Goldilocks>>) = (0..l1)
@@ -241,12 +244,13 @@ fn warp_test_goldilocks() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        Blake3FieldHasher::<Goldilocks>::new(),
-    );
+    let hash_chain_warp =
+        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
+            warp_config.clone(),
+            code.clone(),
+            r1cs.clone(),
+            Blake3FieldHasher::<Goldilocks>::new(),
+        );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -274,7 +278,11 @@ fn warp_test_goldilocks() {
 
         // ark-vc `Committed` is not Clone; destructure and move the
         // single-element Vecs out of acc_w instead of cloning in place.
-        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        let AccumulatorWitness {
+            mut td,
+            mut f,
+            mut w,
+        } = acc_w;
         acc_tds.push(td.pop().unwrap());
         acc_f.push(f.pop().unwrap());
         acc_ws.push(w.pop().unwrap());
@@ -285,12 +293,13 @@ fn warp_test_goldilocks() {
     let warp_config =
         WARPConfig::<_, R1CS<Goldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        Blake3FieldHasher::<Goldilocks>::new(),
-    );
+    let hash_chain_warp =
+        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
+            warp_config.clone(),
+            code.clone(),
+            r1cs.clone(),
+            Blake3FieldHasher::<Goldilocks>::new(),
+        );
 
     let mut prover_state = domainsep.instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp

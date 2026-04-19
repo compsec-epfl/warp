@@ -26,7 +26,8 @@ where
         .map(|_| verifier_state.prover_messages_vec(instance_len))
         .collect::<Result<_, _>>()?;
 
-    let acc = AccumulatorInstance::<F, H>::parse_from(verifier_state, l2, log_n, log_m, instance_len)?;
+    let acc =
+        AccumulatorInstance::<F, H>::parse_from(verifier_state, l2, log_n, log_m, instance_len)?;
 
     Ok((l1_xs, acc))
 }

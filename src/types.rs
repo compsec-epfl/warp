@@ -11,7 +11,10 @@ use crate::relations::BundledPESAT;
 
 // result of a prove call: (new accumulator instance + witness, proof)
 pub type ProveResult<F, H> = Result<
-    ((AccumulatorInstance<F, H>, AccumulatorWitness<F, H>), WARPProof<F, H>),
+    (
+        (AccumulatorInstance<F, H>, AccumulatorWitness<F, H>),
+        WARPProof<F, H>,
+    ),
     ProverError,
 >;
 
@@ -19,7 +22,8 @@ pub type ProveResult<F, H> = Result<
 ///
 /// Generic over the Merkle hasher `H`: callers pick Blake3 for prover
 /// speed or Poseidon2 for circuit-friendly recursion.
-pub struct WARPParams<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: WarpHasher<F>> {
+pub struct WARPParams<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: WarpHasher<F>>
+{
     pub _f: PhantomData<F>,
     pub config: WARPConfig<F, P>,
     pub code: C,

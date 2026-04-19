@@ -54,7 +54,12 @@ impl BoolResult for bool {
     }
 }
 
-pub struct WARP<F: PrimeField, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: hasher::WarpHasher<F>> {
+pub struct WARP<
+    F: PrimeField,
+    P: BundledPESAT<F>,
+    C: LinearCode<F> + Clone,
+    H: hasher::WarpHasher<F>,
+> {
     pub params: WARPParams<F, P, C, H>,
 }
 
@@ -71,8 +76,10 @@ impl<
     pub fn new(config: WARPConfig<F, P>, code: C, p: P, hasher: H) -> WARP<F, P, C, H> {
         use ark_vc::shape::PerfectBinary;
         use ark_vc::MerkleCommitment;
-        let scheme =
-            MerkleCommitment::<H, PerfectBinary>::new(hasher, PerfectBinary::with_num_leaves(code.code_len()));
+        let scheme = MerkleCommitment::<H, PerfectBinary>::new(
+            hasher,
+            PerfectBinary::with_num_leaves(code.code_len()),
+        );
         Self {
             params: WARPParams {
                 _f: PhantomData,
@@ -406,7 +413,8 @@ impl<
         // d. sumcheck decisions: reduce each transcript's round messages to
         // a single target, then compare to the expected claim in (e).
         (coeffs_twinc_sumcheck.len() == log_l).ok_or_err(VerifierError::NumSumcheckRounds)?;
-        let target_1 = twin_constraint::verify_claim(sigma_1, coeffs_twinc_sumcheck, &gamma_sumcheck);
+        let target_1 =
+            twin_constraint::verify_claim(sigma_1, coeffs_twinc_sumcheck, &gamma_sumcheck);
 
         (sums_batching_sumcheck.len() == log_n).ok_or_err(VerifierError::NumSumcheckRounds)?;
         let target_2 = batching::verify_claim(sigma_2, sums_batching_sumcheck, &alpha_sumcheck);
@@ -457,8 +465,7 @@ impl<
         let leaves: Vec<Vec<F>> = acc_witness.f[0].iter().map(|&x| vec![x]).collect();
         let computed = self.params.scheme.commit(&leaves);
         (&acc_instance.rt[0] == computed.root()).ok_or_err(DeciderError::MerkleRoot)?;
-        (acc_witness.td[0].root() == computed.root())
-            .ok_or_err(DeciderError::MerkleTrapDoor)?;
+        (acc_witness.td[0].root() == computed.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.params.code.code_len()) as usize,
@@ -488,5 +495,3 @@ impl<
         Ok(())
     }
 }
-
-

@@ -63,8 +63,12 @@ fn setup_prove(l: usize, s: usize, t: usize, hashchain_size: usize) -> ProveInpu
     let code = ReedSolomon::new(code_config);
 
     let warp_config = WARPConfig::new(l, l, s, t, r1cs.config(), code.code_len());
-    let warp =
-        WARP::<F, _, _, Blake3FieldHasher<F>>::new(warp_config, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
+    let warp = WARP::<F, _, _, Blake3FieldHasher<F>>::new(
+        warp_config,
+        code,
+        r1cs.clone(),
+        Blake3FieldHasher::<F>::new(),
+    );
 
     let (instances, witnesses) =
         get_hashchain_instance_witness_pairs(l, &poseidon_config, hashchain_size, &mut rng);
