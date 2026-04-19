@@ -114,11 +114,18 @@ where
 
 /// Verify the proximity openings against the fresh and accumulated
 /// commitments.
+///
+/// `l1` is the number of fresh PESAT codewords committed in `rt_0`;
+/// together with `l2` (accumulator count) it determines the expected
+/// length of every `shift_query_answers` row (the concatenation of
+/// accumulator + fresh values at that query leaf). We validate the
+/// row shape up front so later indexing (`row[l2..]`, `row[j]`)
+/// cannot panic on malformed input.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     name = "proximity.verify",
     skip_all,
-    fields(t = t, l2 = l2)
+    fields(t = t, l1 = l1, l2 = l2)
 )]
 pub fn verify<F, H>(
     scheme: &MerkleCommitment<H, PerfectBinary>,
@@ -128,6 +135,7 @@ pub fn verify<F, H>(
     auth_0: &OpeningProof<H>,
     auth_j: &[OpeningProof<H>],
     shift_query_answers: &[Vec<F>],
+    l1: usize,
     l2: usize,
     t: usize,
 ) -> Result<(), VerifierError>
@@ -136,6 +144,16 @@ where
     H: WarpHasher<F>,
 {
     (shift_query_answers.len() == t).ok_or_err(VerifierError::NumShiftQueries)?;
+    // Row-shape guard: every row must be exactly `l2 + l1` long so the
+    // later `row[l2..]` slice (fresh chunk) and `row[j]` index
+    // (accumulator `j`) are both in bounds. An adversarial proof with
+    // short rows would otherwise panic here instead of returning a
+    // clean VerifierError.
+    let expected_row_len = l2 + l1;
+    shift_query_answers
+        .iter()
+        .all(|row| row.len() == expected_row_len)
+        .ok_or_err(VerifierError::MalformedShiftQueryAnswers)?;
 
     let (unique_indices, first_occurrence) = canonicalise(&queries.leaf_positions);
 

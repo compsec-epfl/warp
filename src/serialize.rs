@@ -2,12 +2,20 @@ use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use ark_vc::OpeningProof;
 
+use crate::error::SerializeError;
 use crate::hasher::WarpHasher;
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 /// Wire-size view of an `AccumulatorWitness<F, H>` holding exactly one
 /// accumulated oracle. Takes `&acc_witness` — cheap, no clone of the
 /// ark-vc `Committed` (which isn't `Clone`).
+///
+/// All three serialiser constructors reject inputs whose outer Vecs
+/// aren't exactly length 1: these wrappers exist to measure the
+/// wire size of a **single** accumulated instance (what warp emits
+/// as the post-accumulation state), and feeding them a multi-instance
+/// value is almost certainly a caller bug — previously asserted,
+/// now surfaced as `SerializeError::MultiAcc`.
 #[derive(CanonicalSerialize)]
 pub struct AccWitnessSerializer<F: PrimeField> {
     pub f: Vec<F>,
@@ -15,14 +23,16 @@ pub struct AccWitnessSerializer<F: PrimeField> {
 }
 
 impl<F: PrimeField> AccWitnessSerializer<F> {
-    pub fn new<H: WarpHasher<F>>(acc_witness: &AccumulatorWitness<F, H>) -> Self {
-        assert_eq!(acc_witness.td.len(), 1);
-        assert_eq!(acc_witness.f.len(), 1);
-        assert_eq!(acc_witness.w.len(), 1);
-        Self {
+    pub fn new<H: WarpHasher<F>>(
+        acc_witness: &AccumulatorWitness<F, H>,
+    ) -> Result<Self, SerializeError> {
+        if acc_witness.td.len() != 1 || acc_witness.f.len() != 1 || acc_witness.w.len() != 1 {
+            return Err(SerializeError::MultiAcc(acc_witness.td.len()));
+        }
+        Ok(Self {
             f: acc_witness.f[0].clone(),
             w: acc_witness.w[0].clone(),
-        }
+        })
     }
 }
 
@@ -36,23 +46,23 @@ pub struct AccInstanceSerializer<F: PrimeField, H: WarpHasher<F>> {
 }
 
 impl<F: PrimeField, H: WarpHasher<F>> AccInstanceSerializer<F, H> {
-    pub fn new(acc_instance: &AccumulatorInstance<F, H>) -> Self {
-        assert_eq!(acc_instance.rt.len(), 1);
-        assert_eq!(acc_instance.alpha.len(), 1);
-        assert_eq!(acc_instance.mu.len(), 1);
-        assert_eq!(acc_instance.beta.0.len(), 1);
-        assert_eq!(acc_instance.beta.1.len(), 1);
-        assert_eq!(acc_instance.eta.len(), 1);
-        Self {
+    pub fn new(acc_instance: &AccumulatorInstance<F, H>) -> Result<Self, SerializeError> {
+        if acc_instance.rt.len() != 1
+            || acc_instance.alpha.len() != 1
+            || acc_instance.mu.len() != 1
+            || acc_instance.beta.0.len() != 1
+            || acc_instance.beta.1.len() != 1
+            || acc_instance.eta.len() != 1
+        {
+            return Err(SerializeError::MultiAcc(acc_instance.rt.len()));
+        }
+        Ok(Self {
             rt: acc_instance.rt[0].clone(),
             alpha: acc_instance.alpha[0].clone(),
             mu: acc_instance.mu[0],
-            beta: (
-                acc_instance.beta.0[0].clone(),
-                acc_instance.beta.1[0].clone(),
-            ),
+            beta: (acc_instance.beta.0[0].clone(), acc_instance.beta.1[0].clone()),
             eta: acc_instance.eta[0],
-        }
+        })
     }
 }
 

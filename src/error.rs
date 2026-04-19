@@ -53,6 +53,8 @@ pub enum VerifierError {
     CircuitEvaluationPoint,
     #[error("Found invalid number of shift queries points")]
     NumShiftQueries,
+    #[error("shift_query_answers rows have wrong shape (expected length l2 + l1)")]
+    MalformedShiftQueryAnswers,
     #[error("Found invalid shift query index")]
     ShiftQueryIndex,
     #[error("Couldn't verify shift query")]
@@ -81,8 +83,21 @@ pub enum DeciderError {
     MerkleTrapDoor,
     #[error("Invalid multilinear extension evaluation")]
     MLExtensionEvaluation,
+    #[error("Bundled PESAT evaluation computation failed")]
+    BundledEvaluationFailed,
     #[error("Invalid bundled evaluation")]
     BundledEvaluation,
     #[error("Invalid encoded witness")]
     EncodedWitness,
+}
+
+/// Errors from the size-measurement serialiser wrappers in
+/// `src/serialize.rs`. These wrap a single-instance slice of the
+/// accumulator; the only way they can fail is if the caller passes an
+/// `AccumulatorInstance` / `AccumulatorWitness` / `WARPProof` whose
+/// internal Vecs aren't the expected length 1.
+#[derive(Error, Debug)]
+pub enum SerializeError {
+    #[error("serializer expects exactly one accumulated instance; got {0}")]
+    MultiAcc(usize),
 }

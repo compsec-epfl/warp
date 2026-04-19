@@ -408,6 +408,7 @@ impl<
             &proof.auth_0,
             &proof.auth_j,
             &proof.shift_query_answers,
+            l1,
             l2,
             self.config.t,
         )?;
@@ -487,7 +488,7 @@ impl<
         let computed_eta = self
             .p
             .evaluate_bundled(&tau_zero_evader, &z)
-            .unwrap();
+            .map_err(|_| DeciderError::BundledEvaluationFailed)?;
         (computed_eta == acc_instance.eta[0]).ok_or_err(DeciderError::BundledEvaluation)?;
 
         let computed_f = self.code.encode(&acc_witness.w[0]);

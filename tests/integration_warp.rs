@@ -175,8 +175,8 @@ fn warp_test() {
     // Serializers take refs (AccumulatorWitness is not Clone: ark-vc
     // `Committed` lacks a Clone impl). Compute sizes first, then consume
     // acc_w / acc_x into decide.
-    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w);
+    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x).unwrap();
+    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w).unwrap();
     let proof_to_serde = ProofSerializer::new(&pf);
 
     hash_chain_warp.decide(acc_w, acc_x).unwrap();
@@ -337,8 +337,8 @@ fn warp_test_goldilocks() {
     // Serializers take refs (AccumulatorWitness is not Clone: ark-vc
     // `Committed` lacks a Clone impl). Compute sizes first, then consume
     // acc_w / acc_x into decide.
-    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w);
+    let acc_x_to_serde = AccInstanceSerializer::new(&acc_x).unwrap();
+    let acc_w_to_serde = AccWitnessSerializer::new(&acc_w).unwrap();
     let proof_to_serde = ProofSerializer::new(&pf);
 
     hash_chain_warp.decide(acc_w, acc_x).unwrap();

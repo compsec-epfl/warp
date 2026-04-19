@@ -199,10 +199,25 @@ where
         count_ops!(TwinConstraintRounds, log_l as u64);
         coefficient_sumcheck(&evaluator, &mut tablewise, &mut pw, log_l, prover_state)
     };
-    debug_assert_eq!(sc.verifier_messages.len(), log_l);
+    // Invariant: `log_l` rounds of sumcheck produce `log_l` verifier
+    // challenges and reduce each tablewise group to exactly one table.
+    // If an upstream change to `efficient_sumcheck` ever breaks this,
+    // we want a loud panic with a diagnostic message — not a silent
+    // `.pop().unwrap()` on `None`.
+    assert_eq!(
+        sc.verifier_messages.len(),
+        log_l,
+        "coefficient_sumcheck returned {} verifier messages, expected log_l = {}",
+        sc.verifier_messages.len(),
+        log_l,
+    );
 
     // d. pop reduced tables — each group has one table left after log_l rounds
     let [mut u_red, mut z_red, mut a_red, mut b_red] = tablewise;
+    assert_eq!(u_red.len(), 1, "u tablewise not reduced to a single table");
+    assert_eq!(z_red.len(), 1, "z tablewise not reduced to a single table");
+    assert_eq!(a_red.len(), 1, "α tablewise not reduced to a single table");
+    assert_eq!(b_red.len(), 1, "β tablewise not reduced to a single table");
     let f = u_red.pop().unwrap();
     let z = z_red.pop().unwrap();
     let zeta_0 = a_red.pop().unwrap();
