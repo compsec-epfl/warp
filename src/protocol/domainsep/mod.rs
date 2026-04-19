@@ -125,44 +125,30 @@ pub fn parse_statement<
     ))
 }
 
-pub type DerivedRandomness<F, MT> = (
-    <MT as Config>::InnerDigest,
-    Vec<F>,
-    Vec<Vec<F>>,
-    F,
-    Vec<F>,
-    Vec<F>,
-    Vec<Vec<F>>,
-    <MT as Config>::InnerDigest,
-    F,
-    Vec<F>,
-    Vec<F>,
-    Vec<u8>,
-    Vec<F>,
-    Vec<F>,
-    Vec<[F; 3]>,
+/// Transcript values read before the twin-constraint sumcheck:
+/// `(rt_0, l1_mus, l1_taus, omega, tau)`.
+pub type PreTwinConstraint<F, MT> = (
+    <MT as Config>::InnerDigest, // rt_0
+    Vec<F>,                      // l1_mus
+    Vec<Vec<F>>,                 // l1_taus
+    F,                           // omega
+    Vec<F>,                      // tau
 );
 
-pub fn derive_randomness<
+pub fn derive_pre_twin_constraint<
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 >(
     verifier_state: &mut VerifierState<'_>,
     l1: usize,
-    log_n: usize,
     log_l: usize,
-    s: usize,
-    t: usize,
     #[allow(non_snake_case)] log_M: usize,
-) -> VerificationResult<DerivedRandomness<F, MT>> {
-    // read commitment digest
+) -> VerificationResult<PreTwinConstraint<F, MT>> {
     let rt_0_bytes: [u8; 32] = verifier_state.prover_message()?;
     let rt_0: MT::InnerDigest = rt_0_bytes.into();
 
-    // read mus
     let l1_mus: Vec<F> = verifier_state.prover_messages_vec(l1)?;
 
-    // challenge taus
     let mut l1_taus = Vec::with_capacity(l1);
     for _ in 0..l1 {
         let tau: Vec<F> = (0..log_M)
@@ -176,37 +162,44 @@ pub fn derive_randomness<
         .map(|_| verifier_state.verifier_message::<F>())
         .collect();
 
-    // e. twin constraints sumcheck
-    let mut gamma_sumcheck = Vec::new();
-    let mut coeffs_twinc_sumcheck = Vec::new();
-    for _ in 0..log_l {
-        let h_coeffs: Vec<F> =
-            verifier_state.prover_messages_vec(2 + (log_n + 1).max(log_M + 2))?;
-        let c: F = verifier_state.verifier_message();
-        gamma_sumcheck.push(c);
-        coeffs_twinc_sumcheck.push(h_coeffs);
-    }
+    Ok((rt_0, l1_mus, l1_taus, omega, tau))
+}
 
-    // read td digest
+/// Transcript values read between the two sumchecks:
+/// `(td, eta, nus=[nu_0, ood_answers...], ood_samples, bytes_shift_queries, xi)`.
+pub type BetweenSumchecks<F, MT> = (
+    <MT as Config>::InnerDigest, // td
+    F,                           // eta
+    Vec<F>,                      // nus (nu_0 + ood answers)
+    Vec<F>,                      // ood_samples (flat, s*log_n long)
+    Vec<u8>,                     // bytes_shift_queries
+    Vec<F>,                      // xi
+);
+
+pub fn derive_between_sumchecks<
+    F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+>(
+    verifier_state: &mut VerifierState<'_>,
+    log_n: usize,
+    s: usize,
+    t: usize,
+) -> VerificationResult<BetweenSumchecks<F, MT>> {
     let td_bytes: [u8; 32] = verifier_state.prover_message()?;
-    let _td: MT::InnerDigest = td_bytes.into();
+    let td: MT::InnerDigest = td_bytes.into();
 
-    // read eta and nu_0
     let eta: F = verifier_state.prover_message()?;
     let nu_0: F = verifier_state.prover_message()?;
     let mut nus = vec![nu_0];
 
-    // g. ood samples
     let n_ood_samples = s * log_n;
     let ood_samples: Vec<F> = (0..n_ood_samples)
         .map(|_| verifier_state.verifier_message::<F>())
         .collect();
 
-    // h. ood answers
     let ood_answers: Vec<F> = verifier_state.prover_messages_vec(s)?;
     nus.extend(ood_answers);
 
-    // i. shift queries and zero check
     let r = 1 + s + t;
     let log_r = log2(r) as usize;
     let n_shift_queries = (t * log_n).div_ceil(8);
@@ -217,31 +210,5 @@ pub fn derive_randomness<
         .map(|_| verifier_state.verifier_message::<F>())
         .collect();
 
-    // j. batching sumcheck
-    let mut alpha_sumcheck = Vec::new();
-    let mut sums_batching_sumcheck = Vec::new();
-    for _ in 0..log_n {
-        let sums: [F; 3] = verifier_state.prover_messages()?;
-        let c: F = verifier_state.verifier_message();
-        alpha_sumcheck.push(c);
-        sums_batching_sumcheck.push(sums);
-    }
-
-    Ok((
-        rt_0,
-        l1_mus,
-        l1_taus,
-        omega,
-        tau,
-        gamma_sumcheck,
-        coeffs_twinc_sumcheck,
-        _td,
-        eta,
-        nus,
-        ood_samples,
-        bytes_shift_queries,
-        xi,
-        alpha_sumcheck,
-        sums_batching_sumcheck,
-    ))
+    Ok((td, eta, nus, ood_samples, bytes_shift_queries, xi))
 }
