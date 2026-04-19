@@ -17,7 +17,7 @@ use crypto::merkle::compute_auth_paths;
 use effsc::{
     coefficient_sumcheck::RoundPolyEvaluator,
     folding::protogalaxy,
-    hypercube::{compute_hypercube_eq_evals, Ascending},
+    hypercube::compute_hypercube_eq_evals,
     noop_hook,
     provers::{coefficient_lsb::CoefficientProverLSB, inner_product::InnerProductProver},
     runner::sumcheck,
@@ -32,10 +32,7 @@ use std::marker::PhantomData;
 use utils::binary_field_elements_to_usize;
 use utils::byte_to_binary_field_array;
 use utils::scale_and_sum;
-use utils::{
-    concat_slices,
-    poly::{eq_poly, eq_poly_non_binary},
-};
+use utils::{concat_slices, poly::eq_poly_non_binary};
 
 use config::WARPConfig;
 use protocol::domainsep::{absorb_accumulated_instances, absorb_instances};
@@ -348,10 +345,10 @@ impl<
         let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
         // b. define [...]
-        // c. sumcheck protocol
-        let tau_eq_evals = Ascending::new(log_l)
-            .map(|p| eq_poly(&tau, p.index))
-            .collect::<Vec<F>>();
+        // c. sumcheck protocol. `compute_hypercube_eq_evals` builds the full
+        // `2^log_l` table in O(2^log_l) via the incremental build-up —
+        // faster than the previous O(log_l · 2^log_l) per-point loop.
+        let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
 
         let alpha_vecs = concat_slices(&acc_instances.1, &vec![vec![F::zero(); log_n]; l1]);
 
@@ -402,7 +399,7 @@ impl<
         let beta_tau = reduced_tw[3][0].clone();
 
         // eval the bundled r1cs
-        let beta_eq_evals = (0..M).map(|i| eq_poly(&beta_tau, i)).collect::<Vec<_>>();
+        let beta_eq_evals = compute_hypercube_eq_evals(log_M, &beta_tau);
 
         let eta = self
             .p
@@ -477,13 +474,20 @@ impl<
         // l. sumcheck polynomials
         // compute evaluations for xi
 
-        let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
+        // `xis` has `log_r` elements but only the first `r` entries of the
+        // eq-evals table are consumed (`r ≤ 2^log_r`). The incremental
+        // builder is still a net win: O(2^log_r) ≤ O(2r) vs the previous
+        // O(r · log_r).
+        let xi_eq_evals: Vec<F> = compute_hypercube_eq_evals(log_r, &xis)
+            .into_iter()
+            .take(r)
+            .collect();
 
         let ood_evals_vec = (0..1 + self.config.s)
             .map(|i| {
-                (0..n)
-                    .map(|a| eq_poly(zetas[i], a) * xi_eq_evals[i])
-                    .collect::<Vec<_>>()
+                let table = compute_hypercube_eq_evals(log_n, zetas[i]);
+                let scale = xi_eq_evals[i];
+                table.into_iter().map(|v| v * scale).collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
 
@@ -743,9 +747,7 @@ impl<
 
         let tau = &beta.0[0];
 
-        let tau_zero_evader = Ascending::new(tau.len())
-            .map(|p| eq_poly(tau, p.index))
-            .collect::<Vec<F>>();
+        let tau_zero_evader = compute_hypercube_eq_evals(tau.len(), tau);
 
         let mut z = beta.1[0].clone();
         z.extend(w[0].clone());
