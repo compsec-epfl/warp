@@ -1,50 +1,38 @@
-use ark_crypto_primitives::merkle_tree::{Config, Path};
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 
+use crate::crypto::vc::{AuthProof, DIGEST_BYTES};
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 #[derive(CanonicalSerialize)]
-pub struct AccWitnessSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
+pub struct AccWitnessSerializer<F: PrimeField> {
     pub f: Vec<F>,
     pub w: Vec<F>,
-    _mt: std::marker::PhantomData<MT>,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccWitnessSerializer<F, MT>
-{
-    pub fn new(acc_witness: AccumulatorWitness<F, MT>) -> Self {
+impl<F: PrimeField> AccWitnessSerializer<F> {
+    pub fn new(acc_witness: AccumulatorWitness<F>) -> Self {
         assert_eq!(acc_witness.td.len(), 1);
         assert_eq!(acc_witness.f.len(), 1);
         assert_eq!(acc_witness.w.len(), 1);
         Self {
             f: acc_witness.f.into_iter().next().unwrap(),
             w: acc_witness.w.into_iter().next().unwrap(),
-            _mt: std::marker::PhantomData,
         }
     }
 }
 
 #[derive(CanonicalSerialize)]
-pub struct AccInstanceSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt: MT::InnerDigest,
+pub struct AccInstanceSerializer<F: PrimeField> {
+    pub rt: [u8; DIGEST_BYTES],
     pub alpha: Vec<F>,
     pub mu: F,
     pub beta: (Vec<F>, Vec<F>),
     pub eta: F,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccInstanceSerializer<F, MT>
-{
-    pub fn new(acc_instance: AccumulatorInstance<F, MT>) -> Self {
+impl<F: PrimeField> AccInstanceSerializer<F> {
+    pub fn new(acc_instance: AccumulatorInstance<F>) -> Self {
         assert_eq!(acc_instance.rt.len(), 1);
         assert_eq!(acc_instance.alpha.len(), 1);
         assert_eq!(acc_instance.mu.len(), 1);
@@ -66,23 +54,18 @@ impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + Fr
 }
 
 #[derive(CanonicalSerialize)]
-pub struct ProofSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt_0: MT::InnerDigest,
+pub struct ProofSerializer<F: PrimeField> {
+    pub rt_0: [u8; DIGEST_BYTES],
     pub mu_i: Vec<F>,
     pub nu_0: F,
     pub nu_i: Vec<F>,
-    pub auth_0: Vec<Path<MT>>,
-    pub auth_j: Vec<Vec<Path<MT>>>,
+    pub auth_0: AuthProof<F>,
+    pub auth_j: Vec<AuthProof<F>>,
     pub f_i_x_j: Vec<Vec<F>>,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    ProofSerializer<F, MT>
-{
-    pub fn new(proof: WARPProof<F, MT>) -> Self {
+impl<F: PrimeField> ProofSerializer<F> {
+    pub fn new(proof: WARPProof<F>) -> Self {
         Self {
             rt_0: proof.rt_0,
             mu_i: proof.mu_i,

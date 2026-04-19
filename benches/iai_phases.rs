@@ -27,7 +27,6 @@ use ark_codes::{
     reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
     traits::LinearCode,
 };
-use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 use ark_std::rand::thread_rng;
 
 use iai_callgrind::{black_box, library_benchmark, library_benchmark_group, main};
@@ -47,7 +46,7 @@ type F = BLS12_381;
 /// Output of [`setup_prove`]: everything needed to call `warp.prove` once,
 /// assembled in setup time (NOT counted in the measurement).
 struct ProveInputs {
-    warp: WARP<F, warp::relations::r1cs::R1CS<F>, ReedSolomon<F>, Blake3MerkleConfig<F>>,
+    warp: WARP<F, warp::relations::r1cs::R1CS<F>, ReedSolomon<F>>,
     pk: (warp::relations::r1cs::R1CS<F>, usize, usize, usize),
     prover_state: spongefish::ProverState,
     instances: Vec<Vec<F>>,
@@ -63,7 +62,7 @@ fn setup_prove(l: usize, s: usize, t: usize, hashchain_size: usize) -> ProveInpu
     let code = ReedSolomon::new(code_config);
 
     let warp_config = WARPConfig::new(l, l, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, _, _, Blake3MerkleConfig<F>>::new(warp_config, code, r1cs.clone(), (), ());
+    let warp = WARP::<F, _, _>::new(warp_config, code, r1cs.clone());
 
     let (instances, witnesses) =
         get_hashchain_instance_witness_pairs(l, &poseidon_config, hashchain_size, &mut rng);

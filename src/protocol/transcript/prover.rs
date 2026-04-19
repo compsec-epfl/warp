@@ -2,7 +2,6 @@ use ark_ff::Field;
 use spongefish::{Encoding, ProverState};
 
 use crate::types::AccumulatorInstance;
-use ark_crypto_primitives::merkle_tree::Config;
 
 // absorb a list of plain instances into the transcript
 pub fn absorb_instances<F: Field + Encoding<[u8]>>(
@@ -17,15 +16,11 @@ pub fn absorb_instances<F: Field + Encoding<[u8]>>(
 }
 
 // absorb an AccumulatorInstance into the transcript
-impl<
-        F: Field + Encoding<[u8]>,
-        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-    > AccumulatorInstance<F, MT>
-{
+impl<F: Field + Encoding<[u8]>> AccumulatorInstance<F> {
     pub fn absorb_into(&self, prover_state: &mut ProverState) {
         for digest in &self.rt {
-            let bytes: [u8; 32] = digest.as_ref().try_into().expect("digest must be 32 bytes");
-            prover_state.prover_message(&bytes);
+            // ark-vc roots are already `[u8; 32]`; no conversion needed.
+            prover_state.prover_message(digest);
         }
 
         for alpha in &self.alpha {

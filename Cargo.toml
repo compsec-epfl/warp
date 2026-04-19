@@ -29,6 +29,10 @@ tracing = { version = "0.1", default-features = false, features = ["std", "attri
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "json", "registry"], optional = true }
 libc = { version = "0.2", optional = true }
 ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
+# Vector commitments. Replaces ark-crypto-primitives::merkle_tree in the
+# warp prover/verifier. Uses the `blake3-field` flavor where leaves are
+# slices of field elements (matches PESAT's interleaved-codeword shape).
+ark-vc = { git = "https://github.com/arkworks-rs/ark-vc.git", default-features = false, features = ["std", "blake3", "blake3-field"] }
 
 
 [patch.crates-io]

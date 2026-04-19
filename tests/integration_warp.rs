@@ -20,7 +20,6 @@ use ark_codes::{
     traits::LinearCode,
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::thread_rng;
@@ -85,14 +84,11 @@ fn warp_test() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+    );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -111,30 +107,30 @@ fn warp_test() {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        acc_roots.push(acc_x.rt[0].clone());
+        acc_roots.push(acc_x.rt[0]);
         acc_alphas.push(acc_x.alpha[0].clone());
         acc_mus.push(acc_x.mu[0]);
         acc_taus.push(acc_x.beta.0[0].clone());
         acc_xs.push(acc_x.beta.1[0].clone());
         acc_eta.push(acc_x.eta[0]);
 
-        acc_tds.push(acc_w.td[0].clone());
-        acc_f.push(acc_w.f[0].clone());
-        acc_ws.push(acc_w.w[0].clone());
+        // ark-vc `Committed` is not Clone; destructure and move the
+        // single-element Vecs out of acc_w instead of cloning in place.
+        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        acc_tds.push(td.pop().unwrap());
+        acc_f.push(f.pop().unwrap());
+        acc_ws.push(w.pop().unwrap());
     }
 
     let domainsep = spongefish::domain_separator!("test::warp");
     let warp_config =
         WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp =
-        WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+    );
 
     let mut prover_state = domainsep.instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
@@ -173,8 +169,8 @@ fn warp_test() {
         .decide(acc_w.clone(), acc_x.clone())
         .unwrap();
 
-    let acc_x_to_serde = AccInstanceSerializer::<_, Blake3MerkleConfig<BLS12_381>>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_, Blake3MerkleConfig<BLS12_381>>::new(acc_w);
+    let acc_x_to_serde = AccInstanceSerializer::<_>::new(acc_x);
+    let acc_w_to_serde = AccWitnessSerializer::<_>::new(acc_w);
     let proof_to_serde = ProofSerializer::new(pf);
 
     println!(
@@ -241,14 +237,11 @@ fn warp_test_goldilocks() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3MerkleConfig<Goldilocks>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+    );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -267,16 +260,19 @@ fn warp_test_goldilocks() {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        acc_roots.push(acc_x.rt[0].clone());
+        acc_roots.push(acc_x.rt[0]);
         acc_alphas.push(acc_x.alpha[0].clone());
         acc_mus.push(acc_x.mu[0]);
         acc_taus.push(acc_x.beta.0[0].clone());
         acc_xs.push(acc_x.beta.1[0].clone());
         acc_eta.push(acc_x.eta[0]);
 
-        acc_tds.push(acc_w.td[0].clone());
-        acc_f.push(acc_w.f[0].clone());
-        acc_ws.push(acc_w.w[0].clone());
+        // ark-vc `Committed` is not Clone; destructure and move the
+        // single-element Vecs out of acc_w instead of cloning in place.
+        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        acc_tds.push(td.pop().unwrap());
+        acc_f.push(f.pop().unwrap());
+        acc_ws.push(w.pop().unwrap());
     }
 
     let domainsep = spongefish::domain_separator!("test::warp");
@@ -284,14 +280,11 @@ fn warp_test_goldilocks() {
     let warp_config =
         WARPConfig::<_, R1CS<Goldilocks>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp =
-        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3MerkleConfig<Goldilocks>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+    );
 
     let mut prover_state = domainsep.instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
@@ -330,8 +323,8 @@ fn warp_test_goldilocks() {
         .decide(acc_w.clone(), acc_x.clone())
         .unwrap();
 
-    let acc_x_to_serde = AccInstanceSerializer::<_, Blake3MerkleConfig<Goldilocks>>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_, Blake3MerkleConfig<Goldilocks>>::new(acc_w);
+    let acc_x_to_serde = AccInstanceSerializer::<_>::new(acc_x);
+    let acc_w_to_serde = AccWitnessSerializer::<_>::new(acc_w);
     let proof_to_serde = ProofSerializer::new(pf);
 
     println!(

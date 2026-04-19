@@ -1,40 +1,58 @@
 //! Proximity / shift-query phase.
 //!
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex` — index queries on the
-//! committed oracles. Generates the authentication paths for each shift
-//! query leaf against both the fresh PESAT commitment and each accumulated
-//! commitment, and collects the codeword values at those leaves.
+//! committed oracles.
 //!
-//! The query indices themselves are sampled from the transcript **before**
-//! this phase — see the orchestrator in `src/lib.rs` — so the batching
-//! sumcheck can consume the same indices.
+//! Post ark-vc migration: `auth_0` / `auth_j` are *single* pruned
+//! [`AuthProof`]s (one per tree), not per-query path vectors. ark-vc
+//! calls `DeriveVertexSet(indices)` on each open, so all `t` queries
+//! share a minimal authenticating-digest set.
+//!
+//! Query-index canonicalisation: warp samples `t` shift queries
+//! uniformly via `QueryIndices::sample`, which can collide at small
+//! `log_n`. ark-vc's `Opening::new` requires strictly sorted unique
+//! indices, so the prover and verifier agree on the sorted-unique
+//! subset here — the per-query `shift_query_answers` vector keeps its
+//! original `t` entries regardless (used downstream by `nu_s+t`
+//! computation), but the auth proof covers only the unique positions.
 
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, MerkleTree, Path},
-    Error,
-};
-use ark_ff::Field;
+use ark_ff::PrimeField;
+use ark_vc::Opening;
 
 use crate::count_ops;
-use crate::crypto::merkle::compute_auth_paths;
+use crate::crypto::vc::{AuthProof, CommittedOracle, Hasher, Scheme};
 use crate::error::VerifierError;
 use crate::protocol::query::QueryIndices;
 use crate::BoolResult;
 
-pub struct ProximityOutput<F: Field, MT: Config> {
-    pub auth_0: Vec<Path<MT>>,
-    pub auth_j: Vec<Vec<Path<MT>>>,
+pub struct ProximityOutput<F: PrimeField> {
+    pub auth_0: AuthProof<F>,
+    pub auth_j: Vec<AuthProof<F>>,
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-/// Open the proximity queries: generate auth paths for the fresh commitment
-/// and each accumulated commitment, and collect the codeword values at every
+/// Sorted-unique query positions plus an index into the original query
+/// order so callers can pick up a value (e.g. leaf row) for each unique
+/// position.
+fn canonicalise(positions: &[usize]) -> (Vec<usize>, Vec<usize>) {
+    let mut pairs: Vec<(usize, usize)> = positions
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, x)| (x, i))
+        .collect();
+    pairs.sort_by_key(|&(x, _)| x);
+    pairs.dedup_by_key(|p| p.0);
+    let indices = pairs.iter().map(|&(x, _)| x).collect::<Vec<_>>();
+    let first_occurrence = pairs.iter().map(|&(_, i)| i).collect::<Vec<_>>();
+    (indices, first_occurrence)
+}
+
+/// Open the proximity queries and collect codeword values at every
 /// queried leaf.
 ///
-/// `all_codewords` must list the **accumulated** codewords first, then the
-/// **fresh** PESAT codewords, matching the verifier's expectation at
-/// `lib.rs::verify` (the `[l2..]` slice is the fresh chunk).
+/// `all_codewords` must list the accumulated codewords first, then the
+/// fresh PESAT codewords (matching the verifier's `[l2..]` slice).
 #[tracing::instrument(
     name = "proximity",
     skip_all,
@@ -44,32 +62,34 @@ pub struct ProximityOutput<F: Field, MT: Config> {
         n_codewords = all_codewords.len(),
     )
 )]
-pub fn prove<F, MT>(
+pub fn prove<F>(
+    scheme: &Scheme<F>,
     queries: &QueryIndices<F>,
-    td_0: &MerkleTree<MT>,
-    acc_td: &[MerkleTree<MT>],
+    td_0: &CommittedOracle<F>,
+    acc_td: &[CommittedOracle<F>],
     all_codewords: &[Vec<F>],
-) -> Result<ProximityOutput<F, MT>, Error>
+) -> ProximityOutput<F>
 where
-    F: Field,
-    MT: Config<Leaf = [F]>,
+    F: PrimeField,
 {
+    let (unique_indices, _first_occurrence) = canonicalise(&queries.leaf_positions);
+
     let auth_0 = {
         let _s = tracing::info_span!("proximity.auth_0").entered();
-        count_ops!(MerklePathsGenerated, queries.leaf_positions.len() as u64);
-        compute_auth_paths(td_0, &queries.leaf_positions)?
+        count_ops!(MerklePathsGenerated, unique_indices.len() as u64);
+        scheme.open(td_0, &unique_indices)
     };
 
     let auth_j = {
         let _s = tracing::info_span!("proximity.auth_j").entered();
         count_ops!(
             MerklePathsGenerated,
-            (acc_td.len() * queries.leaf_positions.len()) as u64
+            (acc_td.len() * unique_indices.len()) as u64
         );
         acc_td
             .iter()
-            .map(|td| compute_auth_paths(td, &queries.leaf_positions))
-            .collect::<Result<Vec<Vec<Path<MT>>>, Error>>()?
+            .map(|td| scheme.open(td, &unique_indices))
+            .collect::<Vec<_>>()
     };
 
     let shift_query_answers = {
@@ -83,73 +103,68 @@ where
         answers
     };
 
-    Ok(ProximityOutput {
+    ProximityOutput {
         auth_0,
         auth_j,
         shift_query_answers,
-    })
+    }
 }
 
-/// Verify the proximity (shift-query) openings.
-///
-/// - `auth_0` opens the fresh PESAT tree at each query; expected leaves are
-///   the `l2..` slice of each `shift_query_answers` row (the fresh chunk).
-/// - `auth_j` opens each of `l2` accumulated trees at each query; expected
-///   leaf for accumulator `i` at query `j` is `shift_query_answers[j][i]`.
+/// Verify the proximity openings against the fresh and accumulated
+/// commitments.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     name = "proximity.verify",
     skip_all,
     fields(t = t, l2 = l2)
 )]
-pub fn verify<F, MT>(
+pub fn verify<F>(
+    scheme: &Scheme<F>,
     queries: &QueryIndices<F>,
-    rt_0: &MT::InnerDigest,
-    l2_roots: &[MT::InnerDigest],
-    auth_0: &[Path<MT>],
-    auth_j: &[Vec<Path<MT>>],
+    rt_0: &[u8; 32],
+    l2_roots: &[[u8; 32]],
+    auth_0: &AuthProof<F>,
+    auth_j: &[AuthProof<F>],
     shift_query_answers: &[Vec<F>],
-    mt_leaf_hash_params: &<MT::LeafHash as CRHScheme>::Parameters,
-    mt_two_to_one_hash_params: &<MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
     l2: usize,
     t: usize,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
-    MT: Config<Leaf = [F]>,
+    F: PrimeField,
 {
     (shift_query_answers.len() == t).ok_or_err(VerifierError::NumShiftQueries)?;
 
-    for (i, path) in auth_0.iter().enumerate() {
-        (path.leaf_index == queries.leaf_positions[i])
-            .ok_or_err(VerifierError::ShiftQueryIndex)?;
+    let (unique_indices, first_occurrence) = canonicalise(&queries.leaf_positions);
 
-        count_ops!(MerklePathsVerified);
-        let is_valid = path.verify(
-            mt_leaf_hash_params,
-            mt_two_to_one_hash_params,
-            rt_0,
-            &shift_query_answers[i][l2..], // leaves are evaluations of the l1 codewords
-        )?;
-        is_valid.ok_or_err(VerifierError::ShiftQuery)?;
-    }
+    // Fresh-oracle opening: each leaf is a length-l1 Vec<F> taken from
+    // shift_query_answers[i][l2..] at the first occurrence of each
+    // unique index.
+    let fresh_values: Vec<Vec<F>> = first_occurrence
+        .iter()
+        .map(|&first_i| shift_query_answers[first_i][l2..].to_vec())
+        .collect();
+    let fresh_opening = Opening::<Hasher<F>>::new(unique_indices.clone(), fresh_values)
+        .map_err(|_| VerifierError::ShiftQueryIndex)?;
 
+    count_ops!(MerklePathsVerified, unique_indices.len() as u64);
+    scheme
+        .check(rt_0, &fresh_opening, auth_0)
+        .ok_or_err(VerifierError::ShiftQuery)?;
+
+    // One opening per accumulated oracle: leaf is vec![shift_query_answers[first_i][j]].
     (auth_j.len() == l2).ok_or_err(VerifierError::NumL2Instances)?;
-    for (i, paths) in auth_j.iter().enumerate() {
-        (paths.len() == t).ok_or_err(VerifierError::NumShiftQueries)?;
-        let root = &l2_roots[i];
-        for (j, path) in paths.iter().enumerate() {
-            (path.leaf_index == queries.leaf_positions[j])
-                .ok_or_err(VerifierError::ShiftQueryIndex)?;
-            count_ops!(MerklePathsVerified);
-            let is_valid = path.verify(
-                mt_leaf_hash_params,
-                mt_two_to_one_hash_params,
-                root,
-                [shift_query_answers[j][i]],
-            )?;
-            is_valid.ok_or_err(VerifierError::ShiftQuery)?;
-        }
+    for (j, (proof, root)) in auth_j.iter().zip(l2_roots).enumerate() {
+        let values: Vec<Vec<F>> = first_occurrence
+            .iter()
+            .map(|&first_i| vec![shift_query_answers[first_i][j]])
+            .collect();
+        let opening = Opening::<Hasher<F>>::new(unique_indices.clone(), values)
+            .map_err(|_| VerifierError::ShiftQueryIndex)?;
+
+        count_ops!(MerklePathsVerified, unique_indices.len() as u64);
+        scheme
+            .check(root, &opening, proof)
+            .ok_or_err(VerifierError::ShiftQuery)?;
     }
 
     Ok(())

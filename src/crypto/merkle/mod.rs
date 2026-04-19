@@ -1,36 +1,47 @@
-use ark_codes::traits::LinearCode;
-use ark_crypto_primitives::{
-    merkle_tree::{Config, MerkleTree, Path},
-    Error,
-};
-use ark_ff::Field;
+//! Merkle helpers bridging the code-word layout to the ark-vc scheme.
+//!
+//! The interleaved-codeword leaf shape (one leaf = `Vec<F>` of length
+//! `l1`, each element a codeword value at that position) is specific
+//! to PESAT's commit step; keeping it here localises the interleaving
+//! logic and lets callers work with the natural `&[Vec<F>]` shape
+//! `MerkleCommitment::commit` expects.
 
-pub fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
+use ark_codes::traits::LinearCode;
+use ark_ff::PrimeField;
+
+/// Encode each witness into a codeword, then zip them into per-position
+/// leaves: for a code of length `n`, returns `(codewords, leaves)` with
+/// `codewords.len() == l1` and `leaves.len() == n`. Each `leaves[i]` is
+/// a fresh `Vec<F>` of length `l1` — the i-th position of every
+/// codeword — matching `ark_vc::blake3::Blake3FieldHasher`'s `Symbol`
+/// shape.
+pub fn build_codeword_leaves<F: PrimeField, C: LinearCode<F>>(
     code: &C,
     witnesses: &[Vec<F>],
     l1: usize,
-) -> (Vec<Vec<F>>, Vec<F>) {
-    let mut leaves = vec![F::default(); l1 * code.code_len()];
-    let mut codewords = vec![vec![F::default(); code.code_len()]; l1];
-    for (i, w) in witnesses.iter().enumerate() {
-        let f_i = code.encode(w);
-        // stacking codewords in flat array, which we chunk below
-        // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
-        for (j, value) in f_i.iter().enumerate() {
-            leaves[(j * l1) + i] = *value;
-        }
-        codewords[i] = f_i;
+) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    debug_assert_eq!(witnesses.len(), l1);
+
+    let n = code.code_len();
+    let mut codewords = Vec::with_capacity(l1);
+    for w in witnesses {
+        codewords.push(code.encode(w));
     }
+
+    // Interleave: leaves[i][c] = codewords[c][i].
+    let mut leaves: Vec<Vec<F>> = (0..n).map(|_| Vec::with_capacity(l1)).collect();
+    for cw in &codewords {
+        debug_assert_eq!(cw.len(), n);
+        for (i, &v) in cw.iter().enumerate() {
+            leaves[i].push(v);
+        }
+    }
+
     (codewords, leaves)
 }
 
-pub fn compute_auth_paths<P: Config>(
-    td: &MerkleTree<P>,
-    indexes: &[usize],
-) -> Result<Vec<Path<P>>, Error> {
-    let paths = indexes
-        .iter()
-        .map(|x_t| td.generate_proof(*x_t))
-        .collect::<Result<Vec<Path<P>>, Error>>()?;
-    Ok(paths)
+/// Wrap `f` so each leaf is a single-element `Vec<F>` — the post-fold
+/// commit shape (one leaf per codeword position, no interleaving).
+pub fn per_element_leaves<F: PrimeField>(f: &[F]) -> Vec<Vec<F>> {
+    f.iter().map(|&x| vec![x]).collect()
 }

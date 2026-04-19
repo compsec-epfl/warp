@@ -32,7 +32,6 @@ use crate::protocol::oracle::Oracle;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
 use crate::utils::{concat_slices, poly::eq_poly};
-use ark_crypto_primitives::merkle_tree::Config;
 
 /// Degree-1 polynomial interpolating two field elements: `lo + (hi - lo)·X`.
 fn linear_poly<F: Field>(lo: F, hi: F) -> DensePolynomial<F> {
@@ -136,11 +135,11 @@ pub struct TwinConstraintOutput<F: Field> {
     skip_all,
     fields(log_l = log_l, log_m = log_m, log_n = log_n)
 )]
-pub fn prove<F, MT>(
+pub fn prove<F>(
     prover_state: &mut ProverState,
     fresh_codewords: &[Vec<F>],
     fresh_taus: Vec<Vec<F>>,
-    acc_instance: AccumulatorInstance<F, MT>,
+    acc_instance: AccumulatorInstance<F>,
     acc_witness_f: &[Vec<F>],
     acc_witness_w: &[Vec<F>],
     instances: &[Vec<F>],
@@ -152,7 +151,6 @@ pub fn prove<F, MT>(
 ) -> TwinConstraintOutput<F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 {
     let l1 = fresh_codewords.len();
 

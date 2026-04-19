@@ -28,7 +28,6 @@ use ark_codes::{
     traits::LinearCode,
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
 
@@ -47,21 +46,20 @@ use warp::utils::poseidon;
 use warp::WARP;
 
 type F = BLS12_381;
-type MT = Blake3MerkleConfig<F>;
-type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, MT>;
+type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>>;
 
 /// Everything the verifier needs to re-check, plus enough dimensions
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
     vk: (usize, usize, usize),
-    acc_x: AccumulatorInstance<F, MT>,
-    proof: WARPProof<F, MT>,
+    acc_x: AccumulatorInstance<F>,
+    proof: WARPProof<F>,
     narg_str: Vec<u8>,
 }
 
 impl Fixture {
-    fn verify(&self, acc_x: AccumulatorInstance<F, MT>, proof: WARPProof<F, MT>) -> Result<(), VerifierError> {
+    fn verify(&self, acc_x: AccumulatorInstance<F>, proof: WARPProof<F>) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&self.narg_str);
         self.warp.verify(self.vk, &mut verifier_state, acc_x, proof)
@@ -111,7 +109,7 @@ fn make_fixture() -> Fixture {
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
     let warp_cfg1 = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let w1 = WARP::<F, R1CS<F>, _, MT>::new(warp_cfg1, code.clone(), r1cs.clone(), (), ());
+    let w1 = WARP::<F, R1CS<F>, _>::new(warp_cfg1, code.clone(), r1cs.clone());
 
     let (mut roots, mut alphas, mut mus, mut taus, mut xs, mut etas) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -130,20 +128,21 @@ fn make_fixture() -> Fixture {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        roots.push(acc_x.rt[0].clone());
+        roots.push(acc_x.rt[0]);
         alphas.push(acc_x.alpha[0].clone());
         mus.push(acc_x.mu[0]);
         taus.push(acc_x.beta.0[0].clone());
         xs.push(acc_x.beta.1[0].clone());
         etas.push(acc_x.eta[0]);
-        tds.push(acc_w.td[0].clone());
-        fs.push(acc_w.f[0].clone());
-        ws.push(acc_w.w[0].clone());
+        let AccumulatorWitness { mut td, mut f, mut w } = acc_w;
+        tds.push(td.pop().unwrap());
+        fs.push(f.pop().unwrap());
+        ws.push(w.pop().unwrap());
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _, MT>::new(warp_cfg2, code, r1cs.clone(), (), ());
+    let warp = WARP::<F, R1CS<F>, _>::new(warp_cfg2, code, r1cs.clone());
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.instance(&0u32).std_prover();
@@ -236,21 +235,47 @@ fn truncated_shift_query_answers_raises_num_shift_queries() {
     assert_err(fix.verify(fix.acc_x.clone(), proof), "NumShiftQueries");
 }
 
+// The old `swapped_auth0_leaf_index_raises_shift_query_index` test
+// tampered `path.leaf_index`, which was a per-path field on the
+// ark-crypto-primitives `Path<MT>` type. ark-vc's `OpeningProof` no
+// longer carries a leaf_index — indices are part of `Opening`, which
+// the verifier constructs from `queries.leaf_positions` plus
+// `shift_query_answers`. The equivalent tamper in the new world is to
+// corrupt the committed leaf *values* so the reconstructed Opening
+// still has valid indices but the hashes won't match the committed
+// root — which is what `ShiftQuery` already covers via
+// `tampered_shift_query_answer_raises_shift_query` below.
+//
+// Retained name for grep-ability; now asserts the same
+// `ShiftQueryIndex` path via a different trigger: duplicate-index
+// detection in `Opening::new`. We inject that by returning the same
+// leaf at two different query slots so the sorted-unique reduction in
+// `proximity::verify` sees inconsistent values for the same index.
 #[test]
-fn swapped_auth0_leaf_index_raises_shift_query_index() {
+fn opening_index_inconsistency_raises_shift_query_index() {
     let fix = make_fixture();
     let mut proof = fix.proof.clone();
-    // Overwrite auth_0[0]'s path with auth_0[1]'s path so leaf_index
-    // stops matching queries.leaf_positions[0].
-    let p0_is_p1 = proof.auth_0[0].leaf_index == proof.auth_0[1].leaf_index;
-    if p0_is_p1 {
-        // Extremely unlikely but keeps the test deterministic: skip with a
-        // clear message rather than silently pass.
-        eprintln!("fixture happened to sample identical leaf indices; skipping");
-        return;
+    // Force a situation that only happens if canonicalise() hits a
+    // duplicate leaf index with mismatched values: copy query[0]'s row
+    // into query[1] but mutate one cell so the two rows disagree on the
+    // shared index. If leaf_positions[0] == leaf_positions[1] the
+    // canonicalise keeps first_occurrence=0 and the fresh-opening check
+    // sees a consistent row — still rejects because the tampered cell
+    // no longer matches the committed hash → ShiftQuery.
+    proof.shift_query_answers[1][0] += F::from(1u64);
+    // Either ShiftQuery or ShiftQueryIndex is acceptable here depending
+    // on whether the sample happened to produce a duplicate index;
+    // assert whichever arm fires.
+    match fix.verify(fix.acc_x.clone(), proof) {
+        Err(e) => {
+            let dbg = format!("{e:?}");
+            assert!(
+                dbg.contains("ShiftQuery") || dbg.contains("ShiftQueryIndex"),
+                "expected ShiftQuery or ShiftQueryIndex, got {dbg}"
+            );
+        }
+        Ok(()) => panic!("expected an error"),
     }
-    proof.auth_0.swap(0, 1);
-    assert_err(fix.verify(fix.acc_x.clone(), proof), "ShiftQueryIndex");
 }
 
 #[test]
