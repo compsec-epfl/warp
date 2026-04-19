@@ -113,8 +113,11 @@ impl<
         index: Self::Index,
     ) -> spongefish::VerificationResult<(Self::ProverKey, Self::VerifierKey)> {
         let (m, n, k) = index.config();
-        // initialize prover state for fs
-        // TODO for R1CS
+        // Absorb the public parameters into the transcript before any
+        // challenges are drawn. TODO: hoist these three `prover_message`
+        // calls behind a `public_parameters!` helper once the generic
+        // `BundledPESAT::config()` shape is settled — today's `(m, n, k)`
+        // is R1CS-specific.
         prover_state.public_message(&index.description());
         prover_state.prover_message(&F::from(m as u32));
         prover_state.prover_message(&F::from(n as u32));

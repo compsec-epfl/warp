@@ -77,9 +77,14 @@ impl<F: Field, H: WarpHasher<F>> AccumulatorWitness<F, H> {
 // AccumulatorWitness deliberately does NOT implement `Clone` —
 // ark-vc's `Committed<H, S>` has no Clone impl, and faking one by
 // re-committing would require `H: Default` (which excludes hashers
-// that take parameters, e.g. `Poseidon2Hasher`). Callers that need to
-// call `decide` after measuring witness size use `AccWitnessSerializer`
-// by reference instead (see `src/serialize.rs`).
+// that take parameters, e.g. `Poseidon2Hasher`).
+//
+// Downstream consequence: the three serialiser wrappers in
+// `src/serialize.rs` (`AccInstanceSerializer`, `AccWitnessSerializer`,
+// `ProofSerializer`) all take `&acc_x` / `&acc_w` / `&pf` by
+// reference rather than owning. That lets callers measure wire
+// sizes without consuming state, and sidesteps the Clone gap
+// entirely. See `tests/integration_warp.rs` for the pattern.
 
 /// Proof produced by the WARP accumulation prover.
 ///

@@ -1,9 +1,22 @@
 use ark_ff::Field;
 use spongefish::ProverState;
 
+/// Shift queries derived from the transcript, carried in two shapes
+/// because different phases want different views:
+/// - `leaf_positions: Vec<usize>` — for Merkle / ark-vc `scheme.open`
+///   calls that index into a committed tree.
+/// - `evaluation_points: Vec<Vec<F>>` — per-query bit vectors (each
+///   of length `log_n`, each entry in `{0,1}` as a field element),
+///   for the eq-polynomial evaluations in
+///   `batching::prove`/`verify` and the verifier's zeta-eq sums.
+///
+/// Each shape is cheap to derive from the other on demand, but
+/// deriving it on every use would repeat work at hot call sites
+/// (the batching phase iterates over evaluation_points per query).
+/// Materialising both once, here, keeps the callers branch-free.
 pub struct QueryIndices<F: Field> {
-    pub leaf_positions: Vec<usize>,     // for merkle tree lookups
-    pub evaluation_points: Vec<Vec<F>>, // for eq polynomial evals
+    pub leaf_positions: Vec<usize>,
+    pub evaluation_points: Vec<Vec<F>>,
 }
 
 impl<F: Field> QueryIndices<F> {
