@@ -317,3 +317,40 @@ fn tampered_mu_raises_target() {
     acc_x.mu[0] += F::from(1u64);
     assert_err(fix.verify(acc_x, fix.proof.clone()), "Target");
 }
+
+// Soundness guard for the duplicate-query-index scenario. Background:
+// `QueryIndices::sample` draws `t` shift-query indices from the
+// transcript; with `t=7` and `log_n ≈ 10` there's a non-trivial
+// probability that two draws collide (`queries.leaf_positions[i] ==
+// leaf_positions[j]` for `i != j`). `proximity::verify` canonicalises
+// to sorted-unique indices for the Merkle `Opening::new` — so in a
+// collision the second occurrence's row is *not* in the Opening and
+// won't be caught by the Merkle hash check. If the prover could
+// tamper row `j` at a colliding slot without verify rejecting, they
+// have a lever: the downstream `nu_s_t` computation sums over all
+// `t` rows and feeds `sigma_2` / `target_2`.
+//
+// This test exhaustively tampers every shift-query row across many
+// random fixtures, asserting verify rejects. Implicitly probes the
+// collision case: whenever a random fixture produces duplicate
+// queries (≈2–3% per fixture at these params, so ~3 per 100 runs),
+// tampering row `j` at a colliding slot exercises the exact attack.
+// Over `FIXTURES × T` tampers, collisions come up with high
+// probability, and verify must reject every one.
+#[test]
+fn tampering_any_shift_query_row_is_caught() {
+    const FIXTURES: usize = 20;
+    const T: usize = 7;
+    for fix_i in 0..FIXTURES {
+        let fix = make_fixture();
+        for row_idx in 0..T {
+            let mut proof = fix.proof.clone();
+            proof.shift_query_answers[row_idx][0] += F::from(1u64);
+            assert!(
+                fix.verify(fix.acc_x.clone(), proof).is_err(),
+                "fixture {fix_i}: tampering shift_query_answers[{row_idx}][0] was NOT \
+                 caught by the verifier — possible duplicate-index soundness gap"
+            );
+        }
+    }
+}
