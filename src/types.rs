@@ -1,13 +1,9 @@
-use ark_codes::traits::LinearCode;
 use ark_ff::Field;
 use ark_vc::shape::PerfectBinary;
-use ark_vc::{Committed, MerkleCommitment, OpeningProof};
-use std::marker::PhantomData;
+use ark_vc::{Committed, OpeningProof};
 
-use crate::config::WARPConfig;
 use crate::error::ProverError;
 use crate::hasher::WarpHasher;
-use crate::relations::BundledPESAT;
 
 // result of a prove call: (new accumulator instance + witness, proof)
 pub type ProveResult<F, H> = Result<
@@ -17,19 +13,6 @@ pub type ProveResult<F, H> = Result<
     ),
     ProverError,
 >;
-
-/// Protocol parameters for WARP — the shared configuration used by all IOR phases.
-///
-/// Generic over the Merkle hasher `H`: callers pick Blake3 for prover
-/// speed or Poseidon2 for circuit-friendly recursion.
-pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: WarpHasher<F>>
-{
-    pub _f: PhantomData<F>,
-    pub config: WARPConfig<F, P>,
-    pub code: C,
-    pub p: P,
-    pub scheme: MerkleCommitment<H, PerfectBinary>,
-}
 
 /// Accumulator instance — the public part of an accumulated claim.
 ///
