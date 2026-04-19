@@ -86,6 +86,17 @@ where
     };
 
     // call efficient sumcheck for batched_constraint checks
+    //
+    // `oracle.evals().to_vec()` is an intentional O(n) clone, not an
+    // API wart. `inner_product_sumcheck` folds its first argument
+    // in-place (halves per round, truncates to length 1), and warp
+    // needs the pre-fold codeword to survive: it's packed into the
+    // new accumulator witness after this phase (`tc.f.into_evals()`
+    // later in `WARP::prove`). So the prover inherently holds two
+    // lives of the codeword — one destructive for sumcheck folding,
+    // one preserved for the next round's oracle. Either owns-and-
+    // clones (what we do here) or borrows-mutably-and-clones-at-
+    // caller; the allocation count is the same.
     let alpha = {
         let _s = tracing::info_span!("batching.sumcheck").entered();
         let log_n = ark_std::log2(n) as u64;
