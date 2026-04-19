@@ -220,8 +220,7 @@ impl<
 
         // Phase 3d: batching sumcheck.
         let ood_chunks: Vec<&[F]> = ood_out.samples_flat.chunks(log_n).collect();
-        let mut zetas: Vec<&[F]> =
-            Vec::with_capacity(1 + self.config.s + self.config.t);
+        let mut zetas: Vec<&[F]> = Vec::with_capacity(1 + self.config.s + self.config.t);
         zetas.push(tc.zeta_0.as_slice());
         zetas.extend(ood_chunks);
         zetas.extend(queries.evaluation_points.iter().map(|v| v.as_slice()));
