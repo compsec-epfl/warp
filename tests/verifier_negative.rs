@@ -61,9 +61,16 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn verify(&self, acc_x: AccumulatorInstance<F, MT>, proof: WARPProof<F, MT>) -> Result<(), VerifierError> {
+    fn verify(
+        &self,
+        acc_x: AccumulatorInstance<F, MT>,
+        proof: WARPProof<F, MT>,
+    ) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
-        let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&self.narg_str);
+        let mut verifier_state = domainsep_v
+            .without_session()
+            .instance(&0u32)
+            .std_verifier(&self.narg_str);
         self.warp.verify(self.vk, &mut verifier_state, acc_x, proof)
     }
 }
@@ -119,7 +126,7 @@ fn make_fixture() -> Fixture {
 
     for _ in 0..l1 {
         let ds = spongefish::domain_separator!("test::warp::negative");
-        let mut ps = ds.instance(&0u32).std_prover();
+        let mut ps = ds.without_session().instance(&0u32).std_prover();
         let ((acc_x, acc_w), _) = w1
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -146,7 +153,7 @@ fn make_fixture() -> Fixture {
     let warp = WARP::<F, R1CS<F>, _, MT>::new(warp_cfg2, code, r1cs.clone(), (), ());
 
     let ds = spongefish::domain_separator!("test::warp::negative");
-    let mut ps = ds.instance(&0u32).std_prover();
+    let mut ps = ds.without_session().instance(&0u32).std_prover();
     let ((acc_x, _acc_w), proof) = warp
         .prove(
             (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -182,10 +189,7 @@ fn assert_err(result: Result<(), VerifierError>, expected: &str) {
         Ok(()) => panic!("expected `{expected}`, got Ok(())"),
         Err(err) => {
             let dbg = format!("{err:?}");
-            assert!(
-                dbg.contains(expected),
-                "expected `{expected}`, got `{dbg}`"
-            );
+            assert!(dbg.contains(expected), "expected `{expected}`, got `{dbg}`");
         }
     }
 }

@@ -77,36 +77,36 @@ impl<
     }
 }
 
-pub struct DerivedRandomness<F: Field, MT: Config> {
+/// Transcript values read BEFORE the twin-constraint sumcheck: PESAT
+/// commitment + l1 mus + l1 τs + ω + τ.
+pub struct PreTwinConstraint<F: Field, MT: Config> {
     pub rt_0: MT::InnerDigest,
     pub l1_mus: Vec<F>,
     pub l1_taus: Vec<Vec<F>>,
     pub omega: F,
     pub tau: Vec<F>,
-    pub gamma_sumcheck: Vec<F>,
-    pub coeffs_twinc_sumcheck: Vec<Vec<F>>,
+}
+
+/// Transcript values read BETWEEN the two sumchecks: new commitment,
+/// η, ν₀, OOD samples+answers, shift-query byte challenges, ξ.
+pub struct BetweenSumchecks<F: Field, MT: Config> {
     pub td: MT::InnerDigest,
     pub eta: F,
     pub nus: Vec<F>,
     pub ood_samples: Vec<F>,
     pub bytes_shift_queries: Vec<u8>,
     pub xi: Vec<F>,
-    pub alpha_sumcheck: Vec<F>,
-    pub sums_batching_sumcheck: Vec<[F; 2]>,
 }
 
-pub fn derive_randomness<
+pub fn derive_pre_twin_constraint<
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 >(
     verifier_state: &mut VerifierState<'_>,
     l1: usize,
-    log_n: usize,
     log_l: usize,
-    s: usize,
-    t: usize,
     log_m: usize,
-) -> VerificationResult<DerivedRandomness<F, MT>> {
+) -> VerificationResult<PreTwinConstraint<F, MT>> {
     // commitment digest
     let rt_0_bytes: [u8; 32] = verifier_state.prover_message()?;
     let rt_0: MT::InnerDigest = rt_0_bytes.into();
@@ -114,7 +114,7 @@ pub fn derive_randomness<
     // mus
     let l1_mus: Vec<F> = verifier_state.prover_messages_vec(l1)?;
 
-    // challenge taus
+    // challenge taus (squeezed)
     let l1_taus: Vec<Vec<F>> = (0..l1)
         .map(|_| {
             (0..log_m)
@@ -128,17 +128,24 @@ pub fn derive_randomness<
         .map(|_| verifier_state.verifier_message::<F>())
         .collect();
 
-    // twin constraints sumcheck
-    let mut gamma_sumcheck = Vec::new();
-    let mut coeffs_twinc_sumcheck = Vec::new();
-    for _ in 0..log_l {
-        let h_coeffs: Vec<F> =
-            verifier_state.prover_messages_vec(1 + (log_n + 1).max(log_m + 2))?;
-        let c: F = verifier_state.verifier_message();
-        gamma_sumcheck.push(c);
-        coeffs_twinc_sumcheck.push(h_coeffs);
-    }
+    Ok(PreTwinConstraint {
+        rt_0,
+        l1_mus,
+        l1_taus,
+        omega,
+        tau,
+    })
+}
 
+pub fn derive_between_sumchecks<
+    F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+>(
+    verifier_state: &mut VerifierState<'_>,
+    log_n: usize,
+    s: usize,
+    t: usize,
+) -> VerificationResult<BetweenSumchecks<F, MT>> {
     // td digest
     let td_bytes: [u8; 32] = verifier_state.prover_message()?;
     let td: MT::InnerDigest = td_bytes.into();
@@ -158,7 +165,7 @@ pub fn derive_randomness<
     let ood_answers: Vec<F> = verifier_state.prover_messages_vec(s)?;
     nus.extend(ood_answers);
 
-    // shift queries and zero check
+    // shift queries and ξ
     let r = 1 + s + t;
     let log_r = log2(r) as usize;
     let n_shift_queries = (t * log_n).div_ceil(8);
@@ -169,31 +176,12 @@ pub fn derive_randomness<
         .map(|_| verifier_state.verifier_message::<F>())
         .collect();
 
-    // batching sumcheck
-    let mut alpha_sumcheck = Vec::new();
-    let mut sums_batching_sumcheck = Vec::new();
-    for _ in 0..log_n {
-        let sums: [F; 2] = verifier_state.prover_messages()?;
-        let c: F = verifier_state.verifier_message();
-        alpha_sumcheck.push(c);
-        sums_batching_sumcheck.push(sums);
-    }
-
-    Ok(DerivedRandomness {
-        rt_0,
-        l1_mus,
-        l1_taus,
-        omega,
-        tau,
-        gamma_sumcheck,
-        coeffs_twinc_sumcheck,
+    Ok(BetweenSumchecks {
         td,
         eta,
         nus,
         ood_samples,
         bytes_shift_queries,
         xi,
-        alpha_sumcheck,
-        sums_batching_sumcheck,
     })
 }

@@ -11,13 +11,14 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::log2;
 use config::WARPConfig;
-use efficient_sumcheck::{
-    hypercube::{compute_hypercube_eq_evals, Hypercube},
-    order_strategy::AscendingOrder,
+use effsc::{
+    hypercube::{compute_hypercube_eq_evals, Ascending},
+    verifier::sumcheck_verify,
 };
 use protocol::query::QueryIndices;
 use protocol::transcript::{
-    absorb_instances, derive_randomness, parse_statement, DerivedRandomness,
+    absorb_instances, derive_between_sumchecks, derive_pre_twin_constraint, parse_statement,
+    BetweenSumchecks, EffscVerifierTranscript, PreTwinConstraint,
 };
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -283,18 +284,15 @@ impl<
         let (l1, l) = (self.params.config.l1, self.params.config.l);
         let l2 = l - l1;
 
-        ////////////////////////
-        // 1. Parsing phase
-        ////////////////////////
-        // a. verification key
         #[allow(non_snake_case)]
         let (M, N, k) = (vk.0, vk.1, vk.2);
         let (log_m, log_l) = (log2(M) as usize, log2(l) as usize);
-
         let n = self.params.code.code_len();
         let log_n = log2(n) as usize;
+        let r = 1 + self.params.config.s + self.params.config.t;
+        let log_r = log2(r) as usize;
 
-        // f. absorb parameters
+        // 1. Parse statement (fresh instances + accumulator).
         let (
             l1_xs,
             AccumulatorInstance {
@@ -306,98 +304,81 @@ impl<
             },
         ) = parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_m)?;
 
-        ////////////////////////
-        // 2. Derive randomness
-        ////////////////////////
-        let DerivedRandomness {
+        // 2. Read PESAT phase: rt_0 + l1_mus, squeeze l1_taus, ω, τ.
+        let PreTwinConstraint {
             rt_0,
             l1_mus,
             l1_taus,
             omega,
             tau,
-            gamma_sumcheck,
-            coeffs_twinc_sumcheck,
-            td: _,
-            eta,
-            mut nus,
-            ood_samples,
-            bytes_shift_queries,
-            xi,
-            alpha_sumcheck,
-            sums_batching_sumcheck,
-        } = derive_randomness::<F, MT>(
-            verifier_state,
-            l1,
-            log_n,
-            log_l,
-            self.params.config.s,
-            self.params.config.t,
-            log_m,
-        )?;
+        } = derive_pre_twin_constraint::<F, MT>(verifier_state, l1, log_l, log_m)?;
 
-        let r = 1 + self.params.config.s + self.params.config.t;
-        let log_r = log2(r) as usize;
-
-        ////////////////////////
-        // 3. Derive values
-        ////////////////////////
-        // b.
-        let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
-
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck);
-
-        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
-
-        // compute \eta_{s + k}
-        let mut nu_s_t = vec![F::default(); self.params.config.t];
-        for (i, v_jk) in proof.shift_query_answers.iter().enumerate() {
-            let res = v_jk
-                .iter()
-                .zip(&gamma_eq_evals)
-                .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
-            nu_s_t[i] = res;
-        }
-
-        nus.extend(nu_s_t);
-
-        // d. set \sigma^{(1)} and \sigma^{(2)}
-        // compute eq(\tau, i) and eq(\xi, i)
+        // 3. Twin-constraint sumcheck claim σ₁ = Σ_i τ_eq(i)·(μ_i + ω·η_i).
         let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
-
-        let etas = concat_slices(&l2_etas, &vec![F::zero(); l1]);
-
+        let etas_l2_first = concat_slices(&l2_etas, &vec![F::zero(); l1]);
         let sigma_1 = tau_eq_evals
             .into_iter()
-            .zip(l2_mus.into_iter().chain(l1_mus.to_vec()).zip(etas))
+            .zip(
+                l2_mus
+                    .iter()
+                    .copied()
+                    .chain(l1_mus.iter().copied())
+                    .zip(etas_l2_first),
+            )
             .fold(F::zero(), |acc, (eq_tau, (mu, eta))| {
                 acc + eq_tau * (mu + omega * eta)
             });
 
-        let xi_eq_evals = compute_hypercube_eq_evals(log_r, &xi);
+        // 4. Run the twin-constraint sumcheck via effsc. The real oracle
+        //    check is `final_claim == eq(τ, γ) · (ν₀ + ω·η)`, but ν₀ and η
+        //    arrive on the transcript *after* the sumcheck rounds — so we
+        //    capture `final_claim` in the closure and finish the check
+        //    below after reading them. `sumcheck_verify` still enforces all
+        //    per-round consistency (`q(0)+q(1)==claim`) automatically.
+        let tc_degree = 1 + (log_n + 1).max(log_m + 2);
+        let mut tc_final_claim = F::zero();
+        let gamma_sumcheck = {
+            let mut wrap = EffscVerifierTranscript(verifier_state);
+            sumcheck_verify(
+                sigma_1,
+                tc_degree,
+                log_l,
+                &mut wrap,
+                |_, _| Ok(()),
+                |final_claim, _challenges| {
+                    tc_final_claim = final_claim;
+                    Ok(())
+                },
+            )?
+        };
 
-        let sigma_2 = xi_eq_evals
-            .iter()
-            .zip(&nus)
-            .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
+        // 5. Read between-sumchecks state: td, η, ν₀, OOD, shift-query
+        //    byte challenges, ξ.
+        let BetweenSumchecks {
+            td: _,
+            eta,
+            nus: mut nus_from_transcript,
+            ood_samples,
+            bytes_shift_queries,
+            xi,
+        } = derive_between_sumchecks::<F, MT>(
+            verifier_state,
+            log_n,
+            self.params.config.s,
+            self.params.config.t,
+        )?;
 
-        ////////////////////////
-        // 4. Decision phase
-        ////////////////////////
-        // a. new code evaluation point
-        (acc_instance.alpha[0] == alpha_sumcheck).ok_or_err(VerifierError::CodeEvaluationPoint)?;
+        // 6. Deferred twin-constraint oracle check.
+        (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus_from_transcript[0] + omega * eta)
+            == tc_final_claim)
+            .ok_or_err(VerifierError::Target)?;
 
-        // b. new circuit evaluation point
-        let betas = l2_taus
-            .into_iter()
-            .chain(l1_taus)
-            .zip(l2_xs.clone().into_iter().chain(l1_xs))
-            .map(|(tau, x)| concat_slices(&tau, &x))
-            .collect::<Vec<Vec<F>>>();
-        let beta = scale_and_sum(&betas, &gamma_eq_evals);
-        let expected_beta = concat_slices(&acc_instance.beta.0[0], &acc_instance.beta.1[0]);
-        (expected_beta == beta).ok_or_err(VerifierError::CircuitEvaluationPoint)?;
-
-        // c. proximity: check auth paths + leaf-position consistency.
+        // 7. Proximity first: both the batching σ₂ and the batching oracle
+        //    check consume `proof.shift_query_answers`, so we must reject
+        //    malformed / tampered openings *before* feeding them into the
+        //    sumcheck. Running proximity here preserves the existing
+        //    negative-test error distinctions (`ShiftQuery`, `ShiftQueryIndex`,
+        //    `NumShiftQueries`, `NumL2Instances`).
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
 
@@ -414,44 +395,88 @@ impl<
             self.params.config.t,
         )?;
 
-        // d. sumcheck decisions: reduce each transcript's round messages to
-        // a single target, then compare to the expected claim in (e).
-        (coeffs_twinc_sumcheck.len() == log_l).ok_or_err(VerifierError::NumSumcheckRounds)?;
-        let target_1 = twin_constraint::verify_claim(sigma_1, coeffs_twinc_sumcheck, &gamma_sumcheck);
+        // 8. Derive everything needed to state the batching claim.
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck);
+        let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
+        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
 
-        (sums_batching_sumcheck.len() == log_n).ok_or_err(VerifierError::NumSumcheckRounds)?;
-        let target_2 = batching::verify_claim(sigma_2, sums_batching_sumcheck, &alpha_sumcheck);
-
-        // e. new target decision
-        // build eq^{\star}(\alpha)
-        (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta) == target_1)
-            .ok_or_err(VerifierError::Target)?;
-
-        let mut zeta_eqs = vec![eq_poly_non_binary(&zeta_0, &alpha_sumcheck)];
-
-        zeta_eqs.extend(
-            ood_samples
-                .chunks(log_n)
-                .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
-                .collect::<Vec<F>>(),
-        );
-        zeta_eqs.extend(
-            queries
-                .evaluation_points
+        // ν_{s+k}: inner product of the (now proximity-verified) shift-query
+        // answers with the γ-equality table.
+        let mut nu_s_t = vec![F::default(); self.params.config.t];
+        for (i, v_jk) in proof.shift_query_answers.iter().enumerate() {
+            nu_s_t[i] = v_jk
                 .iter()
-                .map(|zeta| eq_poly_non_binary(zeta, &alpha_sumcheck))
-                .collect::<Vec<F>>(),
-        );
-        (zeta_eqs.len() == r).ok_or_err(VerifierError::NumShiftQueries)?;
+                .zip(&gamma_eq_evals)
+                .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
+        }
+        nus_from_transcript.extend(nu_s_t);
+        let nus = nus_from_transcript;
 
-        // mul by \mu and compare to target_2
-        (acc_instance.mu[0]
-            * zeta_eqs
-                .into_iter()
-                .zip(xi_eq_evals)
-                .fold(F::zero(), |acc, (a, b)| acc + a * b)
-            == target_2)
-            .ok_or_err(VerifierError::Target)?;
+        let xi_eq_evals = compute_hypercube_eq_evals(log_r, &xi);
+        let sigma_2 = xi_eq_evals
+            .iter()
+            .zip(&nus)
+            .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
+
+        // 8. Run the batching (inner-product) sumcheck via effsc. The
+        //    oracle check `final_claim == μ · Σ_i eq(ζ_i, α)·ξ_eq(i)` is
+        //    self-contained and runs inside the closure — a mismatch maps
+        //    to `VerifierError::Target`. We still need the reduced α to
+        //    compare against `acc_instance.alpha[0]` below, so the closure
+        //    returns Ok via a side-channel capture of the zeta-eq sum.
+        //
+        //    α arrives in MSB (sumcheck round) order; the prover stored
+        //    the LSB-reversed form in `acc_instance.alpha[0]`, so we
+        //    reverse once for MLE/eq consistency with arkworks.
+        let acc_mu = acc_instance.mu[0];
+        let alpha_sumcheck_msb = {
+            let mut wrap = EffscVerifierTranscript(verifier_state);
+            sumcheck_verify(
+                sigma_2,
+                2,
+                log_n,
+                &mut wrap,
+                |_, _| Ok(()),
+                |final_claim, alpha_msb| {
+                    let alpha_lsb: Vec<F> = alpha_msb.iter().rev().copied().collect();
+                    let mut zeta_eqs = Vec::with_capacity(r);
+                    zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_lsb));
+                    for chunk in ood_samples.chunks(log_n) {
+                        zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_lsb));
+                    }
+                    for pt in &queries.evaluation_points {
+                        zeta_eqs.push(eq_poly_non_binary(pt, &alpha_lsb));
+                    }
+                    debug_assert_eq!(zeta_eqs.len(), r);
+                    let expected = acc_mu
+                        * zeta_eqs
+                            .into_iter()
+                            .zip(&xi_eq_evals)
+                            .fold(F::zero(), |acc, (a, b)| acc + a * *b);
+                    if expected == final_claim {
+                        Ok(())
+                    } else {
+                        Err(effsc::proof::SumcheckError::FinalEvaluation)
+                    }
+                },
+            )?
+        };
+
+        // 10. Accumulator consistency checks for the new code / circuit
+        //     evaluation points.
+        let alpha_sumcheck_lsb: Vec<F> = alpha_sumcheck_msb.iter().rev().copied().collect();
+        (acc_instance.alpha[0] == alpha_sumcheck_lsb)
+            .ok_or_err(VerifierError::CodeEvaluationPoint)?;
+
+        let betas = l2_taus
+            .into_iter()
+            .chain(l1_taus)
+            .zip(l2_xs.clone().into_iter().chain(l1_xs))
+            .map(|(tau_i, x)| concat_slices(&tau_i, &x))
+            .collect::<Vec<Vec<F>>>();
+        let beta = scale_and_sum(&betas, &gamma_eq_evals);
+        let expected_beta = concat_slices(&acc_instance.beta.0[0], &acc_instance.beta.1[0]);
+        (expected_beta == beta).ok_or_err(VerifierError::CircuitEvaluationPoint)?;
 
         Ok(())
     }
@@ -478,8 +503,8 @@ impl<
 
         let tau = &acc_instance.beta.0[0];
 
-        let tau_zero_evader = Hypercube::<AscendingOrder>::new(tau.len())
-            .map(|(index, _point)| eq_poly(tau, index))
+        let tau_zero_evader = Ascending::new(tau.len())
+            .map(|p| eq_poly(tau, p.index))
             .collect::<Vec<F>>();
 
         let mut z = acc_instance.beta.1[0].clone();
@@ -497,4 +522,3 @@ impl<
         Ok(())
     }
 }
-

@@ -17,14 +17,57 @@
 
 use ark_ff::{Field, PrimeField};
 use ark_std::log2;
-use efficient_sumcheck::{
-    accumulate_sparse_evaluations, batched_constraint_poly, inner_product_sumcheck,
-};
+use effsc::{noop_hook, provers::inner_product::InnerProductProver, runner::sumcheck};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
+use std::collections::HashMap;
 
 use crate::count_ops;
 use crate::protocol::oracle::Oracle;
 use crate::utils::poly::eq_poly;
+
+/// [CBBZ23] / HyperPlonk sparse-evaluation optimization: for shift-query
+/// zetas (indices `1+s..r`), each ζ is a 0/1 vector representing a single
+/// hypercube point. We accumulate the corresponding `eq_evals[i]` into a
+/// sparse map keyed by that point's index.
+fn accumulate_sparse_evaluations<F: Field>(
+    zetas: Vec<&[F]>,
+    eq_evals: Vec<F>,
+    s: usize,
+    r: usize,
+) -> HashMap<usize, F> {
+    let mut result: HashMap<usize, F> = HashMap::new();
+    for i in 1 + s..r {
+        let index = zetas[i]
+            .iter()
+            .enumerate()
+            .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
+            .sum::<usize>();
+        *result.entry(index).or_insert_with(F::zero) += eq_evals[i];
+    }
+    result
+}
+
+/// Sum `dense_polys` column-wise and add the sparse contributions into the
+/// resulting vector. Used to build the `g` side of the inner-product
+/// sumcheck `∑_x f(x)·g(x)`.
+fn batched_constraint_poly<F: Field>(
+    dense_polys: &[Vec<F>],
+    sparse_polys: &HashMap<usize, F>,
+) -> Vec<F> {
+    if dense_polys.is_empty() {
+        return Vec::new();
+    }
+    let mut result = vec![F::ZERO; dense_polys[0].len()];
+    for row in dense_polys {
+        for (i, val) in row.iter().enumerate() {
+            result[i] += *val;
+        }
+    }
+    for (k, v) in sparse_polys.iter() {
+        result[*k] += *v;
+    }
+    result
+}
 
 /// Output of the batching sumcheck: the reduced point `α` and the target
 /// `μ = \hat f(α)`.
@@ -80,36 +123,27 @@ where
         accumulate_sparse_evaluations(zetas_prefix.to_vec(), xi_eq_evals, s, r)
     };
 
-    // call efficient sumcheck for batched_constraint checks
+    // Run the inner-product sumcheck. `InnerProductProver` + `runner::sumcheck`
+    // is the new-style `SumcheckProver` entry point; wire format is three
+    // evaluations `[q(0), q(1), q(2)]` per round (`effsc::sumcheck_verify`
+    // reads them on the verifier side). The prover is MSB half-split, so the
+    // challenge vector arrives in MSB order — reverse once here so downstream
+    // MLE / eq_poly queries (arkworks' LSB-first convention) line up.
     let alpha = {
         let _s = tracing::info_span!("batching.sumcheck").entered();
-        let log_n = ark_std::log2(n) as u64;
-        count_ops!(BatchingRounds, log_n);
-        inner_product_sumcheck(
-            &mut oracle.evals().to_vec(),
-            &mut batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
-            prover_state,
-        )
-        .verifier_messages
+        let log_n_bits = ark_std::log2(n) as u64;
+        count_ops!(BatchingRounds, log_n_bits);
+        let mut ip = InnerProductProver::new(
+            oracle.evals().to_vec(),
+            batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
+        );
+        let mut challenges =
+            sumcheck(&mut ip, log_n_bits as usize, prover_state, noop_hook).challenges;
+        challenges.reverse();
+        challenges
     };
 
     let mu = oracle.query_at_point(&alpha);
 
     BatchingOutput { alpha, mu }
-}
-
-/// Reduce the batching (inner-product / multilinear) sumcheck's per-round
-/// messages against the verifier challenges `α`. Each round message is
-/// `[a, b]` where `h(X) = a·(1-2X) + b·X + (prev_target - b)·X²`; the
-/// caller's `a, b` unpacking mirrors `src/protocol/transcript/verifier.rs`.
-#[tracing::instrument(name = "batching.verify", skip_all)]
-pub fn verify_claim<F>(sigma_2: F, sums_per_round: Vec<[F; 2]>, alpha: &[F]) -> F
-where
-    F: Field,
-{
-    let mut target = sigma_2;
-    for ([a, b], x) in sums_per_round.into_iter().zip(alpha) {
-        target = (target - b) * x.square() + a * (F::one() - x.double()) + b * x;
-    }
-    target
 }

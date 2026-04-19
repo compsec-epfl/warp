@@ -85,14 +85,13 @@ fn warp_test() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+        (),
+        (),
+    );
 
     let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -100,7 +99,7 @@ fn warp_test() {
 
     for _ in 0..l1 {
         let domainsep = spongefish::domain_separator!("test::warp");
-        let mut prover_state = domainsep.instance(&0u32).std_prover();
+        let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((acc_x, acc_w), _pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -127,16 +126,15 @@ fn warp_test() {
     let warp_config =
         WARPConfig::<_, R1CS<BLS12_381>>::new(8, l1, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp =
-        WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+        (),
+        (),
+    );
 
-    let mut prover_state = domainsep.instance(&0u32).std_prover();
+    let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
             (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -160,7 +158,10 @@ fn warp_test() {
 
     let narg_str = prover_state.narg_string().to_vec();
     let domainsep_v = spongefish::domain_separator!("test::warp");
-    let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&narg_str);
+    let mut verifier_state = domainsep_v
+        .without_session()
+        .instance(&0u32)
+        .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
             (r1cs.m, r1cs.n, r1cs.k),
@@ -207,8 +208,7 @@ fn warp_test_goldilocks() {
         hash_chain_size,
     ))
     .unwrap();
-    let code_config =
-        ReedSolomonConfig::<Goldilocks>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<Goldilocks>::default(r1cs.k, r1cs.k.next_power_of_two());
     let code = ReedSolomon::new(code_config);
 
     let instances_witnesses: (Vec<Vec<Goldilocks>>, Vec<Vec<Goldilocks>>) = (0..l1)
@@ -256,7 +256,7 @@ fn warp_test_goldilocks() {
 
     for _ in 0..l1 {
         let domainsep = spongefish::domain_separator!("test::warp");
-        let mut prover_state = domainsep.instance(&0u32).std_prover();
+        let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((acc_x, acc_w), _pf) = hash_chain_warp
             .prove(
                 (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -293,7 +293,7 @@ fn warp_test_goldilocks() {
             (),
         );
 
-    let mut prover_state = domainsep.instance(&0u32).std_prover();
+    let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
             (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
@@ -317,7 +317,10 @@ fn warp_test_goldilocks() {
 
     let narg_str = prover_state.narg_string().to_vec();
     let domainsep_v = spongefish::domain_separator!("test::warp");
-    let mut verifier_state = domainsep_v.instance(&0u32).std_verifier(&narg_str);
+    let mut verifier_state = domainsep_v
+        .without_session()
+        .instance(&0u32)
+        .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
             (r1cs.m, r1cs.n, r1cs.k),

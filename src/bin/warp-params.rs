@@ -15,9 +15,7 @@
 
 use std::process::ExitCode;
 
-use warp::params::{
-    lookup, select, validate, ParamError, Params, Regime, SecurityLevel, PRESETS,
-};
+use warp::params::{lookup, select, validate, ParamError, Params, Regime, SecurityLevel, PRESETS};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -58,13 +56,14 @@ fn cmd_select(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let (lambda, rate, field_bits, regime) = match (flags.lambda, flags.rate, flags.field_bits, flags.regime) {
-        (Some(l), Some(r), Some(fb), Some(rg)) => (SecurityLevel(l), r, fb, rg),
-        _ => {
-            eprintln!("warp-params select: need --lambda, --rate, --field-bits, --regime");
-            return ExitCode::from(2);
-        }
-    };
+    let (lambda, rate, field_bits, regime) =
+        match (flags.lambda, flags.rate, flags.field_bits, flags.regime) {
+            (Some(l), Some(r), Some(fb), Some(rg)) => (SecurityLevel(l), r, fb, rg),
+            _ => {
+                eprintln!("warp-params select: need --lambda, --rate, --field-bits, --regime");
+                return ExitCode::from(2);
+            }
+        };
     match select(lambda, field_bits, rate.as_f64(), regime) {
         Ok(p) => {
             // Prefer a preset if we have an exact-rational match on file —
@@ -120,7 +119,9 @@ fn cmd_validate(args: &[String]) -> ExitCode {
             (s, t, SecurityLevel(l), r, fb, rg)
         }
         _ => {
-            eprintln!("warp-params validate: need --s, --t, --lambda, --rate, --field-bits, --regime");
+            eprintln!(
+                "warp-params validate: need --s, --t, --lambda, --rate, --field-bits, --regime"
+            );
             return ExitCode::from(2);
         }
     };
@@ -217,7 +218,8 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
 }
 
 fn parse_u32(s: &str) -> Result<u32, String> {
-    s.parse().map_err(|e| format!("expected u32, got `{s}`: {e}"))
+    s.parse()
+        .map_err(|e| format!("expected u32, got `{s}`: {e}"))
 }
 
 fn parse_rate(s: &str) -> Result<Rate, String> {

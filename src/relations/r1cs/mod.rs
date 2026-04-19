@@ -2,7 +2,7 @@ pub mod hashchain;
 
 use ark_ff::Field;
 use ark_relations::gr1cs::ConstraintSystemRef;
-use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
+use effsc::hypercube::Ascending;
 
 use crate::error::WARPError;
 
@@ -99,10 +99,9 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
-        let mut cube = Hypercube::<AscendingOrder>::new(self.log_m);
-
         // TODO: multithread this
-        cube.try_fold(F::ZERO, |acc, (index, _point)| {
+        Ascending::new(self.log_m).try_fold(F::ZERO, |acc, p| {
+            let index = p.index;
             let eq_tau_i = *zero_evader_evals
                 .get(index)
                 .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), index))?;

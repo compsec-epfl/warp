@@ -65,9 +65,7 @@ pub struct SoundnessBound {
 impl SoundnessBound {
     /// `true` iff every component check passes at the caller's target.
     pub fn meets(&self, target: SecurityLevel) -> bool {
-        self.field_admissible
-            && self.ood_admissible
-            && self.proximity_bits >= target.bits() as f64
+        self.field_admissible && self.ood_admissible && self.proximity_bits >= target.bits() as f64
     }
 }
 
@@ -79,8 +77,5 @@ pub enum ParamError {
     InvalidRate,
     /// Field is too small to support the target soundness even with
     /// infinite queries.
-    FieldTooSmall {
-        field_bits: u32,
-        lambda: u32,
-    },
+    FieldTooSmall { field_bits: u32, lambda: u32 },
 }

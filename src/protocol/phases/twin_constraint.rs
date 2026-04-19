@@ -18,12 +18,10 @@
 //! Each round's round polynomial has the form `h(X) = (f(X) + ω·p(X))·t(X)`.
 
 use ark_ff::{Field, PrimeField};
-use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
-use efficient_sumcheck::{
-    coefficient_sumcheck::{coefficient_sumcheck, RoundPolyEvaluator},
-    folding::protogalaxy,
-    hypercube::Hypercube,
-    order_strategy::AscendingOrder,
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+use effsc::{
+    coefficient_sumcheck::RoundPolyEvaluator, folding::protogalaxy, hypercube::Ascending,
+    noop_hook, provers::coefficient_lsb::CoefficientProverLSB, runner::sumcheck,
 };
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
@@ -161,8 +159,8 @@ where
     let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
     // b. assemble sumcheck tables
-    let tau_eq_evals = Hypercube::<AscendingOrder>::new(log_l)
-        .map(|(index, _point)| eq_poly(&tau, index))
+    let tau_eq_evals = Ascending::new(log_l)
+        .map(|p| eq_poly(&tau, p.index))
         .collect::<Vec<F>>();
 
     let alpha_vecs = concat_slices(&acc_instance.alpha, &vec![vec![F::zero(); log_n]; l1]);
@@ -178,13 +176,13 @@ where
 
     let beta_vecs: Vec<Vec<F>> = acc_instance.beta.0.into_iter().chain(fresh_taus).collect();
 
-    let mut tablewise = [
+    let tablewise = vec![
         concat_slices(acc_witness_f, fresh_codewords), // u
         z_vecs,                                        // z
         alpha_vecs,                                    // a
         beta_vecs,                                     // b
     ];
-    let mut pw = [tau_eq_evals]; // tau
+    let pw = vec![tau_eq_evals]; // tau
 
     let degree = 1 + (log_n + 1).max(log_m + 2);
     let evaluator = TwinConstraintEvaluator {
@@ -193,20 +191,25 @@ where
         degree,
     };
 
-    // c. run the sumcheck
-    let sc = {
+    // c. run the sumcheck. `CoefficientProverLSB` + `runner::sumcheck` is
+    // the new-style `SumcheckProver` entry point; wire format is `d+1`
+    // evaluations per round (the verifier uses `effsc::sumcheck_verify` on
+    // the other side).
+    let mut cc = CoefficientProverLSB::new(&evaluator, tablewise, pw);
+    {
         let _s = tracing::info_span!("twin_constraint.sumcheck").entered();
         count_ops!(TwinConstraintRounds, log_l as u64);
-        coefficient_sumcheck(&evaluator, &mut tablewise, &mut pw, log_l, prover_state)
-    };
-    debug_assert_eq!(sc.verifier_messages.len(), log_l);
+        let proof = sumcheck(&mut cc, log_l, prover_state, noop_hook);
+        debug_assert_eq!(proof.challenges.len(), log_l);
+    }
 
-    // d. pop reduced tables — each group has one table left after log_l rounds
-    let [mut u_red, mut z_red, mut a_red, mut b_red] = tablewise;
-    let f = u_red.pop().unwrap();
-    let z = z_red.pop().unwrap();
-    let zeta_0 = a_red.pop().unwrap();
-    let beta_tau = b_red.pop().unwrap();
+    // d. pull the single remaining row out of each tablewise table.
+    let reduced = cc.tablewise();
+    debug_assert!(reduced.iter().all(|t| t.len() == 1));
+    let f = reduced[0][0].clone();
+    let z = reduced[1][0].clone();
+    let zeta_0 = reduced[2][0].clone();
+    let beta_tau = reduced[3][0].clone();
 
     TwinConstraintOutput {
         f: Oracle::from_evals(f),
@@ -214,31 +217,4 @@ where
         zeta_0,
         beta_tau,
     }
-}
-
-/// Reduce the twin-constraint sumcheck's per-round coefficient messages
-/// against the verifier challenges `γ`. Returns the final reduced target.
-///
-/// The prover sends only `d` coefficients per round; the leading coefficient
-/// `c_d` is derived from the round claim `T = 2·c_0 + c_1 + … + c_d` so
-/// `c_d = T − 2·c_0 − c_1 − … − c_{d−1}`. Matches the encoding in
-/// `src/protocol/transcript/verifier.rs::derive_randomness`.
-#[tracing::instrument(name = "twin_constraint.verify", skip_all)]
-pub fn verify_claim<F>(
-    sigma_1: F,
-    coeffs_per_round: Vec<Vec<F>>,
-    gamma: &[F],
-) -> F
-where
-    F: Field,
-{
-    let mut target = sigma_1;
-    for (mut coeffs, g) in coeffs_per_round.into_iter().zip(gamma) {
-        let partial_sum: F = coeffs.iter().skip(1).copied().sum();
-        let leading = target - coeffs[0].double() - partial_sum;
-        coeffs.push(leading);
-        let h = DensePolynomial::from_coefficients_vec(coeffs);
-        target = h.evaluate(g);
-    }
-    target
 }

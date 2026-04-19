@@ -52,7 +52,10 @@ impl Write for SharedBuf {
 fn json_layer_emits_phase_records() {
     let sink = SharedBuf(Arc::new(Mutex::new(Vec::new())));
     let installed = warp::profile::init_json(sink.clone());
-    assert!(installed, "json subscriber install should succeed on first call");
+    assert!(
+        installed,
+        "json subscriber install should succeed on first call"
+    );
 
     // Minimum viable prove run — same shape as the top-level warp_test.
     let l1 = 4;
@@ -93,17 +96,16 @@ fn json_layer_emits_phase_records() {
         .unzip();
 
     let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
-            warp_config,
-            code,
-            r1cs.clone(),
-            (),
-            (),
-        );
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3MerkleConfig<BLS12_381>>::new(
+        warp_config,
+        code,
+        r1cs.clone(),
+        (),
+        (),
+    );
 
     let domainsep = spongefish::domain_separator!("test::profile_json");
-    let mut prover_state = domainsep.instance(&0u32).std_prover();
+    let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
 
     hash_chain_warp
         .prove(
@@ -119,7 +121,10 @@ fn json_layer_emits_phase_records() {
     // Inspect collected records.
     let bytes = sink.0.lock().unwrap().clone();
     let text = String::from_utf8(bytes).expect("JSON output is UTF-8");
-    assert!(!text.is_empty(), "JSON sink should contain at least one record");
+    assert!(
+        !text.is_empty(),
+        "JSON sink should contain at least one record"
+    );
 
     let lines: Vec<&str> = text.lines().collect();
     assert!(
@@ -133,8 +138,14 @@ fn json_layer_emits_phase_records() {
             line.contains(r#""schema":"warp.profile.v1""#),
             "line {i} missing schema: {line}"
         );
-        assert!(line.contains(r#""wall_ns""#), "line {i} missing wall_ns: {line}");
-        assert!(line.contains(r#""counters""#), "line {i} missing counters: {line}");
+        assert!(
+            line.contains(r#""wall_ns""#),
+            "line {i} missing wall_ns: {line}"
+        );
+        assert!(
+            line.contains(r#""counters""#),
+            "line {i} missing counters: {line}"
+        );
         assert!(
             line.contains(r#""dimensions""#),
             "line {i} missing dimensions: {line}"

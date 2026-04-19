@@ -121,8 +121,7 @@ where
     (shift_query_answers.len() == t).ok_or_err(VerifierError::NumShiftQueries)?;
 
     for (i, path) in auth_0.iter().enumerate() {
-        (path.leaf_index == queries.leaf_positions[i])
-            .ok_or_err(VerifierError::ShiftQueryIndex)?;
+        (path.leaf_index == queries.leaf_positions[i]).ok_or_err(VerifierError::ShiftQueryIndex)?;
 
         count_ops!(MerklePathsVerified);
         let is_valid = path.verify(

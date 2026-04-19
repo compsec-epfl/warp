@@ -123,10 +123,10 @@ mod tests {
     #[test]
     fn presets_match_select_output() {
         for preset in PRESETS {
-            let recomputed =
-                select(preset.lambda, 254, preset.code_rate(), preset.regime).unwrap();
+            let recomputed = select(preset.lambda, 254, preset.code_rate(), preset.regime).unwrap();
             assert_eq!(
-                recomputed, preset.params,
+                recomputed,
+                preset.params,
                 "preset drift: {:?} rate={:?} regime={:?}",
                 preset.lambda,
                 preset.code_rate(),
