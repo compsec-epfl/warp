@@ -20,7 +20,7 @@ use ark_ff::PrimeField;
 use ark_vc::Opening;
 
 use crate::count_ops;
-use crate::crypto::vc::{Committed, Hasher, Proof, Scheme};
+use ark_vc::blake3::binary::{Committed, Hasher, Proof, Scheme};
 use crate::error::VerifierError;
 use crate::protocol::query::QueryIndices;
 use crate::BoolResult;

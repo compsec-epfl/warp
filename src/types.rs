@@ -3,7 +3,7 @@ use ark_ff::{Field, PrimeField};
 use std::marker::PhantomData;
 
 use crate::config::WARPConfig;
-use crate::crypto::vc::{Committed, Proof, Scheme, DIGEST_BYTES};
+use ark_vc::blake3::binary::{scheme, Committed, Proof, Scheme, DIGEST_BYTES};
 use crate::error::ProverError;
 use crate::relations::BundledPESAT;
 
@@ -103,13 +103,11 @@ impl<F: PrimeField> Clone for AccumulatorWitness<F> {
         // This is intentionally not efficient — if a hot path ever
         // needs AccumulatorWitness::clone, we'd either derive Clone
         // upstream in ark-vc or thread a shared-pointer wrapper.
-        let scheme = crate::crypto::vc::scheme::<F>(
-            self.td.first().map(|c| c.leaves().len()).unwrap_or(1),
-        );
+        let sch = scheme::<F>(self.td.first().map(|c| c.leaves().len()).unwrap_or(1));
         let td = self
             .td
             .iter()
-            .map(|c| scheme.commit(c.leaves()))
+            .map(|c| sch.commit(c.leaves()))
             .collect::<Vec<_>>();
         Self {
             td,

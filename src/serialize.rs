@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 
-use crate::crypto::vc::{Proof, DIGEST_BYTES};
+use ark_vc::blake3::binary::{Proof, DIGEST_BYTES};
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 #[derive(CanonicalSerialize)]

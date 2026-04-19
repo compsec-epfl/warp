@@ -3,7 +3,7 @@ use ark_std::log2;
 
 use spongefish::{Decoding, Encoding, NargDeserialize, VerificationResult, VerifierState};
 
-use crate::crypto::vc::DIGEST_BYTES;
+use ark_vc::blake3::binary::DIGEST_BYTES;
 use crate::types::AccumulatorInstance;
 
 // (l1 instances, accumulated instance)
