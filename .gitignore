@@ -3,3 +3,6 @@
 .vscode
 .DS_Store
 .claude/
+# Per-dev cargo config (e.g. net.git-fetch-with-cli for private-repo
+# auth against ark-vc). Not a team-wide setting.
+.cargo/config.toml

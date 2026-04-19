@@ -1,9 +1,0 @@
-# Per-project cargo configuration.
-#
-# Use the system `git` binary (which has the user's credentials via
-# `git credential helper`, ssh-agent, etc.) for fetching dependencies
-# instead of cargo's built-in libgit2 backend. Required for any crate
-# pulled via a private GitHub URL — specifically the `ark-vc` dep
-# that warp now uses for Merkle commitments.
-[net]
-git-fetch-with-cli = true
