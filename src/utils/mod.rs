@@ -1,7 +1,6 @@
 use ark_ff::{Field, PrimeField};
 
 pub mod fields;
-pub mod poly;
 pub mod poseidon;
 
 pub const fn chunk_size_bytes(modulus_bit_size: u32) -> usize {

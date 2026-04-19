@@ -48,11 +48,6 @@ default = ["asm"]
 
 asm = ["ark-ff/asm"]
 
-# Opt-in per-phase wall-time instrumentation inside `prove()`. Records
-# durations into a crate-global collector that the `profile_phases` example
-# drains; zero-cost when the feature is off.
-profile = []
-
 [[bench]]
 name = "warp_rs"
 harness = false
