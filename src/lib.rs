@@ -23,7 +23,7 @@ use effsc::{
     runner::sumcheck,
     verifier::sumcheck_verify,
 };
-use protocol::domainsep::parse_statement;
+use protocol::domainsep::{derive_between_sumchecks, derive_pre_twin_constraint, parse_statement};
 use protocol::EffscVerifierTranscript;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -94,6 +94,15 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
         let (a_even, a_odd) = tw[2];
         let (b_even, b_odd) = tw[3];
         let (tau_even, tau_odd) = pw[0];
+
+        // CoefficientProverLSB::final_value() invokes the evaluator on fully
+        // reduced singleton tables with empty odd slices. Warp ignores
+        // `SumcheckProof::final_value` (only `.challenges` is consumed), so
+        // bail out — leaves `coeffs` zero, `final_value` returns zero, no
+        // one reads it.
+        if u_odd.is_empty() {
+            return;
+        }
 
         let f = protogalaxy::fold(
             a_even.iter().zip(a_odd).map(|(&l, &r)| (l, r - l)),
@@ -568,22 +577,9 @@ impl<
         let (l1_xs, (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas)) =
             parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_M)?;
 
-        // 2. Pre-twin-constraint transcript reads: PESAT commit + l1 state,
-        //    then squeeze ω and τ.
-        let rt_0_bytes: [u8; 32] = verifier_state.prover_message()?;
-        let rt_0: MT::InnerDigest = rt_0_bytes.into();
-        let l1_mus: Vec<F> = verifier_state.prover_messages_vec(l1)?;
-        let l1_taus: Vec<Vec<F>> = (0..l1)
-            .map(|_| {
-                (0..log_M)
-                    .map(|_| verifier_state.verifier_message::<F>())
-                    .collect()
-            })
-            .collect();
-        let omega: F = verifier_state.verifier_message();
-        let tau: Vec<F> = (0..log_l)
-            .map(|_| verifier_state.verifier_message::<F>())
-            .collect();
+        // 2. Pre-twin-constraint transcript reads.
+        let (rt_0, l1_mus, l1_taus, omega, tau) =
+            derive_pre_twin_constraint::<F, MT>(verifier_state, l1, log_l, log_M)?;
 
         // 3. σ₁ = Σ_i τ_eq(i) · (μ_i + ω·η_i).
         let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
@@ -614,20 +610,14 @@ impl<
         };
 
         // 5. Between-sumchecks reads: td, η, ν₀, OOD, shift bytes, ξ.
-        let _td: [u8; 32] = verifier_state.prover_message()?;
-        let eta: F = verifier_state.prover_message()?;
-        let nu_0: F = verifier_state.prover_message()?;
-        let mut nus = vec![nu_0];
-        let ood_samples: Vec<F> = (0..self.config.s * log_n)
-            .map(|_| verifier_state.verifier_message::<F>())
-            .collect();
-        nus.extend(verifier_state.prover_messages_vec::<F>(self.config.s)?);
-        let bytes_shift_queries: Vec<u8> = (0..(self.config.t * log_n).div_ceil(8))
-            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
-            .collect();
-        let xi: Vec<F> = (0..log_r)
-            .map(|_| verifier_state.verifier_message::<F>())
-            .collect();
+        let (_td, eta, mut nus, ood_samples, bytes_shift_queries, xi) =
+            derive_between_sumchecks::<F, MT>(
+                verifier_state,
+                log_n,
+                self.config.s,
+                self.config.t,
+                log_r,
+            )?;
 
         // 6. Deferred twin-constraint oracle check.
         (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus[0] + omega * eta) == tc_final_claim)
