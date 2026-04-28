@@ -723,7 +723,7 @@ impl<
         let betas = l2_taus
             .into_iter()
             .chain(l1_taus)
-            .zip(l2_xs.clone().into_iter().chain(l1_xs))
+            .zip(l2_xs.into_iter().chain(l1_xs))
             .map(|(tau_i, x)| concat_slices(&tau_i, &x))
             .collect::<Vec<Vec<F>>>();
         let beta = scale_and_sum(&betas, &gamma_eq_evals);
