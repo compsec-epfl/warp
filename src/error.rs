@@ -73,6 +73,26 @@ impl From<spongefish::VerificationError> for VerifierError {
     }
 }
 
+impl From<effsc::proof::SumcheckError> for VerifierError {
+    fn from(err: effsc::proof::SumcheckError) -> Self {
+        use effsc::proof::SumcheckError;
+        match err {
+            // Round consistency or degree mismatch detected by the library.
+            SumcheckError::ConsistencyCheck { .. } | SumcheckError::DegreeMismatch { .. } => {
+                Self::SumcheckRound
+            }
+            // Not raised by `sumcheck_verify` any more (the library dropped
+            // the internal oracle check); warp does the final-claim check
+            // itself. Retained for enum completeness.
+            SumcheckError::FinalEvaluation => Self::Target,
+            // Ran out of transcript or malformed bytes.
+            SumcheckError::TranscriptError { .. } => Self::SpongeFish,
+            // Unreachable: warp always passes a noop hook.
+            SumcheckError::HookError { .. } => Self::SumcheckRound,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum DeciderError {
     #[error("Invalid merkle root")]

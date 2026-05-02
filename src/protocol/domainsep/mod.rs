@@ -1,6 +1,5 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
-use ark_std::log2;
 
 use spongefish::{
     Decoding, Encoding, NargDeserialize, ProverState, VerificationResult, VerifierState,
@@ -125,123 +124,49 @@ pub fn parse_statement<
     ))
 }
 
-pub type DerivedRandomness<F, MT> = (
-    <MT as Config>::InnerDigest,
-    Vec<F>,
-    Vec<Vec<F>>,
-    F,
-    Vec<F>,
-    Vec<F>,
-    Vec<Vec<F>>,
-    <MT as Config>::InnerDigest,
-    F,
-    Vec<F>,
-    Vec<F>,
-    Vec<u8>,
-    Vec<F>,
-    Vec<F>,
-    Vec<[F; 3]>,
-);
-
-pub fn derive_randomness<
+/// Read `rt_0 + l1_mus`, squeeze `l1_taus + ω + τ`. Runs before the
+/// twin-constraint sumcheck on the verifier side.
+#[allow(clippy::type_complexity)]
+pub fn derive_pre_twin_constraint<
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 >(
-    verifier_state: &mut VerifierState<'_>,
+    vs: &mut VerifierState<'_>,
     l1: usize,
-    log_n: usize,
     log_l: usize,
+    #[allow(non_snake_case)] log_M: usize,
+) -> VerificationResult<(MT::InnerDigest, Vec<F>, Vec<Vec<F>>, F, Vec<F>)> {
+    let rt_0: MT::InnerDigest = <[u8; 32]>::into(vs.prover_message()?);
+    let l1_mus = vs.prover_messages_vec(l1)?;
+    let l1_taus = (0..l1)
+        .map(|_| (0..log_M).map(|_| vs.verifier_message::<F>()).collect())
+        .collect();
+    let omega = vs.verifier_message();
+    let tau = (0..log_l).map(|_| vs.verifier_message::<F>()).collect();
+    Ok((rt_0, l1_mus, l1_taus, omega, tau))
+}
+
+/// Read `td + η + ν₀`, squeeze OOD points, read OOD answers, squeeze shift
+/// query bytes and `ξ`. Runs between the two sumchecks on the verifier side.
+#[allow(clippy::type_complexity)]
+pub fn derive_between_sumchecks<
+    F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+>(
+    vs: &mut VerifierState<'_>,
+    log_n: usize,
     s: usize,
     t: usize,
-    #[allow(non_snake_case)] log_M: usize,
-) -> VerificationResult<DerivedRandomness<F, MT>> {
-    // read commitment digest
-    let rt_0_bytes: [u8; 32] = verifier_state.prover_message()?;
-    let rt_0: MT::InnerDigest = rt_0_bytes.into();
-
-    // read mus
-    let l1_mus: Vec<F> = verifier_state.prover_messages_vec(l1)?;
-
-    // challenge taus
-    let mut l1_taus = Vec::with_capacity(l1);
-    for _ in 0..l1 {
-        let tau: Vec<F> = (0..log_M)
-            .map(|_| verifier_state.verifier_message::<F>())
-            .collect();
-        l1_taus.push(tau);
-    }
-
-    let omega: F = verifier_state.verifier_message();
-    let tau: Vec<F> = (0..log_l)
-        .map(|_| verifier_state.verifier_message::<F>())
+    log_r: usize,
+) -> VerificationResult<(MT::InnerDigest, F, Vec<F>, Vec<F>, Vec<u8>, Vec<F>)> {
+    let td: MT::InnerDigest = <[u8; 32]>::into(vs.prover_message()?);
+    let eta = vs.prover_message()?;
+    let mut nus = vec![vs.prover_message::<F>()?];
+    let ood_samples = (0..s * log_n).map(|_| vs.verifier_message::<F>()).collect();
+    nus.extend(vs.prover_messages_vec::<F>(s)?);
+    let bytes_shift_queries = (0..(t * log_n).div_ceil(8))
+        .map(|_| vs.verifier_message::<[u8; 1]>()[0])
         .collect();
-
-    // e. twin constraints sumcheck
-    let mut gamma_sumcheck = Vec::new();
-    let mut coeffs_twinc_sumcheck = Vec::new();
-    for _ in 0..log_l {
-        let h_coeffs: Vec<F> =
-            verifier_state.prover_messages_vec(2 + (log_n + 1).max(log_M + 2))?;
-        let c: F = verifier_state.verifier_message();
-        gamma_sumcheck.push(c);
-        coeffs_twinc_sumcheck.push(h_coeffs);
-    }
-
-    // read td digest
-    let td_bytes: [u8; 32] = verifier_state.prover_message()?;
-    let _td: MT::InnerDigest = td_bytes.into();
-
-    // read eta and nu_0
-    let eta: F = verifier_state.prover_message()?;
-    let nu_0: F = verifier_state.prover_message()?;
-    let mut nus = vec![nu_0];
-
-    // g. ood samples
-    let n_ood_samples = s * log_n;
-    let ood_samples: Vec<F> = (0..n_ood_samples)
-        .map(|_| verifier_state.verifier_message::<F>())
-        .collect();
-
-    // h. ood answers
-    let ood_answers: Vec<F> = verifier_state.prover_messages_vec(s)?;
-    nus.extend(ood_answers);
-
-    // i. shift queries and zero check
-    let r = 1 + s + t;
-    let log_r = log2(r) as usize;
-    let n_shift_queries = (t * log_n).div_ceil(8);
-    let bytes_shift_queries: Vec<u8> = (0..n_shift_queries)
-        .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
-        .collect();
-    let xi: Vec<F> = (0..log_r)
-        .map(|_| verifier_state.verifier_message::<F>())
-        .collect();
-
-    // j. batching sumcheck
-    let mut alpha_sumcheck = Vec::new();
-    let mut sums_batching_sumcheck = Vec::new();
-    for _ in 0..log_n {
-        let sums: [F; 3] = verifier_state.prover_messages()?;
-        let c: F = verifier_state.verifier_message();
-        alpha_sumcheck.push(c);
-        sums_batching_sumcheck.push(sums);
-    }
-
-    Ok((
-        rt_0,
-        l1_mus,
-        l1_taus,
-        omega,
-        tau,
-        gamma_sumcheck,
-        coeffs_twinc_sumcheck,
-        _td,
-        eta,
-        nus,
-        ood_samples,
-        bytes_shift_queries,
-        xi,
-        alpha_sumcheck,
-        sums_batching_sumcheck,
-    ))
+    let xi = (0..log_r).map(|_| vs.verifier_message::<F>()).collect();
+    Ok((td, eta, nus, ood_samples, bytes_shift_queries, xi))
 }

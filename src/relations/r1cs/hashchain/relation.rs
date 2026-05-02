@@ -4,7 +4,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::CanonicalSerialize;
 use ark_std::marker::PhantomData;
 
@@ -95,13 +95,15 @@ where
         constraint_system.finalize();
 
         let cs = constraint_system.into_inner().unwrap();
+        let x = cs.instance_assignment().unwrap().to_vec();
+        let w = cs.witness_assignment().unwrap().to_vec();
         Self {
-            constraint_system: ConstraintSystemRef::new(cs.clone()),
+            constraint_system: ConstraintSystemRef::new(cs),
             config: hash_config,
             instance,
             witness,
-            x: cs.instance_assignment,
-            w: cs.witness_assignment,
+            x,
+            w,
             _crhs_scheme: PhantomData,
             _crhs_scheme_gadget: PhantomData,
         }

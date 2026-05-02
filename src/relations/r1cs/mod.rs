@@ -1,8 +1,8 @@
 pub mod hashchain;
 
 use ark_ff::Field;
-use ark_relations::r1cs::ConstraintSystemRef;
-use efficient_sumcheck::{hypercube::Hypercube, order_strategy::AscendingOrder};
+use ark_relations::gr1cs::{ConstraintSystemRef, R1CS_PREDICATE_LABEL};
+use effsc::hypercube::Ascending;
 
 use crate::error::WARPError;
 
@@ -27,21 +27,30 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
     type Error = WARPError;
 
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
-        let matrices = cs.to_matrices().unwrap();
+        let mut matrices = cs.to_matrices().unwrap();
+        let mut r1cs = matrices.remove(R1CS_PREDICATE_LABEL).unwrap();
+        let mut r1cs_iter = r1cs.drain(..);
+        let a_mat = r1cs_iter.next().unwrap();
+        let b_mat = r1cs_iter.next().unwrap();
+        let c_mat = r1cs_iter.next().unwrap();
+
+        let num_constraints = cs.num_constraints();
+        let num_instance_variables = cs.num_instance_variables();
+        let num_witness_variables = cs.num_witness_variables();
 
         // number of constraints should be to be power of 2
-        let m = matrices.num_constraints.next_power_of_two();
-        let n = matrices.num_instance_variables + matrices.num_witness_variables;
-        let k = matrices.num_witness_variables;
+        let m = num_constraints.next_power_of_two();
+        let n = num_instance_variables + num_witness_variables;
+        let k = num_witness_variables;
 
         // both `unwrap()` calls below are safe since warp/lib.rs forbids compiling on platforms
         // with 16-bits pointers width
         let log_m = m.ilog2().try_into().unwrap();
         let log_n = n.ilog2().try_into().unwrap();
 
-        let mut a = matrices.a.into_iter();
-        let mut b = matrices.b.into_iter();
-        let mut c = matrices.c.into_iter();
+        let mut a = a_mat.into_iter();
+        let mut b = b_mat.into_iter();
+        let mut c = c_mat.into_iter();
         let mut p = vec![];
         for _ in 0..m {
             // when there are no constraints left, we store an empty one
@@ -89,10 +98,9 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
-        let mut cube = Hypercube::<AscendingOrder>::new(self.log_m);
-
         // TODO: multithread this
-        cube.try_fold(F::ZERO, |acc, (index, _point)| {
+        Ascending::new(self.log_m).try_fold(F::ZERO, |acc, p| {
+            let index = p.index;
             let eq_tau_i = *zero_evader_evals
                 .get(index)
                 .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), index))?;
