@@ -694,20 +694,20 @@ impl<
         //    `final_claim == μ · Σ eq(ζ_i, α_lsb)·ξ_eq(i)`. MSB half-split
         //    → reverse the challenge vector once before feeding to
         //    eq_poly_non_binary (arkworks MLE convention).
-        let (alpha_sumcheck_msb, batching_final_claim) = {
+        let (alpha_sumcheck, batching_final_claim) = {
             let mut wrap = EffscVerifierTranscript(verifier_state);
-            let res = sumcheck_verify(sigma_2, 2, log_n, &mut wrap, |_, _| Ok(()))?;
+            let mut res = sumcheck_verify(sigma_2, 2, log_n, &mut wrap, |_, _| Ok(()))?;
+            res.challenges.reverse();
             (res.challenges, res.final_claim)
         };
-        let alpha_sumcheck_lsb: Vec<F> = alpha_sumcheck_msb.iter().rev().copied().collect();
 
         let mut zeta_eqs = Vec::with_capacity(r);
-        zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_sumcheck_lsb));
+        zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_sumcheck));
         for chunk in ood_samples.chunks(log_n) {
-            zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_sumcheck_lsb));
+            zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_sumcheck));
         }
         for zeta in &binary_shift_queries {
-            zeta_eqs.push(eq_poly_non_binary(zeta, &alpha_sumcheck_lsb));
+            zeta_eqs.push(eq_poly_non_binary(zeta, &alpha_sumcheck));
         }
         debug_assert_eq!(zeta_eqs.len(), r);
         let expected_batching = acc_instance.2[0]
@@ -718,7 +718,7 @@ impl<
         (expected_batching == batching_final_claim).ok_or_err(VerifierError::Target)?;
 
         // 10. Accumulator consistency: new α and β.
-        (acc_instance.1[0] == alpha_sumcheck_lsb).ok_or_err(VerifierError::CodeEvaluationPoint)?;
+        (acc_instance.1[0] == alpha_sumcheck).ok_or_err(VerifierError::CodeEvaluationPoint)?;
 
         let betas = l2_taus
             .into_iter()
@@ -748,7 +748,6 @@ impl<
         )?;
         (rt[0] == computed_mt.root()).ok_or_err(DeciderError::MerkleRoot)?;
         (mt[0].root() == computed_mt.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
-        (mt[0].leaf_nodes == computed_mt.leaf_nodes).ok_or_err(DeciderError::MerkleRoot)?;
 
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.code.code_len()) as usize,

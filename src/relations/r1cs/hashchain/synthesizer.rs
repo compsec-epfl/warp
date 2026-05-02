@@ -1,7 +1,7 @@
 use ark_crypto_primitives::crh::{CRHScheme, CRHSchemeGadget};
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_std::marker::PhantomData;
 
 use crate::relations::r1cs::hashchain::{HashChainInstance, HashChainWitness};
