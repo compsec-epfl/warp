@@ -29,7 +29,7 @@ pub struct AccWitnessSerializer<
     F: Field + PrimeField,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 > {
-    pub td: Vec<MT::LeafDigest>,
+    pub rt: MT::InnerDigest,
     pub f: Vec<F>,
     pub w: Vec<F>,
 }
@@ -42,10 +42,9 @@ impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + Fr
         assert_eq!(acc_witness.1.len(), 1);
         assert_eq!(acc_witness.2.len(), 1);
         let f = acc_witness.1[0].clone();
-        assert_eq!(f.len(), acc_witness.0[0].leaf_nodes.len());
         let w = acc_witness.2[0].clone();
         Self {
-            td: acc_witness.0[0].clone().leaf_nodes,
+            rt: acc_witness.0[0].root(),
             f,
             w,
         }

@@ -12,7 +12,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem};
 pub use config::HashChainConfig;
 pub use instance::HashChainInstance;
 pub use relation::compute_hash_chain;
