@@ -43,7 +43,10 @@ pub mod types;
 pub mod utils;
 
 use error::{DeciderError, ProverError, VerifierError};
-use protocol::phases::{batching, ood, pesat, proximity, twin_constraint};
+use protocol::phases::{
+    batching::Batching, ood::Ood, pesat::Pesat, proximity::Proximity,
+    proximity::ProximityVerify, twin_constraint::TwinConstraint, ProverPhase, VerifierPhase,
+};
 
 pub trait BoolResult {
     fn ok_or_err<E>(self, err: E) -> Result<(), E>;
@@ -156,31 +159,32 @@ impl<
         } = acc_witness;
 
         // Phase 2: PESAT — emit oracles (codewords), commit, squeeze τs.
-        let pesat = pesat::prove::<F, C, MT>(
-            prover_state,
-            &self.params.code,
-            &self.params.mt_leaf_hash_params,
-            &self.params.mt_two_to_one_hash_params,
-            &witnesses,
+        let pesat = Pesat::<F, C, MT> {
+            code: &self.params.code,
+            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
+            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+            witnesses: &witnesses,
             l1,
             log_m,
-        )?;
+            _phantom: PhantomData,
+        }
+        .prove(prover_state)?;
 
         // Phase 3a: twin-constraint sumcheck.
-        let tc = twin_constraint::prove::<F, MT>(
-            prover_state,
-            &pesat.codewords,
-            pesat.taus,
+        let tc = TwinConstraint::<F, MT> {
+            fresh_codewords: &pesat.codewords,
+            fresh_taus: pesat.taus,
             acc_instance,
-            &acc_fs,
-            &acc_ws,
-            &instances,
-            &witnesses,
-            self.params.p.constraints(),
+            acc_witness_f: &acc_fs,
+            acc_witness_w: &acc_ws,
+            instances: &instances,
+            witnesses: &witnesses,
+            r1cs: self.params.p.constraints(),
             log_l,
             log_m,
             log_n,
-        );
+        }
+        .prove(prover_state)?;
 
         // Phase 3b: bundled η, ν₀, new commitment, absorb — the "emit new
         // oracle + claims" step between twin-constraint and OOD.
@@ -216,7 +220,12 @@ impl<
         prover_state.prover_message(&nu_0);
 
         // Phase 3c: OOD — point queries on the oracle.
-        let ood_out = ood::prove::<F>(prover_state, &tc.f, self.params.config.s, log_n);
+        let ood_out = Ood {
+            oracle: &tc.f,
+            s: self.params.config.s,
+            log_n,
+        }
+        .prove(prover_state)?;
 
         // Sample shift queries — ordering-coupled to the batching ξ below.
         let queries = QueryIndices::<F>::sample(prover_state, log_n, self.params.config.t);
@@ -229,20 +238,26 @@ impl<
         zetas.extend(ood_chunks);
         zetas.extend(queries.evaluation_points.iter().map(|v| v.as_slice()));
 
-        let batching_out = batching::prove::<F>(
-            prover_state,
-            &tc.f,
-            &zetas,
-            self.params.config.s,
-            self.params.config.t,
+        let batching_out = Batching {
+            oracle: &tc.f,
+            zetas_prefix: &zetas,
+            s: self.params.config.s,
+            t: self.params.config.t,
             log_n,
-        );
+        }
+        .prove(prover_state)?;
 
         // Phase 3e: proximity — index queries + auth paths on accumulated +
         // fresh oracles (NOT on the reduced `f`, which is this round's new
         // oracle).
         let all_codewords: Vec<Vec<F>> = acc_fs.into_iter().chain(pesat.codewords).collect();
-        let prox = proximity::prove::<F, MT>(&queries, &pesat.td_0, &acc_tds, &all_codewords)?;
+        let prox = Proximity::<F, MT> {
+            queries: &queries,
+            td_0: &pesat.td_0,
+            acc_td: &acc_tds,
+            all_codewords: &all_codewords,
+        }
+        .prove(prover_state)?;
 
         // Assemble new accumulator state and proof.
         let mut nus = Vec::with_capacity(1 + self.params.config.s);
@@ -372,18 +387,19 @@ impl<
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
 
-        proximity::verify::<F, MT>(
-            &queries,
-            &rt_0,
-            &l2_roots,
-            &proof.auth_0,
-            &proof.auth_j,
-            &proof.shift_query_answers,
-            &self.params.mt_leaf_hash_params,
-            &self.params.mt_two_to_one_hash_params,
+        ProximityVerify::<F, MT> {
+            queries: &queries,
+            rt_0: &rt_0,
+            l2_roots: &l2_roots,
+            auth_0: &proof.auth_0,
+            auth_j: &proof.auth_j,
+            shift_query_answers: &proof.shift_query_answers,
+            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
+            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
             l2,
-            self.params.config.t,
-        )?;
+            t: self.params.config.t,
+        }
+        .verify(verifier_state)?;
 
         // 8. Derive everything needed to state the batching claim.
         let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck);

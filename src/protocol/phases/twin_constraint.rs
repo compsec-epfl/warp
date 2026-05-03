@@ -26,7 +26,9 @@ use effsc::{
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
 use crate::count_ops;
+use crate::error::ProverError;
 use crate::protocol::oracle::Oracle;
+use crate::protocol::phases::ProverPhase;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
 use crate::utils::{concat_slices, poly::eq_poly};
@@ -161,99 +163,121 @@ pub struct TwinConstraintOutput<F: Field> {
     pub beta_tau: Vec<F>,
 }
 
-/// Run the twin-constraint sumcheck prover.
+/// Twin-constraint sumcheck phase: fold τ-zero-check + α-codeword check +
+/// β-R1CS check into a single coefficient-form sumcheck.
 ///
 /// Takes codeword slices by reference so the caller (orchestrator) can hand
-/// them to [`proximity::prove`](super::proximity::prove) after this phase
+/// them to [`Proximity`](super::proximity::Proximity) after this phase
 /// returns. `fresh_taus` and `acc_instance` are consumed into the sumcheck
 /// tables — neither is needed downstream.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(
-    name = "twin_constraint",
-    skip_all,
-    fields(log_l = log_l, log_m = log_m, log_n = log_n)
-)]
-pub fn prove<F, MT>(
-    prover_state: &mut ProverState,
-    fresh_codewords: &[Vec<F>],
-    fresh_taus: Vec<Vec<F>>,
-    acc_instance: AccumulatorInstance<F, MT>,
-    acc_witness_f: &[Vec<F>],
-    acc_witness_w: &[Vec<F>],
-    instances: &[Vec<F>],
-    witnesses: &[Vec<F>],
-    r1cs: &R1CSConstraints<F>,
-    log_l: usize,
-    log_m: usize,
-    log_n: usize,
-) -> TwinConstraintOutput<F>
+pub struct TwinConstraint<'a, F, MT>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
 {
-    let l1 = fresh_codewords.len();
+    pub fresh_codewords: &'a [Vec<F>],
+    pub fresh_taus: Vec<Vec<F>>,
+    pub acc_instance: AccumulatorInstance<F, MT>,
+    pub acc_witness_f: &'a [Vec<F>],
+    pub acc_witness_w: &'a [Vec<F>],
+    pub instances: &'a [Vec<F>],
+    pub witnesses: &'a [Vec<F>],
+    pub r1cs: &'a R1CSConstraints<F>,
+    pub log_l: usize,
+    pub log_m: usize,
+    pub log_n: usize,
+}
 
-    // a. zero-check randomness
-    let omega: F = prover_state.verifier_message();
-    let tau = prover_state.verifier_messages_vec::<F>(log_l);
+impl<'a, F, MT> ProverPhase for TwinConstraint<'a, F, MT>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+{
+    type Output = TwinConstraintOutput<F>;
 
-    // b. assemble sumcheck tables
-    let tau_eq_evals = Ascending::new(log_l)
-        .map(|p| eq_poly(&tau, p.index))
-        .collect::<Vec<F>>();
+    #[tracing::instrument(
+        name = "twin_constraint",
+        skip_all,
+        fields(log_l = self.log_l, log_m = self.log_m, log_n = self.log_n)
+    )]
+    fn prove(self, prover_state: &mut ProverState) -> Result<Self::Output, ProverError> {
+        let TwinConstraint {
+            fresh_codewords,
+            fresh_taus,
+            acc_instance,
+            acc_witness_f,
+            acc_witness_w,
+            instances,
+            witnesses,
+            r1cs,
+            log_l,
+            log_m,
+            log_n,
+        } = self;
+        let l1 = fresh_codewords.len();
 
-    let alpha_vecs = concat_slices(&acc_instance.alpha, &vec![vec![F::zero(); log_n]; l1]);
+        // a. zero-check randomness
+        let omega: F = prover_state.verifier_message();
+        let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
-    let z_vecs: Vec<Vec<F>> = acc_instance
-        .beta
-        .1
-        .iter()
-        .zip(acc_witness_w)
-        .chain(instances.iter().zip(witnesses))
-        .map(|(x, w)| concat_slices(x, w))
-        .collect();
+        // b. assemble sumcheck tables
+        let tau_eq_evals = Ascending::new(log_l)
+            .map(|p| eq_poly(&tau, p.index))
+            .collect::<Vec<F>>();
 
-    let beta_vecs: Vec<Vec<F>> = acc_instance.beta.0.into_iter().chain(fresh_taus).collect();
+        let alpha_vecs = concat_slices(&acc_instance.alpha, &vec![vec![F::zero(); log_n]; l1]);
 
-    let tablewise = vec![
-        concat_slices(acc_witness_f, fresh_codewords), // u
-        z_vecs,                                        // z
-        alpha_vecs,                                    // a
-        beta_vecs,                                     // b
-    ];
-    let pw = vec![tau_eq_evals]; // tau
+        let z_vecs: Vec<Vec<F>> = acc_instance
+            .beta
+            .1
+            .iter()
+            .zip(acc_witness_w)
+            .chain(instances.iter().zip(witnesses))
+            .map(|(x, w)| concat_slices(x, w))
+            .collect();
 
-    let degree = 1 + (log_n + 1).max(log_m + 2);
-    let evaluator = TwinConstraintEvaluator {
-        r1cs,
-        omega,
-        degree,
-    };
+        let beta_vecs: Vec<Vec<F>> = acc_instance.beta.0.into_iter().chain(fresh_taus).collect();
 
-    // c. run the sumcheck. `CoefficientProverLSB` + `runner::sumcheck` is
-    // the new-style `SumcheckProver` entry point; wire format is `d+1`
-    // evaluations per round (the verifier uses `effsc::sumcheck_verify` on
-    // the other side).
-    let mut cc = CoefficientProverLSB::new(&evaluator, tablewise, pw);
-    {
-        let _s = tracing::info_span!("twin_constraint.sumcheck").entered();
-        count_ops!(TwinConstraintRounds, log_l as u64);
-        let proof = sumcheck(&mut cc, log_l, prover_state, noop_hook);
-        debug_assert_eq!(proof.challenges.len(), log_l);
-    }
+        let tablewise = vec![
+            concat_slices(acc_witness_f, fresh_codewords), // u
+            z_vecs,                                        // z
+            alpha_vecs,                                    // a
+            beta_vecs,                                     // b
+        ];
+        let pw = vec![tau_eq_evals]; // tau
 
-    // d. pull the single remaining row out of each tablewise table.
-    let reduced = cc.tablewise();
-    debug_assert!(reduced.iter().all(|t| t.len() == 1));
-    let f = reduced[0][0].clone();
-    let z = reduced[1][0].clone();
-    let zeta_0 = reduced[2][0].clone();
-    let beta_tau = reduced[3][0].clone();
+        let degree = 1 + (log_n + 1).max(log_m + 2);
+        let evaluator = TwinConstraintEvaluator {
+            r1cs,
+            omega,
+            degree,
+        };
 
-    TwinConstraintOutput {
-        f: Oracle::from_evals(f),
-        z,
-        zeta_0,
-        beta_tau,
+        // c. run the sumcheck. `CoefficientProverLSB` + `runner::sumcheck` is
+        // the new-style `SumcheckProver` entry point; wire format is `d+1`
+        // evaluations per round (the verifier uses `effsc::sumcheck_verify` on
+        // the other side).
+        let mut cc = CoefficientProverLSB::new(&evaluator, tablewise, pw);
+        {
+            let _s = tracing::info_span!("twin_constraint.sumcheck").entered();
+            count_ops!(TwinConstraintRounds, log_l as u64);
+            let proof = sumcheck(&mut cc, log_l, prover_state, noop_hook);
+            debug_assert_eq!(proof.challenges.len(), log_l);
+        }
+
+        // d. pull the single remaining row out of each tablewise table.
+        let reduced = cc.tablewise();
+        debug_assert!(reduced.iter().all(|t| t.len() == 1));
+        let f = reduced[0][0].clone();
+        let z = reduced[1][0].clone();
+        let zeta_0 = reduced[2][0].clone();
+        let beta_tau = reduced[3][0].clone();
+
+        Ok(TwinConstraintOutput {
+            f: Oracle::from_evals(f),
+            z,
+            zeta_0,
+            beta_tau,
+        })
     }
 }
