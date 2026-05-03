@@ -11,23 +11,14 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::log2;
 use config::WARPConfig;
-use effsc::{
-    hypercube::{compute_hypercube_eq_evals, Ascending},
-    verifier::sumcheck_verify,
-};
+use effsc::hypercube::{compute_hypercube_eq_evals, Ascending};
 use protocol::query::QueryIndices;
-use protocol::transcript::{
-    absorb_instances, derive_between_sumchecks, derive_pre_twin_constraint, parse_statement,
-    BetweenSumchecks, EffscVerifierTranscript, PreTwinConstraint,
-};
+use protocol::transcript::{absorb_instances, parse_statement};
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 use utils::scale_and_sum;
-use utils::{
-    concat_slices,
-    poly::{eq_poly, eq_poly_non_binary},
-};
+use utils::{concat_slices, poly::eq_poly};
 
 pub mod config;
 pub mod constraints;
@@ -44,8 +35,14 @@ pub mod utils;
 
 use error::{DeciderError, ProverError, VerifierError};
 use protocol::phases::{
-    batching::Batching, ood::Ood, pesat::Pesat, proximity::Proximity,
-    proximity::ProximityVerify, twin_constraint::TwinConstraint, ProverPhase, VerifierPhase,
+    batching::{Batching, BatchingProverInputs, BatchingStatement, BatchingVerifierInputs},
+    ood::{Ood, OodProverInputs, OodStatement},
+    pesat::{Pesat, PesatStatement, PesatWitness},
+    proximity::{Proximity, ProximityProverInputs, ProximityStatement, ProximityVerifierInputs},
+    twin_constraint::{
+        TwinConstraint, TwinConstraintProverInputs, TwinConstraintStatement, TwinConstraintWitness,
+    },
+    IOR,
 };
 
 pub trait BoolResult {
@@ -159,47 +156,63 @@ impl<
         } = acc_witness;
 
         // Phase 2: PESAT — emit oracles (codewords), commit, squeeze τs.
-        let pesat = Pesat::<F, C, MT> {
+        let pesat_phase = Pesat::<F, C, MT> {
             code: &self.params.code,
             mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
             mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
-            witnesses: &witnesses,
-            l1,
-            log_m,
             _phantom: PhantomData,
-        }
-        .prove(prover_state)?;
+        };
+        let (pesat_red, pesat_out) = pesat_phase.prove(
+            prover_state,
+            &PesatStatement { l1, log_m },
+            PesatWitness {
+                witnesses: &witnesses,
+            },
+            (),
+        )?;
 
         // Phase 3a: twin-constraint sumcheck.
-        let tc = TwinConstraint::<F, MT> {
-            fresh_codewords: &pesat.codewords,
-            fresh_taus: pesat.taus,
-            acc_instance,
-            acc_witness_f: &acc_fs,
-            acc_witness_w: &acc_ws,
-            instances: &instances,
-            witnesses: &witnesses,
+        let tc_phase = TwinConstraint::<F, MT> {
             r1cs: self.params.p.constraints(),
-            log_l,
-            log_m,
-            log_n,
-        }
-        .prove(prover_state)?;
+            _phantom: PhantomData,
+        };
+        let (tc_red, tc_out) = tc_phase.prove(
+            prover_state,
+            &TwinConstraintStatement {
+                acc_instance,
+                l1_mus: pesat_red.mus.clone(),
+                l1_taus: pesat_red.taus,
+                log_l,
+                log_m,
+                log_n,
+            },
+            TwinConstraintWitness {
+                acc_witness_w: &acc_ws,
+                instances: &instances,
+                witnesses: &witnesses,
+            },
+            TwinConstraintProverInputs {
+                fresh_codewords: &pesat_out.codewords,
+                acc_codewords: &acc_fs,
+            },
+        )?;
 
         // Phase 3b: bundled η, ν₀, new commitment, absorb — the "emit new
         // oracle + claims" step between twin-constraint and OOD.
-        let beta_eq_evals = (0..M).map(|i| eq_poly(&tc.beta_tau, i)).collect::<Vec<_>>();
+        let beta_eq_evals = (0..M)
+            .map(|i| eq_poly(&tc_red.beta_tau, i))
+            .collect::<Vec<_>>();
         let eta = self
             .params
             .p
-            .evaluate_bundled(&beta_eq_evals, &tc.z)
+            .evaluate_bundled(&beta_eq_evals, &tc_out.z)
             .map_err(|_| ProverError::SpongeFish)?;
-        let nu_0 = tc.f.query_at_point(&tc.zeta_0);
+        let nu_0 = tc_out.f.query_at_point(&tc_red.zeta_0);
 
-        let (new_x, new_w) = tc.z.split_at(N - k);
+        let (new_x, new_w) = tc_out.z.split_at(N - k);
         let new_x = new_x.to_vec();
         let new_w = new_w.to_vec();
-        let new_beta = (vec![tc.beta_tau.clone()], vec![new_x]);
+        let new_beta = (vec![tc_red.beta_tau.clone()], vec![new_x]);
 
         let td = {
             let _s = tracing::info_span!("warp.commit_new_oracle").entered();
@@ -207,7 +220,7 @@ impl<
             MerkleTree::<MT>::new(
                 &self.params.mt_leaf_hash_params,
                 &self.params.mt_two_to_one_hash_params,
-                tc.f.evals().chunks(1).collect::<Vec<_>>(),
+                tc_out.f.evals().chunks(1).collect::<Vec<_>>(),
             )?
         };
         let td_root_bytes: [u8; 32] = td
@@ -220,65 +233,89 @@ impl<
         prover_state.prover_message(&nu_0);
 
         // Phase 3c: OOD — point queries on the oracle.
-        let ood_out = Ood {
-            oracle: &tc.f,
-            s: self.params.config.s,
-            log_n,
-        }
-        .prove(prover_state)?;
+        let ood_phase = Ood::<F>::new();
+        let (ood_red, _) = ood_phase.prove(
+            prover_state,
+            &OodStatement {
+                s: self.params.config.s,
+                log_n,
+            },
+            (),
+            OodProverInputs { oracle: &tc_out.f },
+        )?;
 
         // Sample shift queries — ordering-coupled to the batching ξ below.
         let queries = QueryIndices::<F>::sample(prover_state, log_n, self.params.config.t);
 
         // Phase 3d: batching sumcheck. Assemble zetas = [ζ₀, ood_j…, query_k…].
-        let ood_chunks: Vec<&[F]> = ood_out.samples_flat.chunks(log_n).collect();
-        let mut zetas: Vec<&[F]> =
+        let mut zetas: Vec<Vec<F>> =
             Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
-        zetas.push(tc.zeta_0.as_slice());
-        zetas.extend(ood_chunks);
-        zetas.extend(queries.evaluation_points.iter().map(|v| v.as_slice()));
-
-        let batching_out = Batching {
-            oracle: &tc.f,
-            zetas_prefix: &zetas,
-            s: self.params.config.s,
-            t: self.params.config.t,
-            log_n,
+        zetas.push(tc_red.zeta_0.clone());
+        for chunk in ood_red.samples_flat.chunks(log_n) {
+            zetas.push(chunk.to_vec());
         }
-        .prove(prover_state)?;
+        for q in &queries.evaluation_points {
+            zetas.push(q.clone());
+        }
+
+        let batching_phase = Batching::<F>::new();
+        let (batching_red, batching_out) = batching_phase.prove(
+            prover_state,
+            &BatchingStatement {
+                zetas_prefix: zetas,
+                s: self.params.config.s,
+                t: self.params.config.t,
+                log_n,
+                _phantom: PhantomData,
+            },
+            (),
+            BatchingProverInputs { oracle: &tc_out.f },
+        )?;
 
         // Phase 3e: proximity — index queries + auth paths on accumulated +
         // fresh oracles (NOT on the reduced `f`, which is this round's new
         // oracle).
-        let all_codewords: Vec<Vec<F>> = acc_fs.into_iter().chain(pesat.codewords).collect();
-        let prox = Proximity::<F, MT> {
-            queries: &queries,
-            td_0: &pesat.td_0,
-            acc_td: &acc_tds,
-            all_codewords: &all_codewords,
-        }
-        .prove(prover_state)?;
+        let all_codewords: Vec<Vec<F>> = acc_fs.into_iter().chain(pesat_out.codewords).collect();
+        let proximity_phase = Proximity::<F, MT> {
+            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
+            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+            _phantom: PhantomData,
+        };
+        let (_, prox) = proximity_phase.prove(
+            prover_state,
+            &ProximityStatement {
+                queries: queries.clone(),
+                l2,
+                t: self.params.config.t,
+            },
+            (),
+            ProximityProverInputs {
+                td_0: &pesat_out.td_0,
+                acc_td: &acc_tds,
+                all_codewords: &all_codewords,
+            },
+        )?;
 
         // Assemble new accumulator state and proof.
         let mut nus = Vec::with_capacity(1 + self.params.config.s);
         nus.push(nu_0);
-        nus.extend(ood_out.answers);
+        nus.extend(ood_red.answers);
 
         let new_acc_instance = AccumulatorInstance {
             rt: vec![td.root()],
-            alpha: vec![batching_out.alpha],
+            alpha: vec![batching_red.alpha],
             mu: vec![batching_out.mu],
             beta: new_beta,
             eta: vec![eta],
         };
         let new_acc_witness = AccumulatorWitness {
             td: vec![td],
-            f: vec![tc.f.into_evals()],
+            f: vec![tc_out.f.into_evals()],
             w: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: pesat.td_0.root(),
-            mu_i: pesat.mus,
+            rt_0: pesat_out.td_0.root(),
+            mu_i: pesat_red.mus,
             nu_0,
             nu_i: nus,
             auth_0: prox.auth_0,
@@ -304,173 +341,157 @@ impl<
         let (log_m, log_l) = (log2(M) as usize, log2(l) as usize);
         let n = self.params.code.code_len();
         let log_n = log2(n) as usize;
-        let r = 1 + self.params.config.s + self.params.config.t;
-        let log_r = log2(r) as usize;
 
-        // 1. Parse statement (fresh instances + accumulator).
-        let (
-            l1_xs,
-            AccumulatorInstance {
-                rt: l2_roots,
-                alpha: l2_alphas,
-                mu: l2_mus,
-                beta: (l2_taus, l2_xs),
-                eta: l2_etas,
-            },
-        ) = parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_m)?;
+        // 1. Parse statement (fresh instances + accumulator from transcript).
+        // The acc_instance argument carries the new accumulator's α/β for the
+        // final consistency checks; the transcript-parsed `parsed_acc` carries
+        // the OLD l2 accumulator entries used during proximity / β-consistency.
+        let (l1_xs, parsed_acc) =
+            parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_m)?;
+        let acc_alpha_first = acc_instance.alpha[0].clone();
+        let acc_beta_0_first = acc_instance.beta.0[0].clone();
+        let acc_beta_1_first = acc_instance.beta.1[0].clone();
+        let acc_mu_first = acc_instance.mu[0];
+        let l2_roots = parsed_acc.rt.clone();
+        let l2_taus = parsed_acc.beta.0.clone();
+        let l2_xs = parsed_acc.beta.1.clone();
 
-        // 2. Read PESAT phase: rt_0 + l1_mus, squeeze l1_taus, ω, τ.
-        let PreTwinConstraint {
-            rt_0,
-            l1_mus,
-            l1_taus,
-            omega,
-            tau,
-        } = derive_pre_twin_constraint::<F, MT>(verifier_state, l1, log_l, log_m)?;
-
-        // 3. Twin-constraint sumcheck claim σ₁ = Σ_i τ_eq(i)·(μ_i + ω·η_i).
-        let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
-        let etas_l2_first = concat_slices(&l2_etas, &vec![F::zero(); l1]);
-        let sigma_1 = tau_eq_evals
-            .into_iter()
-            .zip(
-                l2_mus
-                    .iter()
-                    .copied()
-                    .chain(l1_mus.iter().copied())
-                    .zip(etas_l2_first),
-            )
-            .fold(F::zero(), |acc, (eq_tau, (mu, eta))| {
-                acc + eq_tau * (mu + omega * eta)
-            });
-
-        // 4. Run the twin-constraint sumcheck via effsc. The real oracle
-        //    check is `final_claim == eq(τ, γ) · (ν₀ + ω·η)`, but ν₀ and η
-        //    arrive on the transcript *after* the sumcheck rounds — so we
-        //    capture `final_claim` in the closure and finish the check
-        //    below after reading them. `sumcheck_verify` still enforces all
-        //    per-round consistency (`q(0)+q(1)==claim`) automatically.
-        let tc_degree = 1 + (log_n + 1).max(log_m + 2);
-        let (gamma_sumcheck, tc_final_claim) = {
-            let mut wrap = EffscVerifierTranscript(verifier_state);
-            let res = sumcheck_verify(sigma_1, tc_degree, log_l, &mut wrap, |_, _| Ok(()))?;
-            (res.challenges, res.final_claim)
+        // 2. PESAT::verify — read rt_0, l1_mus; squeeze l1_taus.
+        let pesat_phase = Pesat::<F, C, MT> {
+            code: &self.params.code,
+            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
+            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+            _phantom: PhantomData,
         };
+        let (pesat_red, pesat_v_out) =
+            pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, ())?;
+        let l1_mus = pesat_red.mus;
+        let l1_taus = pesat_red.taus;
+        let rt_0 = pesat_v_out.rt_0;
 
-        // 5. Read between-sumchecks state: td, η, ν₀, OOD, shift-query
-        //    byte challenges, ξ.
-        let BetweenSumchecks {
-            td: _,
-            eta,
-            nus: mut nus_from_transcript,
-            ood_samples,
-            bytes_shift_queries,
-            xi,
-        } = derive_between_sumchecks::<F, MT>(
+        // 3. TwinConstraint::verify — squeeze ω, τ; run sumcheck.
+        let tc_phase = TwinConstraint::<F, MT> {
+            r1cs: self.params.p.constraints(),
+            _phantom: PhantomData,
+        };
+        let (tc_red, _) = tc_phase.verify(
             verifier_state,
-            log_n,
-            self.params.config.s,
-            self.params.config.t,
+            &TwinConstraintStatement {
+                acc_instance: parsed_acc,
+                l1_mus,
+                l1_taus: l1_taus.clone(),
+                log_l,
+                log_m,
+                log_n,
+            },
+            (),
         )?;
 
-        // 6. Deferred twin-constraint oracle check.
-        (eq_poly_non_binary(&tau, &gamma_sumcheck) * (nus_from_transcript[0] + omega * eta)
-            == tc_final_claim)
-            .ok_or_err(VerifierError::Target)?;
+        // 4. Orchestrator-side reads BETWEEN twin-constraint and OOD: td, η, ν₀.
+        let _td_bytes: [u8; 32] = verifier_state.prover_message()?;
+        let eta: F = verifier_state.prover_message()?;
+        let nu_0: F = verifier_state.prover_message()?;
 
-        // 7. Proximity first: both the batching σ₂ and the batching oracle
-        //    check consume `proof.shift_query_answers`, so we must reject
-        //    malformed / tampered openings *before* feeding them into the
-        //    sumcheck. Running proximity here preserves the existing
-        //    negative-test error distinctions (`ShiftQuery`, `ShiftQueryIndex`,
-        //    `NumShiftQueries`, `NumL2Instances`).
+        // 5. Discharge the typed deferred oracle check from TwinConstraint.
+        //    Equivalent to: final_claim ≟ eq(τ, γ) · (ν₀ + ω·η).
+        tc_red.deferred.discharge(&tc_red.gamma, nu_0, eta)?;
+
+        // 6. OOD::verify — squeeze samples; read answers.
+        let ood_phase = Ood::<F>::new();
+        let (ood_red, _) = ood_phase.verify(
+            verifier_state,
+            &OodStatement {
+                s: self.params.config.s,
+                log_n,
+            },
+            (),
+        )?;
+
+        // 7. Orchestrator: squeeze shift-query byte challenges, build
+        //    QueryIndices, run Proximity::verify.
+        let n_shift_query_bytes = (self.params.config.t * log_n).div_ceil(8);
+        let bytes_shift_queries: Vec<u8> = (0..n_shift_query_bytes)
+            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
+            .collect();
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
 
-        ProximityVerify::<F, MT> {
-            queries: &queries,
-            rt_0: &rt_0,
-            l2_roots: &l2_roots,
-            auth_0: &proof.auth_0,
-            auth_j: &proof.auth_j,
-            shift_query_answers: &proof.shift_query_answers,
+        let proximity_phase = Proximity::<F, MT> {
             mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
             mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
-            l2,
-            t: self.params.config.t,
-        }
-        .verify(verifier_state)?;
+            _phantom: PhantomData,
+        };
+        proximity_phase.verify(
+            verifier_state,
+            &ProximityStatement {
+                queries: queries.clone(),
+                l2,
+                t: self.params.config.t,
+            },
+            ProximityVerifierInputs {
+                rt_0: &rt_0,
+                l2_roots: &l2_roots,
+                auth_0: &proof.auth_0,
+                auth_j: &proof.auth_j,
+                shift_query_answers: &proof.shift_query_answers,
+                _phantom: PhantomData,
+            },
+        )?;
 
-        // 8. Derive everything needed to state the batching claim.
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck);
-        let alpha_vecs = concat_slices(&l2_alphas, &vec![vec![F::zero(); log_n]; l1]);
-        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
-
-        // ν_{s+k}: inner product of the (now proximity-verified) shift-query
-        // answers with the γ-equality table.
-        let mut nu_s_t = vec![F::default(); self.params.config.t];
-        for (i, v_jk) in proof.shift_query_answers.iter().enumerate() {
-            nu_s_t[i] = v_jk
+        // 8. Compute ν_{s+k} from the (now proximity-verified) shift answers
+        //    and the γ-equality table; assemble the full nus vector.
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &tc_red.gamma);
+        let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
+        nus.push(nu_0);
+        nus.extend(ood_red.answers);
+        for v_jk in proof.shift_query_answers.iter() {
+            let nu_st = v_jk
                 .iter()
                 .zip(&gamma_eq_evals)
                 .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
+            nus.push(nu_st);
         }
-        nus_from_transcript.extend(nu_s_t);
-        let nus = nus_from_transcript;
 
-        let xi_eq_evals = compute_hypercube_eq_evals(log_r, &xi);
-        let sigma_2 = xi_eq_evals
-            .iter()
-            .zip(&nus)
-            .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
+        // 9. Build zetas_prefix; Batching::verify squeezes ξ, computes σ₂,
+        //    runs sumcheck, and does the final-claim oracle check.
+        let mut zetas: Vec<Vec<F>> =
+            Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
+        zetas.push(tc_red.zeta_0.clone());
+        for chunk in ood_red.samples_flat.chunks(log_n) {
+            zetas.push(chunk.to_vec());
+        }
+        for pt in &queries.evaluation_points {
+            zetas.push(pt.clone());
+        }
 
-        // 8. Run the batching (inner-product) sumcheck via effsc. The
-        //    oracle check `final_claim == μ · Σ_i eq(ζ_i, α)·ξ_eq(i)` is
-        //    self-contained and runs inside the closure — a mismatch maps
-        //    to `VerifierError::Target`. We still need the reduced α to
-        //    compare against `acc_instance.alpha[0]` below, so the closure
-        //    returns Ok via a side-channel capture of the zeta-eq sum.
-        //
-        //    α arrives in MSB (sumcheck round) order; the prover stored
-        //    the LSB-reversed form in `acc_instance.alpha[0]`, so we
-        //    reverse once for MLE/eq consistency with arkworks.
-        let acc_mu = acc_instance.mu[0];
-        let alpha_sumcheck_msb = {
-            let mut wrap = EffscVerifierTranscript(verifier_state);
-            let res = sumcheck_verify(sigma_2, 2, log_n, &mut wrap, |_, _| Ok(()))?;
-            let alpha_lsb: Vec<F> = res.challenges.iter().rev().copied().collect();
-            let mut zeta_eqs = Vec::with_capacity(r);
-            zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_lsb));
-            for chunk in ood_samples.chunks(log_n) {
-                zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_lsb));
-            }
-            for pt in &queries.evaluation_points {
-                zeta_eqs.push(eq_poly_non_binary(pt, &alpha_lsb));
-            }
-            debug_assert_eq!(zeta_eqs.len(), r);
-            let expected = acc_mu
-                * zeta_eqs
-                    .into_iter()
-                    .zip(&xi_eq_evals)
-                    .fold(F::zero(), |acc, (a, b)| acc + a * *b);
-            (expected == res.final_claim).ok_or_err(VerifierError::Target)?;
-            res.challenges
-        };
+        let batching_phase = Batching::<F>::new();
+        let (batching_red, _) = batching_phase.verify(
+            verifier_state,
+            &BatchingStatement {
+                zetas_prefix: zetas,
+                s: self.params.config.s,
+                t: self.params.config.t,
+                log_n,
+                _phantom: PhantomData,
+            },
+            BatchingVerifierInputs {
+                nus,
+                acc_mu: acc_mu_first,
+            },
+        )?;
 
         // 10. Accumulator consistency checks for the new code / circuit
         //     evaluation points.
-        let alpha_sumcheck_lsb: Vec<F> = alpha_sumcheck_msb.iter().rev().copied().collect();
-        (acc_instance.alpha[0] == alpha_sumcheck_lsb)
-            .ok_or_err(VerifierError::CodeEvaluationPoint)?;
+        (acc_alpha_first == batching_red.alpha).ok_or_err(VerifierError::CodeEvaluationPoint)?;
 
         let betas = l2_taus
             .into_iter()
             .chain(l1_taus)
-            .zip(l2_xs.clone().into_iter().chain(l1_xs))
+            .zip(l2_xs.into_iter().chain(l1_xs))
             .map(|(tau_i, x)| concat_slices(&tau_i, &x))
             .collect::<Vec<Vec<F>>>();
         let beta = scale_and_sum(&betas, &gamma_eq_evals);
-        let expected_beta = concat_slices(&acc_instance.beta.0[0], &acc_instance.beta.1[0]);
+        let expected_beta = concat_slices(&acc_beta_0_first, &acc_beta_1_first);
         (expected_beta == beta).ok_or_err(VerifierError::CircuitEvaluationPoint)?;
 
         Ok(())

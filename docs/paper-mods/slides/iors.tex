@@ -1,0 +1,343 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+
+\usetheme{metropolis}
+\usepackage[scale=0.85]{FiraSans}
+
+\definecolor{warpaccent}{HTML}{2C3E50}
+\definecolor{warpcode}{HTML}{1B5E20}
+\definecolor{warpgray}{HTML}{555555}
+
+\setbeamercolor{frametitle}{bg=warpaccent}
+\setbeamercolor{title separator}{fg=warpaccent}
+\setbeamertemplate{frame numbering}[fraction]
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{warpaccent}\bfseries,
+  commentstyle=\color{warpgray}\itshape,
+  stringstyle=\color{warpcode},
+  showstringspaces=false,
+  morekeywords={Self, dyn, impl, async, await, fn, type, trait, where, Result, Vec, Box, Option, mut, pub, struct, let, return, use},
+  keepspaces=true,
+  columns=fullflexible,
+  frame=none,
+  breaklines=true,
+}
+
+\title{Warp Modularity}
+\subtitle{From paper IORs to a code-level interface}
+\author{Internal note}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+% --------------------------------------------------------------------
+\begin{frame}{What we want}
+A single interface every Warp phase satisfies, that is visibly the same
+shape as the paper's IOR signature.
+
+\vspace{0.5em}
+\begin{itemize}
+  \item \texttt{lib.rs::prove} reads as a chain of typed transitions.
+  \item Each transition: $(\text{stmt}, \text{wit}, \text{or}_\text{in}) \mapsto (\text{stmt}', \text{or}_\text{out})$.
+  \item Adding a phase: a struct + a trait impl. No bespoke plumbing.
+\end{itemize}
+
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{Why Warp wasn't easy modularly}
+The paper IOR formalism doesn't share state across IORs. Real Warp does.
+
+\vspace{0.4em}
+\textbf{Three concrete frictions:}
+\begin{enumerate}
+  \item \textbf{Shared oracle $f$.} TwinConstraint, OOD, Batching, Proximity all consume the same codeword. A literal IOR-per-phase would rematerialise.
+  \item \textbf{Transcript ordering coupling.} Shift-query indices are squeezed once and consumed by both Batching and Proximity. No phase ``owns'' the squeeze.
+  \item \textbf{Statement / witness / oracle conflation.} The pre-refactor function had $\sim$10 mixed-purpose args; the paper's tripartite split was invisible.
+\end{enumerate}
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{What an IOR signature is}
+The Warp paper structures the protocol as a sequence of Interactive Oracle Reductions, each one having the composition rule:
+\[ A: (\mathrm{stmt}_A, \mathrm{wit}_A) \mapsto (\mathrm{stmt}_A', \mathsf{O}[f]) \]
+\[ B: (\mathrm{stmt}_B, \mathsf{O}[f]) \mapsto \mathrm{stmt}_B' \]
+\[ A;B: (\mathrm{stmt}_A, \mathrm{stmt}_B, \mathrm{wit}_A) \mapsto (\mathrm{stmt}_A', \mathrm{stmt}_B') \]
+
+\vspace{0.4em}
+Five typed components per IOR:
+
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+& \textbf{Prover} & \textbf{Verifier} \\
+\midrule
+\texttt{Statement}        & \checkmark & \checkmark \\
+\texttt{Witness}          & \checkmark & --- \\
+\texttt{InputOracles}     & by data    & by handle \\
+\texttt{ReducedStatement} & \checkmark & \checkmark \\
+\texttt{OutputOracles}    & by data    & by handle \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{The IOR trait we built}
+v1 was a thin \texttt{ProverPhase} with opaque \texttt{Output}; v2 mirrors the paper:
+\begin{lstlisting}
+pub trait IOR {
+    type Statement; type Witness;
+    type ProverInputs; type VerifierInputs;
+    type ReducedStatement;
+    type ProverOutputs; type VerifierOutputs;
+
+    fn prove(&self, ts: &mut ProverState, stmt: &Self::Statement,
+             wit: Self::Witness, inputs: Self::ProverInputs)
+        -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError>;
+
+    fn verify<'a>(&self, ts: &mut VerifierState<'a>,
+                  stmt: &Self::Statement, inputs: Self::VerifierInputs)
+        -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError>;
+}
+\end{lstlisting}
+33/33 tests green. \texttt{Statement}/\texttt{ReducedStatement} shared; oracle types role-split.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{Per-phase mapping}
+\scriptsize
+\begin{center}
+\begin{tabular}{lp{1.4cm}p{1.2cm}p{1.4cm}p{1.6cm}p{1.5cm}}
+\toprule
+& \textbf{Stmt} & \textbf{Wit} & \textbf{Pr.\,In} & \textbf{Reduced} & \textbf{Pr.\,Out} \\
+\midrule
+\texttt{Pesat} & $(l_1, \log m)$ & wits & --- & $(\mu, \tau)$ & cw + tree \\
+\texttt{TwinC.} & acc + $\mu$/$\tau$ & acc-w + ins & cw + acc-cw & $\gamma, \zeta_0, \beta_\tau,$ defer & $\mathsf{O}[f] + z$ \\
+\texttt{Ood} & $(s, \log n)$ & --- & $\mathsf{O}[f]$ & samples + ans & --- \\
+\texttt{Batching} & $\zeta$\,+\,$s,t,\log n$ & --- & $\mathsf{O}[f]$ & $\alpha$ & $\mu$ \\
+\texttt{Proximity} & queries\,+\,$l_2,t$ & --- & trees + cw & $()$ & paths + ans \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.4em}
+\textbf{Asymmetries are now structural:}
+\begin{itemize}\scriptsize
+  \item \texttt{Pesat} \,---\, empty \texttt{ProverInputs} (it's the source).
+  \item \texttt{Proximity} \,---\, empty \texttt{Reduced} (it's a check).
+  \item \texttt{Ood} / \texttt{Batching} \,---\, empty \texttt{Witness}.
+\end{itemize}
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{Single-protocol view: a candid review}
+\textbf{What's good.}
+\begin{itemize}\small
+  \item Paper-aligned types \,---\, the \texttt{IOR} trait and the paper's IOR composition rule line up directly.
+  \item Real verifier symmetry \,---\, \texttt{TwinConstraint::verify} / \texttt{Batching::verify} are first-class trait impls.
+  \item Honest oracle role split \,---\, prover sees data, verifier sees commitments.
+  \item Empty-type asymmetries are visible (\texttt{Reduced = ()} for checks).
+  \item 33/33 tests green throughout.
+\end{itemize}
+
+\vspace{0.4em}
+\textbf{What's not.}
+\begin{itemize}\small
+  \item Seven associated types per phase \,---\, real cognitive load.
+  \item Lifetimes \& \texttt{PhantomData} proliferate; structs carry \texttt{<'a, F, \dots>} for anchoring.
+  \item No useful composition combinators \,---\, see next slide.
+  \item No type-level ordering enforcement; transcript order is implicit.
+  \item Orchestrator got longer, not shorter \,---\, $\sim$10 lines per phase invocation.
+\end{itemize}
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{Composition \,---\, what the trait can't do}
+\begin{lstlisting}
+pub struct Sequence<A: IOR, B: IOR>(A, B);
+impl<A: IOR, B: IOR> IOR for Sequence<A, B>
+where
+    B::Statement: From<A::ReducedStatement>,
+    B::ProverInputs: From<A::ProverOutputs>,
+    // ... and the witness has to come from somewhere ...
+{ /* run A, derive B's inputs, run B */ }
+\end{lstlisting}
+
+\textbf{Why no useful generics fall out:}
+\begin{itemize}\small
+  \item \texttt{From} impls are protocol-specific \,---\, written per \texttt{(A, B)} pair, no leverage.
+  \item ``Between-phases'' glue is itself protocol logic (WARP between TC and OOD: compute $\eta, \nu_0$, build new Merkle tree, write transcript). Doesn't fit either phase's signature.
+  \item Witnesses don't thread cleanly across the boundary.
+\end{itemize}
+
+\textbf{What unlocks it:} a canonical \texttt{Claim<F>} algebra of shared shapes \,---\, next two slides.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{Claim<F> \,---\, the shared vocabulary}
+Lift ``what's being claimed'' from per-protocol bags into a small shared enum.
+
+\begin{lstlisting}
+pub enum Claim<F: Field> {
+    Sumcheck(SumcheckClaim<F>),    // p sums to v on {0,1}^n
+    Eval(EvalClaim<F>),            // f_hat(zeta) = y
+    Proximity(ProximityClaim<F>),  // codeword delta-close to code
+    ZeroCheck(ZeroCheckClaim<F>),  // p == 0 on {0,1}^n
+    Batched(Box<BatchedClaim<F>>),
+}
+\end{lstlisting}
+
+Operations on these claims become \emph{protocol-agnostic}:
+\begin{lstlisting}
+pub fn reduce_sumcheck<F, T: Transcript>(
+    claim: SumcheckClaim<F>,
+    prover: &mut impl SumcheckProver<F>,
+    transcript: &mut T,
+) -> EvalClaim<F> { ... }
+\end{lstlisting}
+
+STIR uses it. WHIR uses it. WARP uses it. The \emph{transformation} is the abstraction \,---\, not the protocol.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{Protocol becomes a script over claim transformations}
+\begin{lstlisting}
+fn warp_round<F>(...) -> Claim<F> {
+    let c = Claim::ZeroCheck(...);          // R1CS satisfaction
+    let c = c.bundle_with(...);             // -> SumcheckClaim
+    let c = reduce_sumcheck(c, ...);        // -> EvalClaim at gamma
+    let oods = ood_sample(...);             // s EvalClaims
+    let qs   = shift_query_claims(...);     // t more
+    let c = batch_eval_claims(vec![...]);   // -> 1 EvalClaim
+    let c = reduce_sumcheck(c, ...);        // -> EvalClaim at alpha
+    Claim::Eval(c)
+}
+\end{lstlisting}
+
+Each line is a typed claim transformation. Protocol identity is the \emph{script}; the transformations are reusable.
+
+\textbf{Limits + cost.} Only the public claim flow gets typified \,---\, witnesses, transcript threading, setup, and proof shapes stay per-protocol. Canonical shapes only emerge from 3+ implementations, and soundness arguments must thread through the algebra. Multi-protocol research thrust, not a tactical project.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{Reframing: a family of protocols}
+The single-protocol view above was honest \,---\, but the actual goal isn't ``a clean WARP.''
+
+\vspace{0.4em}
+We design protocols like \textbf{STIR}, \textbf{WHIR}, \textbf{WARP} all the time. They share:
+\begin{itemize}\small
+  \item Encode-and-commit (codeword \,---\, Reed-Solomon, or otherwise).
+  \item Sumcheck reductions (different flavours: degree-1, multilinear, fused twin-constraint, $\dots$).
+  \item Out-of-domain (OOD) sampling for proximity boost.
+  \item Shift-query opening with auth paths.
+  \item Batching sumchecks that fold many claims into one.
+  \item Accumulator updates / final consistency.
+\end{itemize}
+
+\vspace{0.4em}
+\textbf{The bar for the IOR trait then shifts:} not ``does this clean up WARP?'' but ``is this the right backbone for a family?''
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{The toolkit, audited}
+What practitioners writing STIR / WHIR / WARP \emph{already} have:
+\begin{itemize}\small
+  \item \textbf{Transcripts.} \texttt{spongefish} 0.7 \,---\, de facto in this corner of the ecosystem. Practitioners use it directly. No abstraction needed.
+  \item \textbf{Sumchecks.} \texttt{effsc} \,---\, \texttt{SumcheckProver}, \texttt{RoundPolyEvaluator}, \texttt{InnerProductProver}, \texttt{CoefficientProverLSB}, \texttt{MultilinearProver}, hypercube + protogalaxy utilities. WARP uses 9 of 10 effsc primitives already.
+  \item \textbf{Linear codes.} \texttt{ark-codes::LinearCode} \,---\, encode, code\_len.
+  \item \textbf{Merkle commitments.} \texttt{ark-crypto-primitives::merkle\_tree} \,---\, generic over leaf shape, hashes.
+  \item \textbf{Oracle struct.} \texttt{Vec<F>} codeword + lazy MLE cache. Same storage shape across STIR / WHIR / WARP.
+\end{itemize}
+
+\vspace{0.4em}
+The primitive layer is mostly done. The discussion is really about \emph{integration} \,---\, how primitives compose, and what shape protocol authors copy.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{What practitioner experience actually needs}
+Designing a STIR / WHIR / WARP-style protocol is hard. The friction is rarely ``I need a new sumcheck primitive.'' It's:
+\begin{itemize}\small
+  \item \textbf{Tying primitives together correctly.} LinearCode + Merkle is two crates; integration is per-protocol boilerplate.
+  \item \textbf{Knowing the right phase decomposition.} What's a phase? What's its statement? Where's the witness? When does the verifier act?
+  \item \textbf{Threading transcript ordering without bugs.} Squeeze before write, derive challenges in the right segments.
+  \item \textbf{Maintaining paper-code alignment.} The paper's IOR composition is the contract; reviewers expect to see it in code.
+  \item \textbf{Debugging when soundness fails.} ``Where in this 600-line \texttt{verify} did the rejection happen?''
+\end{itemize}
+
+\vspace{0.4em}
+The fellow: \emph{practitioners benefit from patterns + examples + shared primitives}, not from cross-protocol trait contracts. That's the lever.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{The one new abstraction: \texttt{CodeCommitment}}
+The single integration gap not already covered by the toolkit:
+
+\begin{lstlisting}
+pub trait CodeCommitment<F: Field> {
+    type Commitment;
+    type Opening;
+
+    fn commit(&self, codeword: &[F]) -> Self::Commitment;
+    fn open_index(&self, codeword: &[F], i: usize) -> Self::Opening;
+    fn verify_opening(
+        &self, c: &Self::Commitment, i: usize, val: F, o: &Self::Opening,
+    ) -> bool;
+}
+\end{lstlisting}
+
+\vspace{0.4em}
+Default impl: \texttt{LinearCode} + Merkle config from \texttt{ark-crypto-primitives}.
+\begin{itemize}\small
+  \item Wraps the only integration practitioners currently re-roll per protocol.
+  \item Small (one trait, one default impl), focused, validated by WARP migrating onto it.
+\end{itemize}
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{What we're for, positively}
+\textbf{Keep \texttt{IOR} as a structural template, not a cross-protocol contract.}
+\begin{itemize}\small
+  \item It's the shape WARP-style protocols copy. The paper section on accumulator-as-state makes it legible.
+  \item Other protocols follow as a \emph{pattern}, get shared mental model + idioms, without being forced into one trait.
+\end{itemize}
+
+\textbf{Lean on the existing primitive layer.}
+\begin{itemize}\small
+  \item \texttt{effsc}, \texttt{spongefish}, \texttt{ark-codes}, \texttt{ark-crypto-primitives::merkle\_tree}.
+  \item Already strong. The discipline is to use them, not reinvent.
+\end{itemize}
+
+\textbf{Add \texttt{CodeCommitment}.} The one missing integration trait. WARP migrates onto it; STIR-lite plugs into it.
+
+\textbf{Make WARP the reference implementation.} A new protocol designer reads \texttt{src/protocol/phases/}, copies the IOR-shaped pattern, plugs in their primitives.
+
+\textbf{Document the pattern.} Short ``how to design a Warp-style protocol'' guide \,---\, narrative, not a trait. The actual lever for practitioner ergonomics.
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}{Where this leaves us \,---\, the next move}
+\textbf{Paper section (accumulator as typed state).} Describe the IOR trait as a paper-aligned realisation \emph{of WARP's protocol structure}, framed as a \emph{template other protocols can follow}, not a contract they must.
+
+\vspace{0.4em}
+\textbf{Paper section (structured sumcheck primitive).} The fused $\alpha/\beta/\tau$-fold inside TwinConstraint is the natural extraction \,---\, lives in \texttt{effsc} as a new \texttt{RoundPolyEvaluator}-shaped impl, citable from outside Warp.
+
+\vspace{0.4em}
+\textbf{Add \texttt{CodeCommitment}} \,---\, small focused trait, ships in a session. Migrate WARP onto it.
+
+\vspace{0.4em}
+\textbf{Implement a second protocol.} STIR-lite or WHIR-lite, against the same primitives + IOR-shaped pattern. The friction it surfaces is the most reliable guide for the next iteration.
+
+\vspace{0.4em}
+\textbf{Write the ``how to design a Warp-style protocol'' guide.} Walk through phase decomposition, primitive choices, IOR shape. Narrative document in \texttt{docs/}. The actual practitioner-facing artifact.
+\end{frame}
+
+\end{document}
