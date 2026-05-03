@@ -103,9 +103,8 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
                 .enumerate()
                 .map(|(i, (a, b, c))| {
                     let eq = eq_poly(b_even, i);
-                    let eval = |lc: &[(F, usize)]| {
-                        lc.iter().map(|(t, idx)| z_even[*idx] * t).sum::<F>()
-                    };
+                    let eval =
+                        |lc: &[(F, usize)]| lc.iter().map(|(t, idx)| z_even[*idx] * t).sum::<F>();
                     eq * (eval(a) * eval(b) - eval(c))
                 })
                 .sum::<F>();
