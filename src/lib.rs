@@ -336,20 +336,10 @@ impl<
         //    below after reading them. `sumcheck_verify` still enforces all
         //    per-round consistency (`q(0)+q(1)==claim`) automatically.
         let tc_degree = 1 + (log_n + 1).max(log_m + 2);
-        let mut tc_final_claim = F::zero();
-        let gamma_sumcheck = {
+        let (gamma_sumcheck, tc_final_claim) = {
             let mut wrap = EffscVerifierTranscript(verifier_state);
-            sumcheck_verify(
-                sigma_1,
-                tc_degree,
-                log_l,
-                &mut wrap,
-                |_, _| Ok(()),
-                |final_claim, _challenges| {
-                    tc_final_claim = final_claim;
-                    Ok(())
-                },
-            )?
+            let res = sumcheck_verify(sigma_1, tc_degree, log_l, &mut wrap, |_, _| Ok(()))?;
+            (res.challenges, res.final_claim)
         };
 
         // 5. Read between-sumchecks state: td, η, ν₀, OOD, shift-query
@@ -431,35 +421,24 @@ impl<
         let acc_mu = acc_instance.mu[0];
         let alpha_sumcheck_msb = {
             let mut wrap = EffscVerifierTranscript(verifier_state);
-            sumcheck_verify(
-                sigma_2,
-                2,
-                log_n,
-                &mut wrap,
-                |_, _| Ok(()),
-                |final_claim, alpha_msb| {
-                    let alpha_lsb: Vec<F> = alpha_msb.iter().rev().copied().collect();
-                    let mut zeta_eqs = Vec::with_capacity(r);
-                    zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_lsb));
-                    for chunk in ood_samples.chunks(log_n) {
-                        zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_lsb));
-                    }
-                    for pt in &queries.evaluation_points {
-                        zeta_eqs.push(eq_poly_non_binary(pt, &alpha_lsb));
-                    }
-                    debug_assert_eq!(zeta_eqs.len(), r);
-                    let expected = acc_mu
-                        * zeta_eqs
-                            .into_iter()
-                            .zip(&xi_eq_evals)
-                            .fold(F::zero(), |acc, (a, b)| acc + a * *b);
-                    if expected == final_claim {
-                        Ok(())
-                    } else {
-                        Err(effsc::proof::SumcheckError::FinalEvaluation)
-                    }
-                },
-            )?
+            let res = sumcheck_verify(sigma_2, 2, log_n, &mut wrap, |_, _| Ok(()))?;
+            let alpha_lsb: Vec<F> = res.challenges.iter().rev().copied().collect();
+            let mut zeta_eqs = Vec::with_capacity(r);
+            zeta_eqs.push(eq_poly_non_binary(&zeta_0, &alpha_lsb));
+            for chunk in ood_samples.chunks(log_n) {
+                zeta_eqs.push(eq_poly_non_binary(chunk, &alpha_lsb));
+            }
+            for pt in &queries.evaluation_points {
+                zeta_eqs.push(eq_poly_non_binary(pt, &alpha_lsb));
+            }
+            debug_assert_eq!(zeta_eqs.len(), r);
+            let expected = acc_mu
+                * zeta_eqs
+                    .into_iter()
+                    .zip(&xi_eq_evals)
+                    .fold(F::zero(), |acc, (a, b)| acc + a * *b);
+            (expected == res.final_claim).ok_or_err(VerifierError::Target)?;
+            res.challenges
         };
 
         // 10. Accumulator consistency checks for the new code / circuit
