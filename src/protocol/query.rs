@@ -1,6 +1,7 @@
 use ark_ff::Field;
 use spongefish::ProverState;
 
+#[derive(Clone)]
 pub struct QueryIndices<F: Field> {
     pub leaf_positions: Vec<usize>,     // for merkle tree lookups
     pub evaluation_points: Vec<Vec<F>>, // for eq polynomial evals
