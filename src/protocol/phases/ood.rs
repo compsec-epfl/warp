@@ -9,7 +9,9 @@ use ark_ff::{Field, PrimeField};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 
 use crate::count_ops;
+use crate::error::ProverError;
 use crate::protocol::oracle::Oracle;
+use crate::protocol::phases::ProverPhase;
 
 /// Output of the OOD phase: the flat challenge vector and the prover's
 /// answers at each chunked evaluation point.
@@ -20,27 +22,32 @@ pub struct OodOutput<F: Field> {
     pub answers: Vec<F>,
 }
 
-/// Run the OOD phase: sample `s` evaluation points, query the oracle at
-/// each, absorb the answers.
-#[tracing::instrument(name = "ood", skip_all, fields(s = s, log_n = log_n))]
-pub fn prove<F>(
-    prover_state: &mut ProverState,
-    oracle: &Oracle<F>,
-    s: usize,
-    log_n: usize,
-) -> OodOutput<F>
+/// OOD phase: sample `s` evaluation points, query the oracle at each, absorb
+/// the answers.
+pub struct Ood<'a, F: Field> {
+    pub oracle: &'a Oracle<F>,
+    pub s: usize,
+    pub log_n: usize,
+}
+
+impl<'a, F> ProverPhase for Ood<'a, F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    let samples_flat = prover_state.verifier_messages_vec::<F>(s * log_n);
-    count_ops!(OodPointQueries, s as u64);
-    let answers = samples_flat
-        .chunks(log_n)
-        .map(|zeta| oracle.query_at_point(zeta))
-        .collect::<Vec<F>>();
-    prover_state.prover_messages(&answers);
-    OodOutput {
-        samples_flat,
-        answers,
+    type Output = OodOutput<F>;
+
+    #[tracing::instrument(name = "ood", skip_all, fields(s = self.s, log_n = self.log_n))]
+    fn prove(self, prover_state: &mut ProverState) -> Result<Self::Output, ProverError> {
+        let samples_flat = prover_state.verifier_messages_vec::<F>(self.s * self.log_n);
+        count_ops!(OodPointQueries, self.s as u64);
+        let answers = samples_flat
+            .chunks(self.log_n)
+            .map(|zeta| self.oracle.query_at_point(zeta))
+            .collect::<Vec<F>>();
+        prover_state.prover_messages(&answers);
+        Ok(OodOutput {
+            samples_flat,
+            answers,
+        })
     }
 }

@@ -22,7 +22,9 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::collections::HashMap;
 
 use crate::count_ops;
+use crate::error::ProverError;
 use crate::protocol::oracle::Oracle;
+use crate::protocol::phases::ProverPhase;
 use crate::utils::poly::eq_poly;
 
 /// [CBBZ23] / HyperPlonk sparse-evaluation optimization: for shift-query
@@ -76,74 +78,79 @@ pub struct BatchingOutput<F: Field> {
     pub mu: F,
 }
 
-/// Run the batching sumcheck.
+/// Batching sumcheck phase.
 ///
 /// `zetas_prefix` must contain `1 + s + t` evaluation points in the order
 /// `[ζ_0, ood_0, ..., ood_{s-1}, query_0, ..., query_{t-1}]`.
-#[tracing::instrument(
-    name = "batching",
-    skip_all,
-    fields(s = s, t = t, log_n = log_n)
-)]
-pub fn prove<F>(
-    prover_state: &mut ProverState,
-    oracle: &Oracle<F>,
-    zetas_prefix: &[&[F]],
-    s: usize,
-    t: usize,
-    log_n: usize,
-) -> BatchingOutput<F>
+pub struct Batching<'a, F: Field> {
+    pub oracle: &'a Oracle<F>,
+    pub zetas_prefix: &'a [&'a [F]],
+    pub s: usize,
+    pub t: usize,
+    pub log_n: usize,
+}
+
+impl<'a, F> ProverPhase for Batching<'a, F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    let n = oracle.len();
-    let r = 1 + s + t;
-    let log_r = log2(r) as usize;
-    debug_assert_eq!(zetas_prefix.len(), r);
+    type Output = BatchingOutput<F>;
 
-    let xis = prover_state.verifier_messages_vec::<F>(log_r);
+    #[tracing::instrument(
+        name = "batching",
+        skip_all,
+        fields(s = self.s, t = self.t, log_n = self.log_n)
+    )]
+    fn prove(self, prover_state: &mut ProverState) -> Result<Self::Output, ProverError> {
+        let n = self.oracle.len();
+        let r = 1 + self.s + self.t;
+        let log_r = log2(r) as usize;
+        debug_assert_eq!(self.zetas_prefix.len(), r);
 
-    // compute evaluations for xi and the dense ood_evals_vec for the first 1+s zetas
-    let (xi_eq_evals, ood_evals_vec) = {
-        let _s = tracing::info_span!("batching.eq_evals").entered();
-        let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
-        let ood_evals_vec = (0..1 + s)
-            .map(|i| {
-                (0..n)
-                    .map(|a| eq_poly(zetas_prefix[i], a) * xi_eq_evals[i])
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        (xi_eq_evals, ood_evals_vec)
-    };
+        let xis = prover_state.verifier_messages_vec::<F>(log_r);
 
-    // [CBBZ23] / HyperPlonk optimization for the t sparse shift-query zetas.
-    let id_non_0_eval_sums = {
-        let _s = tracing::info_span!("batching.accumulate_sparse").entered();
-        accumulate_sparse_evaluations(zetas_prefix.to_vec(), xi_eq_evals, s, r)
-    };
+        // compute evaluations for xi and the dense ood_evals_vec for the first 1+s zetas
+        let (xi_eq_evals, ood_evals_vec) = {
+            let _s = tracing::info_span!("batching.eq_evals").entered();
+            let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
+            let ood_evals_vec = (0..1 + self.s)
+                .map(|i| {
+                    (0..n)
+                        .map(|a| eq_poly(self.zetas_prefix[i], a) * xi_eq_evals[i])
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            (xi_eq_evals, ood_evals_vec)
+        };
 
-    // Run the inner-product sumcheck. `InnerProductProver` + `runner::sumcheck`
-    // is the new-style `SumcheckProver` entry point; wire format is three
-    // evaluations `[q(0), q(1), q(2)]` per round (`effsc::sumcheck_verify`
-    // reads them on the verifier side). The prover is MSB half-split, so the
-    // challenge vector arrives in MSB order — reverse once here so downstream
-    // MLE / eq_poly queries (arkworks' LSB-first convention) line up.
-    let alpha = {
-        let _s = tracing::info_span!("batching.sumcheck").entered();
-        let log_n_bits = ark_std::log2(n) as u64;
-        count_ops!(BatchingRounds, log_n_bits);
-        let mut ip = InnerProductProver::new(
-            oracle.evals().to_vec(),
-            batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
-        );
-        let mut challenges =
-            sumcheck(&mut ip, log_n_bits as usize, prover_state, noop_hook).challenges;
-        challenges.reverse();
-        challenges
-    };
+        // [CBBZ23] / HyperPlonk optimization for the t sparse shift-query zetas.
+        let id_non_0_eval_sums = {
+            let _s = tracing::info_span!("batching.accumulate_sparse").entered();
+            accumulate_sparse_evaluations(self.zetas_prefix.to_vec(), xi_eq_evals, self.s, r)
+        };
 
-    let mu = oracle.query_at_point(&alpha);
+        // Run the inner-product sumcheck. `InnerProductProver` + `runner::sumcheck`
+        // is the new-style `SumcheckProver` entry point; wire format is three
+        // evaluations `[q(0), q(1), q(2)]` per round (`effsc::sumcheck_verify`
+        // reads them on the verifier side). The prover is MSB half-split, so the
+        // challenge vector arrives in MSB order — reverse once here so downstream
+        // MLE / eq_poly queries (arkworks' LSB-first convention) line up.
+        let alpha = {
+            let _s = tracing::info_span!("batching.sumcheck").entered();
+            let log_n_bits = ark_std::log2(n) as u64;
+            count_ops!(BatchingRounds, log_n_bits);
+            let mut ip = InnerProductProver::new(
+                self.oracle.evals().to_vec(),
+                batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
+            );
+            let mut challenges =
+                sumcheck(&mut ip, log_n_bits as usize, prover_state, noop_hook).challenges;
+            challenges.reverse();
+            challenges
+        };
 
-    BatchingOutput { alpha, mu }
+        let mu = self.oracle.query_at_point(&alpha);
+
+        Ok(BatchingOutput { alpha, mu })
+    }
 }
