@@ -47,7 +47,16 @@ fn eval_r1cs_constraint_poly<F: Field>(
     z0: &[F],
     z1: &[F],
 ) -> DensePolynomial<F> {
-    let eval = |lc: &[(F, usize)], z: &[F]| lc.iter().map(|(t, i)| z[*i] * t).sum::<F>();
+    // effsc's `final_value` calls `accumulate_pair` once with the odd half
+    // empty (singleton case after all rounds folded). Treat an empty `z` as
+    // the all-zero vector so the eval returns `F::ZERO` rather than panicking.
+    let eval = |lc: &[(F, usize)], z: &[F]| {
+        if z.is_empty() {
+            F::ZERO
+        } else {
+            lc.iter().map(|(t, i)| z[*i] * t).sum::<F>()
+        }
+    };
     let (a0, b0, c0) = (eval(a, z0), eval(b, z0), eval(c, z0));
     let (a1, b1, c1) = (eval(a, z1) - a0, eval(b, z1) - b0, eval(c, z1) - c0);
     DensePolynomial::from_coefficients_vec(vec![a0 * b0 - c0, a0 * b1 + a1 * b0 - c1, a1 * b1])
@@ -76,6 +85,37 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
         let (a_even, a_odd) = tw[2];
         let (b_even, b_odd) = tw[3];
         let (tau_even, tau_odd) = pw[0];
+
+        // Singleton case: effsc's `coefficient_lsb::final_value` calls
+        // `accumulate_pair` once after all rounds with `tw[i] = (singleton, &[])`
+        // and `pw[0] = (singleton, F::ZERO)`. Evaluate the polynomial directly
+        // at the singleton point; emit `[h, -h]` so `g(0) + g(1) == h`, matching
+        // the convention used by the simple pairwise-only evaluators.
+        if u_odd.is_empty() {
+            let f_val = u_even
+                .iter()
+                .enumerate()
+                .map(|(i, &u_i)| u_i * eq_poly(a_even, i))
+                .sum::<F>();
+            let p_val = self
+                .r1cs
+                .iter()
+                .enumerate()
+                .map(|(i, (a, b, c))| {
+                    let eq = eq_poly(b_even, i);
+                    let eval = |lc: &[(F, usize)]| {
+                        lc.iter().map(|(t, idx)| z_even[*idx] * t).sum::<F>()
+                    };
+                    eq * (eval(a) * eval(b) - eval(c))
+                })
+                .sum::<F>();
+            let h_val = (f_val + self.omega * p_val) * tau_even;
+            coeffs[0] += h_val;
+            if coeffs.len() > 1 {
+                coeffs[1] -= h_val;
+            }
+            return;
+        }
 
         // f(X) = fold(α, oracle_evals): protogalaxy fold over α pairs and linear polys from u
         let f = protogalaxy::fold(

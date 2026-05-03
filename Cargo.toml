@@ -5,48 +5,33 @@ include = ["Cargo.toml", "src", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 edition = "2021"
 
 [dependencies]
-ark-crypto-primitives = { version = "0.5.0", features = [
+ark-crypto-primitives = { version = "0.6.0", features = [
     "merkle_tree",
     "crh",
     "constraints",
     "sponge",
+    "blake3",
 ] }
-ark-ff = "0.5.0"
-ark-poly = "0.5.0"
-ark-r1cs-std = "0.5.0"
-ark-relations = "0.5.0"
-ark-serialize = "0.5.0"
-ark-std = "0.5.0"
+ark-ff = "0.6.0"
+ark-poly = "0.6.0"
+ark-r1cs-std = "0.6.0"
+ark-relations = "0.6.0"
+ark-serialize = "0.6.0"
+ark-std = "0.6.0"
 blake3 = "1.5.0"
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = [
-    "ark-ff",
-] }
-effsc = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/rewrite-v2" }
+spongefish = { version = "0.7.0", features = ["ark-ff"] }
+effsc = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
 thiserror = "2.0.16"
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "json", "registry"], optional = true }
 libc = { version = "0.2", optional = true }
-ark-codes = { git = "https://github.com/dmpierre/ark-codes.git" }
-
-
-[patch.crates-io]
-ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "z-tech/smallfp-absorb" }
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", rev = "285dac2" }
-ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std" }
-ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
-ark-snark = { git = "https://github.com/arkworks-rs/snark.git" }
-
-# resolve transitive pull of spongefish from efficient-sumcheck
-[patch."https://github.com/arkworks-rs/spongefish"]
-spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support" }
+ark-codes = { git = "https://github.com/z-tech/ark-codes.git", branch = "z-tech/arkworks-0.6.0" }
 
 [dev-dependencies]
-ark-bls12-381 = "0.5.0"
-ark-bn254 = "0.5.0"
+ark-bls12-381 = "0.6.0"
+ark-bn254 = "0.6.0"
 criterion = "0.8"
 
 [features]
