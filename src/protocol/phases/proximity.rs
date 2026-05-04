@@ -1,37 +1,29 @@
 //! Proximity / shift-query phase.
 //!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex` — index queries on the
-//! committed oracles. Generates the authentication paths for each shift
-//! query leaf against both the fresh PESAT commitment and each accumulated
-//! commitment, and collects the codeword values at those leaves.
-//!
-//! The query indices themselves are sampled from the transcript **before**
-//! this phase — see the orchestrator in `src/lib.rs` — so the batching
-//! sumcheck can consume the same indices. Proximity itself does not interact
-//! with the transcript: it produces proof artifacts (auth paths + answers),
-//! which are then attached to the proof on the prover side and verified
-//! against transcript-derived commitments on the verifier side.
+//! Index queries on the committed oracles. Opens both the fresh PESAT
+//! commitment and each accumulated commitment at the query positions,
+//! producing one multi-opening proof per commitment and a flat table of
+//! the codeword values at those positions.
 //!
 //! IOR signature
 //! -------------
-//! - `Statement`        — `(queries, l2, t)`
+//! - `Statement`        — `(queries, l2, t, n)`. `n` is the codeword length;
+//!                       the verifier needs it to construct the `WarpScheme`
+//!                       used for `check`.
 //! - `Witness`          — `()`
-//! - `ProverInputs`     — fresh + accumulated merkle trees + all codewords (full data)
-//! - `VerifierInputs`   — fresh + accumulated commitments + auth paths + answers
+//! - `ProverInputs`     — fresh `WarpCommitted` + l2 accumulated `WarpCommitted`s
+//! - `VerifierInputs`   — fresh root + l2 acc roots + opening proofs + answers
 //! - `ReducedStatement` — `()` (Proximity is a check, not a reduction)
-//! - `ProverOutputs`    — auth paths + shift_query_answers (proof artifacts)
+//! - `ProverOutputs`    — opening proofs + shift_query_answers (proof artifacts)
 //! - `VerifierOutputs`  — `()`
 
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, MerkleTree, Path},
-};
 use ark_ff::Field;
+use ark_mt::{multi_vector::MultiVectorOpening, MerkleHasher};
 use spongefish::{ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::compute_auth_paths;
+use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::phases::IOR;
 use crate::protocol::query::QueryIndices;
@@ -41,50 +33,64 @@ pub struct ProximityStatement<F: Field> {
     pub queries: QueryIndices<F>,
     pub l2: usize,
     pub t: usize,
+    /// Codeword length (`code.code_len()`), needed by both prover and
+    /// verifier to construct the `WarpScheme` used for open/check.
+    pub n: usize,
 }
 
-pub struct ProximityProverInputs<'a, F: Field, MT: Config> {
-    pub td_0: &'a MerkleTree<MT>,
-    pub acc_td: &'a [MerkleTree<MT>],
-    pub all_codewords: &'a [Vec<F>],
+pub struct ProximityProverInputs<'a, F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    pub td_0: &'a WarpCommitted<H, F>,
+    pub acc_td: &'a [WarpCommitted<H, F>],
 }
 
-pub struct ProximityVerifierInputs<'a, F: Field, MT: Config> {
-    pub rt_0: &'a MT::InnerDigest,
-    pub l2_roots: &'a [MT::InnerDigest],
-    pub auth_0: &'a [Path<MT>],
-    pub auth_j: &'a [Vec<Path<MT>>],
+pub struct ProximityVerifierInputs<'a, F: Field, H: MerkleHasher> {
+    pub rt_0: &'a H::Digest,
+    pub l2_roots: &'a [H::Digest],
+    pub auth_0: &'a WarpProof<H>,
+    pub auth_j: &'a [WarpProof<H>],
     pub shift_query_answers: &'a [Vec<F>],
-    pub _phantom: PhantomData<F>,
 }
 
-pub struct ProximityProverOutputs<F: Field, MT: Config> {
-    pub auth_0: Vec<Path<MT>>,
-    pub auth_j: Vec<Vec<Path<MT>>>,
+pub struct ProximityProverOutputs<F, H>
+where
+    F: Field,
+    H: MerkleHasher,
+{
+    /// Single multi-opening proof for the fresh PESAT commitment.
+    pub auth_0: WarpProof<H>,
+    /// One multi-opening proof per accumulated commitment.
+    pub auth_j: Vec<WarpProof<H>>,
+    /// Shift query answers: per-query × per-codeword.
+    /// Outer length = t (queries). Inner length = (l2 acc + l1 fresh).
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-/// Proximity phase configuration. Holds borrowed merkle hash parameters used
-/// by the verifier-side `verify` (the prover side doesn't need them — auth
-/// paths are generated from the merkle trees passed in via `ProverInputs`).
-pub struct Proximity<'a, F: Field, MT: Config> {
-    pub mt_leaf_hash_params: &'a <MT::LeafHash as CRHScheme>::Parameters,
-    pub mt_two_to_one_hash_params: &'a <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+/// Proximity phase configuration. Holds the hasher value used by both
+/// `open` (prover side) and `check` (verifier side).
+pub struct Proximity<'a, F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    pub hasher: &'a H,
     pub _phantom: PhantomData<F>,
 }
 
-impl<'a, F, MT> IOR for Proximity<'a, F, MT>
+impl<'a, F, H> IOR for Proximity<'a, F, H>
 where
     F: Field,
-    MT: Config<Leaf = [F]> + 'a,
-    MT::InnerDigest: 'a,
+    H: MerkleHasher<Symbol = Vec<F>>,
 {
     type Statement = ProximityStatement<F>;
     type Witness = ();
-    type ProverInputs = ProximityProverInputs<'a, F, MT>;
-    type VerifierInputs = ProximityVerifierInputs<'a, F, MT>;
+    type ProverInputs = ProximityProverInputs<'a, F, H>;
+    type VerifierInputs = ProximityVerifierInputs<'a, F, H>;
     type ReducedStatement = ();
-    type ProverOutputs = ProximityProverOutputs<F, MT>;
+    type ProverOutputs = ProximityProverOutputs<F, H>;
     type VerifierOutputs = ();
 
     #[tracing::instrument(
@@ -93,7 +99,6 @@ where
         fields(
             n_queries = statement.queries.leaf_positions.len(),
             n_accumulators = inputs.acc_td.len(),
-            n_codewords = inputs.all_codewords.len(),
         )
     )]
     fn prove(
@@ -105,36 +110,56 @@ where
     ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
         let leaf_positions = &statement.queries.leaf_positions;
 
+        // ark-mt's `open()` requires strictly-sorted, unique indices. Query
+        // positions can repeat or arrive unsorted; deduplicate for the
+        // merkle opening, but keep `shift_query_answers` in original query
+        // order so downstream phases (batching) can index by query.
+        let mut sorted_unique = leaf_positions.clone();
+        sorted_unique.sort_unstable();
+        sorted_unique.dedup();
+
+        let scheme = warp_scheme(self.hasher.clone(), statement.n);
+
         let auth_0 = {
             let _s = tracing::info_span!("proximity.auth_0").entered();
-            count_ops!(MerklePathsGenerated, leaf_positions.len() as u64);
-            compute_auth_paths(inputs.td_0, leaf_positions)?
+            count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
+            scheme.open(inputs.td_0, &sorted_unique)
         };
 
-        let auth_j = {
+        let auth_j: Vec<WarpProof<H>> = {
             let _s = tracing::info_span!("proximity.auth_j").entered();
             count_ops!(
                 MerklePathsGenerated,
-                (inputs.acc_td.len() * leaf_positions.len()) as u64
+                (inputs.acc_td.len() * sorted_unique.len()) as u64
             );
             inputs
                 .acc_td
                 .iter()
-                .map(|td| compute_auth_paths(td, leaf_positions))
-                .collect::<Result<Vec<Vec<Path<MT>>>, _>>()?
+                .map(|td| scheme.open(td, &sorted_unique))
+                .collect()
         };
 
+        // Shift query answers: per query position, values across
+        // (acc_codewords ++ fresh_codewords).
         let shift_query_answers = {
             let _s = tracing::info_span!("proximity.shift_queries").entered();
+            let total_codewords =
+                inputs.acc_td.iter().map(|td| td.num_codewords()).sum::<usize>()
+                    + inputs.td_0.num_codewords();
             let mut answers =
-                vec![vec![F::default(); inputs.all_codewords.len()]; leaf_positions.len()];
-            for (i, idx) in leaf_positions.iter().enumerate() {
-                let row = inputs
-                    .all_codewords
-                    .iter()
-                    .map(|f| f[*idx])
-                    .collect::<Vec<F>>();
-                answers[i] = row;
+                vec![vec![F::default(); total_codewords]; leaf_positions.len()];
+            for (qi, idx) in leaf_positions.iter().enumerate() {
+                let mut col = 0usize;
+                for td in inputs.acc_td.iter() {
+                    for cw in td.codewords() {
+                        answers[qi][col] = cw[*idx];
+                        col += 1;
+                    }
+                }
+                for cw in inputs.td_0.codewords() {
+                    answers[qi][col] = cw[*idx];
+                    col += 1;
+                }
             }
             answers
         };
@@ -164,34 +189,49 @@ where
 
         (inputs.shift_query_answers.len() == statement.t)
             .ok_or_err(VerifierError::NumShiftQueries)?;
-
-        for (i, path) in inputs.auth_0.iter().enumerate() {
-            (path.leaf_index == leaf_positions[i]).ok_or_err(VerifierError::ShiftQueryIndex)?;
-            count_ops!(MerklePathsVerified);
-            let is_valid = path.verify(
-                self.mt_leaf_hash_params,
-                self.mt_two_to_one_hash_params,
-                inputs.rt_0,
-                &inputs.shift_query_answers[i][statement.l2..],
-            )?;
-            is_valid.ok_or_err(VerifierError::ShiftQuery)?;
-        }
-
         (inputs.auth_j.len() == statement.l2).ok_or_err(VerifierError::NumL2Instances)?;
-        for (i, paths) in inputs.auth_j.iter().enumerate() {
-            (paths.len() == statement.t).ok_or_err(VerifierError::NumShiftQueries)?;
-            let root = &inputs.l2_roots[i];
-            for (j, path) in paths.iter().enumerate() {
-                (path.leaf_index == leaf_positions[j]).ok_or_err(VerifierError::ShiftQueryIndex)?;
-                count_ops!(MerklePathsVerified);
-                let is_valid = path.verify(
-                    self.mt_leaf_hash_params,
-                    self.mt_two_to_one_hash_params,
-                    root,
-                    [inputs.shift_query_answers[j][i]],
-                )?;
-                is_valid.ok_or_err(VerifierError::ShiftQuery)?;
-            }
+
+        // Build the (sorted, unique) positions used by the merkle openings
+        // and remember which row of `shift_query_answers` corresponds to
+        // each unique position. Duplicate queries land on the same row.
+        let mut indexed: Vec<(usize, usize)> = leaf_positions
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(row, pos)| (pos, row))
+            .collect();
+        indexed.sort_by_key(|&(pos, _)| pos);
+        indexed.dedup_by_key(|&mut (pos, _)| pos);
+        let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
+        let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
+
+        let scheme = warp_scheme::<H, F>(self.hasher.clone(), statement.n);
+
+        // Fresh PESAT opening: per unique position, take the l1-suffix of the
+        // corresponding answers row.
+        let fresh_values: Vec<Vec<F>> = row_indices
+            .iter()
+            .map(|&r| inputs.shift_query_answers[r][statement.l2..].to_vec())
+            .collect();
+        let fresh_opening = MultiVectorOpening::new(sorted_unique.clone(), fresh_values)
+            .map_err(|_| VerifierError::ShiftQueryIndex)?;
+        scheme
+            .check(inputs.rt_0, &fresh_opening, inputs.auth_0)
+            .ok_or_err(VerifierError::ShiftQuery)?;
+        count_ops!(MerklePathsVerified, sorted_unique.len() as u64);
+
+        // Accumulator openings: each is m=1 (single codeword).
+        for (k, root) in inputs.l2_roots.iter().enumerate() {
+            let acc_values: Vec<Vec<F>> = row_indices
+                .iter()
+                .map(|&r| vec![inputs.shift_query_answers[r][k]])
+                .collect();
+            let acc_opening = MultiVectorOpening::new(sorted_unique.clone(), acc_values)
+                .map_err(|_| VerifierError::ShiftQueryIndex)?;
+            scheme
+                .check(root, &acc_opening, &inputs.auth_j[k])
+                .ok_or_err(VerifierError::ShiftQuery)?;
+            count_ops!(MerklePathsVerified, sorted_unique.len() as u64);
         }
 
         Ok(((), ()))

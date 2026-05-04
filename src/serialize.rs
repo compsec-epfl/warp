@@ -1,50 +1,44 @@
-use ark_crypto_primitives::merkle_tree::{Config, Path};
 use ark_ff::{Field, PrimeField};
+use ark_mt::MerkleHasher;
 use ark_serialize::CanonicalSerialize;
 
+use crate::crypto::merkle::WarpProof;
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 #[derive(CanonicalSerialize)]
-pub struct AccWitnessSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub f: Vec<F>,
+pub struct AccWitnessSerializer<F: Field + PrimeField, H: MerkleHasher> {
     pub w: Vec<F>,
-    _mt: std::marker::PhantomData<MT>,
+    _h: std::marker::PhantomData<H>,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccWitnessSerializer<F, MT>
-{
-    pub fn new(acc_witness: AccumulatorWitness<F, MT>) -> Self {
+impl<F: Field + PrimeField, H: MerkleHasher<Symbol = Vec<F>>> AccWitnessSerializer<F, H> {
+    pub fn new(acc_witness: AccumulatorWitness<F, H>) -> Self {
         assert_eq!(acc_witness.td.len(), 1);
-        assert_eq!(acc_witness.f.len(), 1);
         assert_eq!(acc_witness.w.len(), 1);
         Self {
-            f: acc_witness.f.into_iter().next().unwrap(),
             w: acc_witness.w.into_iter().next().unwrap(),
-            _mt: std::marker::PhantomData,
+            _h: std::marker::PhantomData,
         }
     }
 }
 
 #[derive(CanonicalSerialize)]
-pub struct AccInstanceSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt: MT::InnerDigest,
+pub struct AccInstanceSerializer<F: Field + PrimeField, H: MerkleHasher>
+where
+    H::Digest: CanonicalSerialize,
+{
+    pub rt: H::Digest,
     pub alpha: Vec<F>,
     pub mu: F,
     pub beta: (Vec<F>, Vec<F>),
     pub eta: F,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccInstanceSerializer<F, MT>
+impl<F: Field + PrimeField, H: MerkleHasher> AccInstanceSerializer<F, H>
+where
+    H::Digest: CanonicalSerialize,
 {
-    pub fn new(acc_instance: AccumulatorInstance<F, MT>) -> Self {
+    pub fn new(acc_instance: AccumulatorInstance<F, H>) -> Self {
         assert_eq!(acc_instance.rt.len(), 1);
         assert_eq!(acc_instance.alpha.len(), 1);
         assert_eq!(acc_instance.mu.len(), 1);
@@ -66,23 +60,26 @@ impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + Fr
 }
 
 #[derive(CanonicalSerialize)]
-pub struct ProofSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt_0: MT::InnerDigest,
+pub struct ProofSerializer<F: Field + PrimeField, H: MerkleHasher>
+where
+    H::Digest: CanonicalSerialize,
+    WarpProof<H>: CanonicalSerialize,
+{
+    pub rt_0: H::Digest,
     pub mu_i: Vec<F>,
     pub nu_0: F,
     pub nu_i: Vec<F>,
-    pub auth_0: Vec<Path<MT>>,
-    pub auth_j: Vec<Vec<Path<MT>>>,
+    pub auth_0: WarpProof<H>,
+    pub auth_j: Vec<WarpProof<H>>,
     pub f_i_x_j: Vec<Vec<F>>,
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    ProofSerializer<F, MT>
+impl<F: Field + PrimeField, H: MerkleHasher> ProofSerializer<F, H>
+where
+    H::Digest: CanonicalSerialize,
+    WarpProof<H>: CanonicalSerialize,
 {
-    pub fn new(proof: WARPProof<F, MT>) -> Self {
+    pub fn new(proof: WARPProof<F, H>) -> Self {
         Self {
             rt_0: proof.rt_0,
             mu_i: proof.mu_i,

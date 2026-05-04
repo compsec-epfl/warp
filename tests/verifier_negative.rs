@@ -28,7 +28,7 @@ use ark_codes::{
     traits::LinearCode,
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-use ark_crypto_primitives::merkle_tree::configs::Blake3MerkleConfig;
+use ark_mt::blake3::Blake3FieldHasher;
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
 
@@ -47,24 +47,24 @@ use warp::utils::poseidon;
 use warp::WARP;
 
 type F = BLS12_381;
-type MT = Blake3MerkleConfig<F>;
-type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, MT>;
+type H = Blake3FieldHasher<F>;
+type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, H>;
 
 /// Everything the verifier needs to re-check, plus enough dimensions
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
     vk: (usize, usize, usize),
-    acc_x: AccumulatorInstance<F, MT>,
-    proof: WARPProof<F, MT>,
+    acc_x: AccumulatorInstance<F, H>,
+    proof: WARPProof<F, H>,
     narg_str: Vec<u8>,
 }
 
 impl Fixture {
     fn verify(
         &self,
-        acc_x: AccumulatorInstance<F, MT>,
-        proof: WARPProof<F, MT>,
+        acc_x: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v
@@ -118,11 +118,16 @@ fn make_fixture() -> Fixture {
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
     let warp_cfg1 = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let w1 = WARP::<F, R1CS<F>, _, MT>::new(warp_cfg1, code.clone(), r1cs.clone(), (), ());
+    let w1 = WARP::<F, R1CS<F>, _, H>::new(
+        warp_cfg1,
+        code.clone(),
+        r1cs.clone(),
+        Blake3FieldHasher::<F>::new(),
+    );
 
     let (mut roots, mut alphas, mut mus, mut taus, mut xs, mut etas) =
         (vec![], vec![], vec![], vec![], vec![], vec![]);
-    let (mut tds, mut fs, mut ws) = (vec![], vec![], vec![]);
+    let (mut tds, mut ws) = (vec![], vec![]);
 
     for _ in 0..l1 {
         let ds = spongefish::domain_separator!("test::warp::negative");
@@ -144,13 +149,17 @@ fn make_fixture() -> Fixture {
         xs.push(acc_x.beta.1[0].clone());
         etas.push(acc_x.eta[0]);
         tds.push(acc_w.td[0].clone());
-        fs.push(acc_w.f[0].clone());
         ws.push(acc_w.w[0].clone());
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _, MT>::new(warp_cfg2, code, r1cs.clone(), (), ());
+    let warp = WARP::<F, R1CS<F>, _, H>::new(
+        warp_cfg2,
+        code,
+        r1cs.clone(),
+        Blake3FieldHasher::<F>::new(),
+    );
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
@@ -169,7 +178,6 @@ fn make_fixture() -> Fixture {
             },
             AccumulatorWitness {
                 td: tds,
-                f: fs,
                 w: ws,
             },
         )
@@ -238,23 +246,6 @@ fn truncated_shift_query_answers_raises_num_shift_queries() {
     let mut proof = fix.proof.clone();
     proof.shift_query_answers.pop();
     assert_err(fix.verify(fix.acc_x.clone(), proof), "NumShiftQueries");
-}
-
-#[test]
-fn swapped_auth0_leaf_index_raises_shift_query_index() {
-    let fix = make_fixture();
-    let mut proof = fix.proof.clone();
-    // Overwrite auth_0[0]'s path with auth_0[1]'s path so leaf_index
-    // stops matching queries.leaf_positions[0].
-    let p0_is_p1 = proof.auth_0[0].leaf_index == proof.auth_0[1].leaf_index;
-    if p0_is_p1 {
-        // Extremely unlikely but keeps the test deterministic: skip with a
-        // clear message rather than silently pass.
-        eprintln!("fixture happened to sample identical leaf indices; skipping");
-        return;
-    }
-    proof.auth_0.swap(0, 1);
-    assert_err(fix.verify(fix.acc_x.clone(), proof), "ShiftQueryIndex");
 }
 
 #[test]

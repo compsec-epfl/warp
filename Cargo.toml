@@ -28,6 +28,8 @@ tracing = { version = "0.1", default-features = false, features = ["std", "attri
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "json", "registry"], optional = true }
 libc = { version = "0.2", optional = true }
 ark-codes = { git = "https://github.com/z-tech/ark-codes.git", branch = "z-tech/arkworks-0.6.0" }
+ark-vc = { path = "../ark_vc/crates/ark-vc" }
+ark-mt = { path = "../ark_vc/crates/ark-mt", features = ["blake3", "blake3-field"] }
 
 [dev-dependencies]
 ark-bls12-381 = "0.6.0"

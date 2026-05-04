@@ -254,7 +254,7 @@ What practitioners writing STIR / WHIR / WARP \emph{already} have:
   \item \textbf{Transcripts.} \texttt{spongefish} 0.7 \,---\, de facto in this corner of the ecosystem. Practitioners use it directly. No abstraction needed.
   \item \textbf{Sumchecks.} \texttt{effsc} \,---\, \texttt{SumcheckProver}, \texttt{RoundPolyEvaluator}, \texttt{InnerProductProver}, \texttt{CoefficientProverLSB}, \texttt{MultilinearProver}, hypercube + protogalaxy utilities. WARP uses 9 of 10 effsc primitives already.
   \item \textbf{Linear codes.} \texttt{ark-codes::LinearCode} \,---\, encode, code\_len.
-  \item \textbf{Merkle commitments.} \texttt{ark-crypto-primitives::merkle\_tree} \,---\, generic over leaf shape, hashes.
+  \item \textbf{Vector commitments.} \texttt{ark-vc} (abstract trait) + \texttt{ark-mt} (Merkle backend, multi-vector + single-shot openings, Blake3 / Poseidon hashers).
   \item \textbf{Oracle struct.} \texttt{Vec<F>} codeword + lazy MLE cache. Same storage shape across STIR / WHIR / WARP.
 \end{itemize}
 
@@ -278,27 +278,29 @@ The fellow: \emph{practitioners benefit from patterns + examples + shared primit
 \end{frame}
 
 % --------------------------------------------------------------------
-\begin{frame}[fragile]{The one new abstraction: \texttt{CodeCommitment}}
-The single integration gap not already covered by the toolkit:
+\begin{frame}[fragile]{The integration trait already exists: \texttt{ark-vc}}
+The single integration gap, now filled by \texttt{ark-vc} + \texttt{ark-mt}:
 
 \begin{lstlisting}
-pub trait CodeCommitment<F: Field> {
-    type Commitment;
-    type Opening;
-
-    fn commit(&self, codeword: &[F]) -> Self::Commitment;
-    fn open_index(&self, codeword: &[F], i: usize) -> Self::Opening;
-    fn verify_opening(
-        &self, c: &Self::Commitment, i: usize, val: F, o: &Self::Opening,
-    ) -> bool;
+pub trait MerkleCommitment<H: MerkleHasher, S: MerkleShape> {
+    fn commit(&self, msg: &[H::Symbol]) -> Committed<...>;
+    fn open(&self, td: &Committed<...>, indices: &[usize])
+        -> OpeningProof<...>;
+    fn check(&self, root: &H::Digest,
+             opening: &Opening<H::Symbol>,
+             proof: &OpeningProof<...>) -> bool;
 }
+
+// Multi-vector variant: one root over m interleaved codewords,
+// one OpeningProof for arbitrary-many indices. WARP uses this.
+pub struct MultiVectorMerkleCommitment<H, S, F> { ... }
 \end{lstlisting}
 
 \vspace{0.4em}
-Default impl: \texttt{LinearCode} + Merkle config from \texttt{ark-crypto-primitives}.
 \begin{itemize}\small
-  \item Wraps the only integration practitioners currently re-roll per protocol.
-  \item Small (one trait, one default impl), focused, validated by WARP migrating onto it.
+  \item Single multi-opening proof per commitment (fewer auth paths than per-index).
+  \item Backend-agnostic: \texttt{Blake3FieldHasher}, Poseidon hasher, hybrid stacks.
+  \item WARP migrated onto it: \texttt{Path<MT>} $\to$ \texttt{OpeningProof<LayerGroup<H>>}; \texttt{MerkleTree<MT>} $\to$ \texttt{MultiVectorCommitted<H, S, F>}; \texttt{H: MerkleHasher} replaces \texttt{MT: Config} across phases. 33/33 tests still green.
 \end{itemize}
 \end{frame}
 
@@ -312,11 +314,11 @@ Default impl: \texttt{LinearCode} + Merkle config from \texttt{ark-crypto-primit
 
 \textbf{Lean on the existing primitive layer.}
 \begin{itemize}\small
-  \item \texttt{effsc}, \texttt{spongefish}, \texttt{ark-codes}, \texttt{ark-crypto-primitives::merkle\_tree}.
+  \item \texttt{effsc}, \texttt{spongefish}, \texttt{ark-codes}, \texttt{ark-vc} + \texttt{ark-mt}.
   \item Already strong. The discipline is to use them, not reinvent.
 \end{itemize}
 
-\textbf{Add \texttt{CodeCommitment}.} The one missing integration trait. WARP migrates onto it; STIR-lite plugs into it.
+\textbf{WARP runs on \texttt{ark-vc}.} The missing integration trait was filled by \texttt{ark-vc}/\texttt{ark-mt}; WARP migrated onto its multi-vector commitment scheme. STIR-lite plugs into the same surface.
 
 \textbf{Make WARP the reference implementation.} A new protocol designer reads \texttt{src/protocol/phases/}, copies the IOR-shaped pattern, plugs in their primitives.
 
@@ -331,7 +333,7 @@ Default impl: \texttt{LinearCode} + Merkle config from \texttt{ark-crypto-primit
 \textbf{Paper section (structured sumcheck primitive).} The fused $\alpha/\beta/\tau$-fold inside TwinConstraint is the natural extraction \,---\, lives in \texttt{effsc} as a new \texttt{RoundPolyEvaluator}-shaped impl, citable from outside Warp.
 
 \vspace{0.4em}
-\textbf{Add \texttt{CodeCommitment}} \,---\, small focused trait, ships in a session. Migrate WARP onto it.
+\textbf{\texttt{ark-vc} integration landed.} WARP migrated from \texttt{ark-crypto-primitives::merkle\_tree} onto \texttt{ark-vc}/\texttt{ark-mt}. Multi-vector openings collapse PESAT's $l_1$ paths to one proof per query batch. Tests + benches green.
 
 \vspace{0.4em}
 \textbf{Implement a second protocol.} STIR-lite or WHIR-lite, against the same primitives + IOR-shaped pattern. The friction it surfaces is the most reliable guide for the next iteration.

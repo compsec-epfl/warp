@@ -1,40 +1,39 @@
 use ark_codes::traits::LinearCode;
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, MerkleTree, Path},
-};
 use ark_ff::Field;
+use ark_mt::MerkleHasher;
 use std::marker::PhantomData;
 
 use crate::config::WARPConfig;
+use crate::crypto::merkle::{WarpCommitted, WarpProof};
 use crate::error::ProverError;
 use crate::relations::BundledPESAT;
 
 // result of a prove call: (new accumulator instance + witness, proof)
-pub type ProveResult<F, MT> = Result<
+pub type ProveResult<F, H> = Result<
     (
-        (AccumulatorInstance<F, MT>, AccumulatorWitness<F, MT>),
-        WARPProof<F, MT>,
+        (AccumulatorInstance<F, H>, AccumulatorWitness<F, H>),
+        WARPProof<F, H>,
     ),
     ProverError,
 >;
 
 /// Protocol parameters for WARP — the shared configuration used by all IOR phases.
-pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
+pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
     pub _f: PhantomData<F>,
     pub config: WARPConfig<F, P>,
     pub code: C,
     pub p: P,
-    pub mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
-    pub mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+    /// The hasher value (replaces the old leaf-hash + two-to-one-hash parameter pair).
+    pub hasher: H,
 }
+
 /// Accumulator instance — the public part of an accumulated claim.
 ///
 /// Corresponds to `(rt, α, μ, (τ, x), η)` in the paper.
 #[derive(Clone)]
-pub struct AccumulatorInstance<F: Field, MT: Config> {
+pub struct AccumulatorInstance<F: Field, H: MerkleHasher> {
     /// Merkle tree root commitments.
-    pub rt: Vec<MT::InnerDigest>,
+    pub rt: Vec<H::Digest>,
     /// Code evaluation points (one per accumulated oracle).
     pub alpha: Vec<Vec<F>>,
     /// Code evaluation targets (one per accumulated oracle).
@@ -45,7 +44,7 @@ pub struct AccumulatorInstance<F: Field, MT: Config> {
     pub eta: Vec<F>,
 }
 
-impl<F: Field, MT: Config> AccumulatorInstance<F, MT> {
+impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
     pub fn empty() -> Self {
         Self {
             rt: vec![],
@@ -59,22 +58,41 @@ impl<F: Field, MT: Config> AccumulatorInstance<F, MT> {
 
 /// Accumulator witness — the private part of an accumulated claim.
 ///
-/// Corresponds to `(td, f, w)` in the paper.
-#[derive(Clone)]
-pub struct AccumulatorWitness<F: Field, MT: Config> {
-    /// Merkle tree trapdoors (full trees).
-    pub td: Vec<MerkleTree<MT>>,
-    /// Oracle evaluations (codewords).
-    pub f: Vec<Vec<F>>,
+/// Corresponds to `(td, w)` in the paper. The codewords are stored
+/// inside `td[i].codewords()` so we don't carry a parallel `f` field.
+pub struct AccumulatorWitness<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    /// Committed multi-vector trees (with the codewords cached inside).
+    pub td: Vec<WarpCommitted<H, F>>,
     /// R1CS witnesses.
     pub w: Vec<Vec<F>>,
 }
 
-impl<F: Field, MT: Config> AccumulatorWitness<F, MT> {
+impl<F, H> Clone for AccumulatorWitness<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    WarpCommitted<H, F>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            td: self.td.clone(),
+            w: self.w.clone(),
+        }
+    }
+}
+
+impl<F, H> AccumulatorWitness<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
     pub fn empty() -> Self {
         Self {
             td: vec![],
-            f: vec![],
             w: vec![],
         }
     }
@@ -83,32 +101,57 @@ impl<F: Field, MT: Config> AccumulatorWitness<F, MT> {
 /// Proof produced by the WARP accumulation prover.
 ///
 /// Corresponds to `(rt₀, μᵢ, ν₀, νᵢ, auth₀, authⱼ, f_i(x_j))` in the paper.
-#[derive(Clone)]
-pub struct WARPProof<F: Field, MT: Config> {
+pub struct WARPProof<F: Field, H: MerkleHasher> {
     /// Fresh Merkle tree root.
-    pub rt_0: MT::InnerDigest,
+    pub rt_0: H::Digest,
     /// Fresh code evaluations at 0.
     pub mu_i: Vec<F>,
     /// Evaluation of accumulated oracle at zeta_0.
     pub nu_0: F,
     /// Evaluation claims (OOD + shift query answers).
     pub nu_i: Vec<F>,
-    /// Authentication paths for the fresh commitment.
-    pub auth_0: Vec<Path<MT>>,
-    /// Authentication paths for each accumulated commitment.
-    pub auth_j: Vec<Vec<Path<MT>>>,
+    /// Single multi-opening proof for the fresh PESAT commitment, covering
+    /// all queried indices across all `l1` interleaved codewords.
+    pub auth_0: WarpProof<H>,
+    /// One multi-opening proof per accumulated oracle (each is a single
+    /// codeword tree, opened at the same `t` query positions).
+    pub auth_j: Vec<WarpProof<H>>,
     /// Shift query answers: `f_i(x_j)` for each query position `j` and oracle `i`.
     pub shift_query_answers: Vec<Vec<F>>,
+}
+
+impl<F, H> Clone for WARPProof<F, H>
+where
+    F: Field,
+    H: MerkleHasher,
+    H::Digest: Clone,
+    WarpProof<H>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            rt_0: self.rt_0.clone(),
+            mu_i: self.mu_i.clone(),
+            nu_0: self.nu_0,
+            nu_i: self.nu_i.clone(),
+            auth_0: self.auth_0.clone(),
+            auth_j: self.auth_j.clone(),
+            shift_query_answers: self.shift_query_answers.clone(),
+        }
+    }
 }
 
 /// Intermediate output of the PESAT reduction phase.
 ///
 /// This data flows from Phase 2 (PESAT Reduction) into Phase 3 (Constrained Code Accumulation).
-pub struct PesatOutput<F: Field, MT: Config> {
+pub struct PesatOutput<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
     /// Encoded codewords from fresh witnesses.
     pub codewords: Vec<Vec<F>>,
-    /// Merkle tree over the interleaved codeword leaves.
-    pub td_0: MerkleTree<MT>,
+    /// Multi-vector commitment over the `l1` codewords.
+    pub td_0: WarpCommitted<H, F>,
     /// Code evaluation claims: `f_i(0)` for each codeword.
     pub mus: Vec<F>,
     /// PESAT evaluation challenges (one per fresh instance).

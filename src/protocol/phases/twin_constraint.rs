@@ -28,8 +28,8 @@
 //! - `ProverOutputs`    — the new reduced oracle `f` + the reduced witness vector `z`
 //! - `VerifierOutputs`  — `()` (the new commitment is read from the transcript by the orchestrator)
 
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{Field, PrimeField};
+use ark_mt::MerkleHasher;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use effsc::{
     coefficient_sumcheck::RoundPolyEvaluator,
@@ -173,8 +173,8 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
 
 // ─── IOR signature types ──────────────────────────────────────────────────
 
-pub struct TwinConstraintStatement<F: Field, MT: Config> {
-    pub acc_instance: AccumulatorInstance<F, MT>,
+pub struct TwinConstraintStatement<F: Field, H: MerkleHasher> {
+    pub acc_instance: AccumulatorInstance<F, H>,
     pub l1_mus: Vec<F>,
     pub l1_taus: Vec<Vec<F>>,
     pub log_l: usize,
@@ -249,21 +249,21 @@ pub struct TwinConstraintProverOutputs<F: Field> {
 }
 
 /// TwinConstraint phase configuration.
-pub struct TwinConstraint<'a, F, MT>
+pub struct TwinConstraint<'a, F, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+    H: MerkleHasher,
 {
     pub r1cs: &'a R1CSConstraints<F>,
-    pub _phantom: PhantomData<MT>,
+    pub _phantom: PhantomData<H>,
 }
 
-impl<'a, F, MT> IOR for TwinConstraint<'a, F, MT>
+impl<'a, F, H> IOR for TwinConstraint<'a, F, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
+    H: MerkleHasher,
 {
-    type Statement = TwinConstraintStatement<F, MT>;
+    type Statement = TwinConstraintStatement<F, H>;
     type Witness = TwinConstraintWitness<'a, F>;
     type ProverInputs = TwinConstraintProverInputs<'a, F>;
     type VerifierInputs = ();

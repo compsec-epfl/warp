@@ -1,11 +1,11 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
+use ark_mt::MerkleHasher;
 use spongefish::{ProverState, VerificationResult, VerifierState};
 
 use crate::error::{VerifierError, WARPError};
 use crate::types::{AccumulatorInstance, AccumulatorWitness, ProveResult, WARPProof};
 
-pub trait AccumulationScheme<F: Field, MT: Config> {
+pub trait AccumulationScheme<F: Field, H: MerkleHasher<Symbol = Vec<F>>> {
     type Index;
     type ProverKey;
     type VerifierKey;
@@ -25,21 +25,21 @@ pub trait AccumulationScheme<F: Field, MT: Config> {
         prover_state: &mut ProverState,
         witnesses: Self::Witnesses,
         instances: Self::Instances,
-        acc_instance: AccumulatorInstance<F, MT>,
-        acc_witness: AccumulatorWitness<F, MT>,
-    ) -> ProveResult<F, MT>;
+        acc_instance: AccumulatorInstance<F, H>,
+        acc_witness: AccumulatorWitness<F, H>,
+    ) -> ProveResult<F, H>;
 
     fn verify<'a>(
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: AccumulatorInstance<F, MT>,
-        proof: WARPProof<F, MT>,
+        acc_instance: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError>;
 
     fn decide(
         &self,
-        acc_witness: AccumulatorWitness<F, MT>,
-        acc_instance: AccumulatorInstance<F, MT>,
+        acc_witness: AccumulatorWitness<F, H>,
+        acc_instance: AccumulatorInstance<F, H>,
     ) -> Result<(), WARPError>;
 }

@@ -1,36 +1,45 @@
-use ark_codes::traits::LinearCode;
-use ark_crypto_primitives::{
-    merkle_tree::{Config, MerkleTree, Path},
-    Error,
-};
-use ark_ff::Field;
+//! Warp's vector-commitment layer, built on `ark-vc` / `ark-mt`.
+//!
+//! Replaces the previous `ark-crypto-primitives::merkle_tree`-based
+//! implementation. Warp commits to L1 codewords interleaved into one
+//! Merkle tree (PESAT phase) and to single folded codewords across the
+//! accumulator. Both shapes are handled by `MultiVectorMerkleCommitment`
+//! (the m=1 case is a degenerate single-codeword tree).
 
-pub fn build_codeword_leaves<F: Field, C: LinearCode<F>>(
-    code: &C,
-    witnesses: &[Vec<F>],
-    l1: usize,
-) -> (Vec<Vec<F>>, Vec<F>) {
-    let mut leaves = vec![F::default(); l1 * code.code_len()];
-    let mut codewords = vec![vec![F::default(); code.code_len()]; l1];
-    for (i, w) in witnesses.iter().enumerate() {
-        let f_i = code.encode(w);
-        // stacking codewords in flat array, which we chunk below
-        // [[w_0[0], .., w_{N-1}[0]], .., [w_0[N-1], .., w_{N-1}[N-1]]] // L * N elements
-        for (j, value) in f_i.iter().enumerate() {
-            leaves[(j * l1) + i] = *value;
-        }
-        codewords[i] = f_i;
-    }
-    (codewords, leaves)
+use ark_codes::traits::LinearCode;
+use ark_ff::Field;
+use ark_mt::{
+    layer_stack::LayerGroup, multi_vector::MultiVectorMerkleCommitment, shape::PerfectBinary,
+    MerkleHasher,
+};
+
+/// Warp's commitment scheme: any field-symbol hasher over a
+/// power-of-two binary tree.
+pub type WarpScheme<H, F> = MultiVectorMerkleCommitment<H, PerfectBinary, F>;
+
+/// Output of a commit: the codewords + state needed to open at any index.
+pub type WarpCommitted<H, F> = ark_mt::multi_vector::MultiVectorCommitted<H, PerfectBinary, F>;
+
+/// Verifier-side opening (indices + per-codeword opened values).
+pub type WarpOpening<F> = ark_mt::multi_vector::MultiVectorOpening<F>;
+
+/// Authentication paths for the opened indices.
+pub type WarpProof<H> = ark_mt::OpeningProof<LayerGroup<H>>;
+
+/// Build a `WarpScheme` for a given hasher and codeword length.
+pub fn warp_scheme<H, F>(hasher: H, code_len: usize) -> WarpScheme<H, F>
+where
+    H: MerkleHasher<Symbol = Vec<F>>,
+    F: Field + Clone,
+{
+    MultiVectorMerkleCommitment::new(hasher, PerfectBinary::with_num_leaves(code_len))
 }
 
-pub fn compute_auth_paths<P: Config>(
-    td: &MerkleTree<P>,
-    indexes: &[usize],
-) -> Result<Vec<Path<P>>, Error> {
-    let paths = indexes
-        .iter()
-        .map(|x_t| td.generate_proof(*x_t))
-        .collect::<Result<Vec<Path<P>>, Error>>()?;
-    Ok(paths)
+/// Encode `witnesses` into codewords. Returns the codewords (one per
+/// witness). Each codeword has length `code.code_len()`.
+pub fn encode_codewords<F: Field, C: LinearCode<F>>(
+    code: &C,
+    witnesses: &[Vec<F>],
+) -> Vec<Vec<F>> {
+    witnesses.iter().map(|w| code.encode(w)).collect()
 }

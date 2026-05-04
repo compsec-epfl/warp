@@ -3,11 +3,8 @@ use crate::error::WARPError;
 use crate::traits::AccumulationScheme;
 use crate::types::{AccumulatorInstance, AccumulatorWitness, ProveResult, WARPParams, WARPProof};
 use ark_codes::traits::LinearCode;
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, MerkleTree},
-};
 use ark_ff::{Field, PrimeField};
+use ark_mt::MerkleHasher;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::log2;
 use config::WARPConfig;
@@ -33,6 +30,7 @@ pub mod traits;
 pub mod types;
 pub mod utils;
 
+use crate::crypto::merkle::warp_scheme;
 use error::{DeciderError, ProverError, VerifierError};
 use protocol::phases::{
     batching::{Batching, BatchingProverInputs, BatchingStatement, BatchingVerifierInputs},
@@ -60,43 +58,37 @@ impl BoolResult for bool {
     }
 }
 
-pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Config> {
-    pub params: WARPParams<F, P, C, MT>,
+pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
+    pub params: WARPParams<F, P, C, H>,
 }
 
-impl<
-        F: Field,
-        P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>, // m, n, k
-        C: LinearCode<F> + Clone,
-        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-    > WARP<F, P, C, MT>
+impl<F, P, C, H> WARP<F, P, C, H>
+where
+    F: Field,
+    P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>,
+    C: LinearCode<F> + Clone,
+    H: MerkleHasher<Symbol = Vec<F>>,
 {
-    pub fn new(
-        config: WARPConfig<F, P>,
-        code: C,
-        p: P,
-        mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
-        mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
-    ) -> WARP<F, P, C, MT> {
+    pub fn new(config: WARPConfig<F, P>, code: C, p: P, hasher: H) -> WARP<F, P, C, H> {
         Self {
             params: WARPParams {
                 _f: PhantomData,
                 config,
                 code,
                 p,
-                mt_leaf_hash_params,
-                mt_two_to_one_hash_params,
+                hasher,
             },
         }
     }
 }
 
-impl<
-        F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-        P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>, // m, n, k
-        C: LinearCode<F> + Clone,
-        MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-    > AccumulationScheme<F, MT> for WARP<F, P, C, MT>
+impl<F, P, C, H> AccumulationScheme<F, H> for WARP<F, P, C, H>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>,
+    C: LinearCode<F> + Clone,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
     type Index = P;
     type ProverKey = (P, usize, usize, usize);
@@ -109,8 +101,6 @@ impl<
         index: Self::Index,
     ) -> spongefish::VerificationResult<(Self::ProverKey, Self::VerifierKey)> {
         let (m, n, k) = index.config();
-        // initialize prover state for fs
-        // TODO for R1CS
         prover_state.public_message(&index.description());
         prover_state.prover_message(&F::from(m as u32));
         prover_state.prover_message(&F::from(n as u32));
@@ -125,9 +115,9 @@ impl<
         prover_state: &mut ProverState,
         witnesses: Self::Witnesses,
         instances: Self::Instances,
-        acc_instance: AccumulatorInstance<F, MT>,
-        acc_witness: AccumulatorWitness<F, MT>,
-    ) -> ProveResult<F, MT> {
+        acc_instance: AccumulatorInstance<F, H>,
+        acc_witness: AccumulatorWitness<F, H>,
+    ) -> ProveResult<F, H> {
         debug_assert!(instances.len() > 1);
         debug_assert_eq!(witnesses.len(), instances.len());
         debug_assert_eq!(acc_witness.td.len(), acc_instance.rt.len());
@@ -137,29 +127,32 @@ impl<
         debug_assert_eq!(l1 + l2, l);
         debug_assert!(l.is_power_of_two());
 
-        // Parse phase: dimensions and transcript priming.
         #[allow(non_snake_case)]
         let (M, N, k) = (pk.1, pk.2, pk.3);
         let (log_m, log_l) = (log2(M) as usize, log2(l) as usize);
-        let log_n = log2(self.params.code.code_len()) as usize;
+        let n = self.params.code.code_len();
+        let log_n = log2(n) as usize;
 
         debug_assert_eq!(instances[0].len(), N - k);
         absorb_instances(prover_state, &instances);
         acc_instance.absorb_into(prover_state);
 
-        // Destructure acc_witness so we can hand .f/.w to twin_constraint by
-        // reference and move .td/.f into proximity afterwards.
+        // Destructure acc_witness. Codewords live inside td[i].codewords();
+        // we extract the single codeword per accumulator entry into acc_fs
+        // for use by twin_constraint.
         let AccumulatorWitness {
             td: acc_tds,
-            f: acc_fs,
             w: acc_ws,
         } = acc_witness;
+        let acc_fs: Vec<Vec<F>> = acc_tds
+            .iter()
+            .map(|td| td.codewords()[0].clone())
+            .collect();
 
-        // Phase 2: PESAT — emit oracles (codewords), commit, squeeze τs.
-        let pesat_phase = Pesat::<F, C, MT> {
+        // Phase 2: PESAT
+        let pesat_phase = Pesat::<F, C, H> {
             code: &self.params.code,
-            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
-            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+            hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
         let (pesat_red, pesat_out) = pesat_phase.prove(
@@ -171,8 +164,8 @@ impl<
             (),
         )?;
 
-        // Phase 3a: twin-constraint sumcheck.
-        let tc_phase = TwinConstraint::<F, MT> {
+        // Phase 3a: twin-constraint sumcheck
+        let tc_phase = TwinConstraint::<F, H> {
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
@@ -197,8 +190,7 @@ impl<
             },
         )?;
 
-        // Phase 3b: bundled η, ν₀, new commitment, absorb — the "emit new
-        // oracle + claims" step between twin-constraint and OOD.
+        // Phase 3b: bundled η, ν₀, new commitment, absorb.
         let beta_eq_evals = (0..M)
             .map(|i| eq_poly(&tc_red.beta_tau, i))
             .collect::<Vec<_>>();
@@ -214,25 +206,19 @@ impl<
         let new_w = new_w.to_vec();
         let new_beta = (vec![tc_red.beta_tau.clone()], vec![new_x]);
 
-        let td = {
+        // Commit to the new (single-codeword) reduced oracle.
+        let td_new = {
             let _s = tracing::info_span!("warp.commit_new_oracle").entered();
             count_ops!(MerkleTreeBuilds);
-            MerkleTree::<MT>::new(
-                &self.params.mt_leaf_hash_params,
-                &self.params.mt_two_to_one_hash_params,
-                tc_out.f.evals().chunks(1).collect::<Vec<_>>(),
-            )?
+            let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), n);
+            let new_codeword = tc_out.f.evals().to_vec();
+            scheme.commit(&[new_codeword])
         };
-        let td_root_bytes: [u8; 32] = td
-            .root()
-            .as_ref()
-            .try_into()
-            .expect("root must be 32 bytes");
-        prover_state.prover_message(&td_root_bytes);
+        prover_state.prover_message(td_new.root());
         prover_state.prover_message(&eta);
         prover_state.prover_message(&nu_0);
 
-        // Phase 3c: OOD — point queries on the oracle.
+        // Phase 3c: OOD
         let ood_phase = Ood::<F>::new();
         let (ood_red, _) = ood_phase.prove(
             prover_state,
@@ -244,10 +230,10 @@ impl<
             OodProverInputs { oracle: &tc_out.f },
         )?;
 
-        // Sample shift queries — ordering-coupled to the batching ξ below.
+        // Sample shift queries.
         let queries = QueryIndices::<F>::sample(prover_state, log_n, self.params.config.t);
 
-        // Phase 3d: batching sumcheck. Assemble zetas = [ζ₀, ood_j…, query_k…].
+        // Phase 3d: batching sumcheck.
         let mut zetas: Vec<Vec<F>> =
             Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         zetas.push(tc_red.zeta_0.clone());
@@ -272,13 +258,9 @@ impl<
             BatchingProverInputs { oracle: &tc_out.f },
         )?;
 
-        // Phase 3e: proximity — index queries + auth paths on accumulated +
-        // fresh oracles (NOT on the reduced `f`, which is this round's new
-        // oracle).
-        let all_codewords: Vec<Vec<F>> = acc_fs.into_iter().chain(pesat_out.codewords).collect();
-        let proximity_phase = Proximity::<F, MT> {
-            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
-            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+        // Phase 3e: proximity.
+        let proximity_phase = Proximity::<F, H> {
+            hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
         let (_, prox) = proximity_phase.prove(
@@ -287,12 +269,12 @@ impl<
                 queries: queries.clone(),
                 l2,
                 t: self.params.config.t,
+                n,
             },
             (),
             ProximityProverInputs {
                 td_0: &pesat_out.td_0,
                 acc_td: &acc_tds,
-                all_codewords: &all_codewords,
             },
         )?;
 
@@ -302,19 +284,18 @@ impl<
         nus.extend(ood_red.answers);
 
         let new_acc_instance = AccumulatorInstance {
-            rt: vec![td.root()],
+            rt: vec![td_new.root().clone()],
             alpha: vec![batching_red.alpha],
             mu: vec![batching_out.mu],
             beta: new_beta,
             eta: vec![eta],
         };
         let new_acc_witness = AccumulatorWitness {
-            td: vec![td],
-            f: vec![tc_out.f.into_evals()],
+            td: vec![td_new],
             w: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: pesat_out.td_0.root(),
+            rt_0: pesat_out.td_0.root().clone(),
             mu_i: pesat_red.mus,
             nu_0,
             nu_i: nus,
@@ -330,8 +311,8 @@ impl<
         &self,
         vk: Self::VerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: AccumulatorInstance<F, MT>,
-        proof: WARPProof<F, MT>,
+        acc_instance: AccumulatorInstance<F, H>,
+        proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError> {
         let (l1, l) = (self.params.config.l1, self.params.config.l);
         let l2 = l - l1;
@@ -342,12 +323,9 @@ impl<
         let n = self.params.code.code_len();
         let log_n = log2(n) as usize;
 
-        // 1. Parse statement (fresh instances + accumulator from transcript).
-        // The acc_instance argument carries the new accumulator's α/β for the
-        // final consistency checks; the transcript-parsed `parsed_acc` carries
-        // the OLD l2 accumulator entries used during proximity / β-consistency.
+        // 1. Parse statement
         let (l1_xs, parsed_acc) =
-            parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_m)?;
+            parse_statement::<F, H>(verifier_state, l1, l2, N - k, log_n, log_m)?;
         let acc_alpha_first = acc_instance.alpha[0].clone();
         let acc_beta_0_first = acc_instance.beta.0[0].clone();
         let acc_beta_1_first = acc_instance.beta.1[0].clone();
@@ -356,11 +334,10 @@ impl<
         let l2_taus = parsed_acc.beta.0.clone();
         let l2_xs = parsed_acc.beta.1.clone();
 
-        // 2. PESAT::verify — read rt_0, l1_mus; squeeze l1_taus.
-        let pesat_phase = Pesat::<F, C, MT> {
+        // 2. PESAT::verify
+        let pesat_phase = Pesat::<F, C, H> {
             code: &self.params.code,
-            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
-            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+            hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
         let (pesat_red, pesat_v_out) =
@@ -369,8 +346,8 @@ impl<
         let l1_taus = pesat_red.taus;
         let rt_0 = pesat_v_out.rt_0;
 
-        // 3. TwinConstraint::verify — squeeze ω, τ; run sumcheck.
-        let tc_phase = TwinConstraint::<F, MT> {
+        // 3. TwinConstraint::verify
+        let tc_phase = TwinConstraint::<F, H> {
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
@@ -387,16 +364,15 @@ impl<
             (),
         )?;
 
-        // 4. Orchestrator-side reads BETWEEN twin-constraint and OOD: td, η, ν₀.
-        let _td_bytes: [u8; 32] = verifier_state.prover_message()?;
+        // 4. Read between TC and OOD: td (new commitment), η, ν₀.
+        let _td_digest: H::Digest = verifier_state.prover_message()?;
         let eta: F = verifier_state.prover_message()?;
         let nu_0: F = verifier_state.prover_message()?;
 
-        // 5. Discharge the typed deferred oracle check from TwinConstraint.
-        //    Equivalent to: final_claim ≟ eq(τ, γ) · (ν₀ + ω·η).
+        // 5. Discharge the deferred oracle check.
         tc_red.deferred.discharge(&tc_red.gamma, nu_0, eta)?;
 
-        // 6. OOD::verify — squeeze samples; read answers.
+        // 6. OOD::verify
         let ood_phase = Ood::<F>::new();
         let (ood_red, _) = ood_phase.verify(
             verifier_state,
@@ -407,8 +383,7 @@ impl<
             (),
         )?;
 
-        // 7. Orchestrator: squeeze shift-query byte challenges, build
-        //    QueryIndices, run Proximity::verify.
+        // 7. Squeeze shift-query bytes; build queries; Proximity::verify.
         let n_shift_query_bytes = (self.params.config.t * log_n).div_ceil(8);
         let bytes_shift_queries: Vec<u8> = (0..n_shift_query_bytes)
             .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
@@ -416,9 +391,8 @@ impl<
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
 
-        let proximity_phase = Proximity::<F, MT> {
-            mt_leaf_hash_params: &self.params.mt_leaf_hash_params,
-            mt_two_to_one_hash_params: &self.params.mt_two_to_one_hash_params,
+        let proximity_phase = Proximity::<F, H> {
+            hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
         proximity_phase.verify(
@@ -427,6 +401,7 @@ impl<
                 queries: queries.clone(),
                 l2,
                 t: self.params.config.t,
+                n,
             },
             ProximityVerifierInputs {
                 rt_0: &rt_0,
@@ -434,12 +409,10 @@ impl<
                 auth_0: &proof.auth_0,
                 auth_j: &proof.auth_j,
                 shift_query_answers: &proof.shift_query_answers,
-                _phantom: PhantomData,
             },
         )?;
 
-        // 8. Compute ν_{s+k} from the (now proximity-verified) shift answers
-        //    and the γ-equality table; assemble the full nus vector.
+        // 8. Compute ν_{s+k} from shift answers; assemble nus.
         let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &tc_red.gamma);
         let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         nus.push(nu_0);
@@ -452,8 +425,7 @@ impl<
             nus.push(nu_st);
         }
 
-        // 9. Build zetas_prefix; Batching::verify squeezes ξ, computes σ₂,
-        //    runs sumcheck, and does the final-claim oracle check.
+        // 9. Build zetas_prefix; Batching::verify.
         let mut zetas: Vec<Vec<F>> =
             Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         zetas.push(tc_red.zeta_0.clone());
@@ -480,8 +452,7 @@ impl<
             },
         )?;
 
-        // 10. Accumulator consistency checks for the new code / circuit
-        //     evaluation points.
+        // 10. Accumulator consistency.
         (acc_alpha_first == batching_red.alpha).ok_or_err(VerifierError::CodeEvaluationPoint)?;
 
         let betas = l2_taus
@@ -499,30 +470,36 @@ impl<
 
     fn decide(
         &self,
-        acc_witness: AccumulatorWitness<F, MT>,
-        acc_instance: AccumulatorInstance<F, MT>,
+        acc_witness: AccumulatorWitness<F, H>,
+        acc_instance: AccumulatorInstance<F, H>,
     ) -> Result<(), WARPError> {
-        let computed_mt = MerkleTree::<MT>::new(
-            &self.params.mt_leaf_hash_params,
-            &self.params.mt_two_to_one_hash_params,
-            acc_witness.f[0].chunks(1).collect::<Vec<_>>(),
-        )?;
-        (acc_instance.rt[0] == computed_mt.root()).ok_or_err(DeciderError::MerkleRoot)?;
-        (acc_witness.td[0].root() == computed_mt.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
+        // The accumulator witness's codeword is td[0].codewords()[0].
+        let acc_codeword = &acc_witness.td[0].codewords()[0];
 
+        // Re-encode the witness; check codeword match.
+        let computed_f = self.params.code.encode(&acc_witness.w[0]);
+        (acc_codeword == &computed_f).ok_or_err(DeciderError::EncodedWitness)?;
+
+        // Re-commit and check root.
+        let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), self.params.code.code_len());
+        let recomputed = scheme.commit(&[computed_f.clone()]);
+        (acc_instance.rt[0] == *recomputed.root()).ok_or_err(DeciderError::MerkleRoot)?;
+        (acc_witness.td[0].root() == recomputed.root())
+            .ok_or_err(DeciderError::MerkleTrapDoor)?;
+
+        // MLE evaluation check.
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.params.code.code_len()) as usize,
-            &acc_witness.f[0],
+            acc_codeword,
         );
         (f_hat.evaluate(&acc_instance.alpha[0]) == acc_instance.mu[0])
             .ok_or_err(DeciderError::MLExtensionEvaluation)?;
 
+        // Bundled-evaluation check.
         let tau = &acc_instance.beta.0[0];
-
         let tau_zero_evader = Ascending::new(tau.len())
             .map(|p| eq_poly(tau, p.index))
             .collect::<Vec<F>>();
-
         let mut z = acc_instance.beta.1[0].clone();
         z.extend(acc_witness.w[0].clone());
         let computed_eta = self
@@ -531,9 +508,6 @@ impl<
             .evaluate_bundled(&tau_zero_evader, &z)
             .unwrap();
         (computed_eta == acc_instance.eta[0]).ok_or_err(DeciderError::BundledEvaluation)?;
-
-        let computed_f = self.params.code.encode(&acc_witness.w[0]);
-        (acc_witness.f[0] == computed_f).ok_or_err(DeciderError::EncodedWitness)?;
 
         Ok(())
     }
