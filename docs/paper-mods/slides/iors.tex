@@ -278,30 +278,24 @@ The fellow: \emph{practitioners benefit from patterns + examples + shared primit
 \end{frame}
 
 % --------------------------------------------------------------------
-\begin{frame}[fragile]{The integration trait already exists: \texttt{ark-vc}}
-The single integration gap, now filled by \texttt{ark-vc} + \texttt{ark-mt}:
+\begin{frame}[fragile]{What WARP migrated onto: \texttt{ark-vc} / \texttt{ark-mt}}
+The migration replaced \texttt{ark-crypto-primitives::merkle\_tree} with a multi-vector commitment scheme. Two structural changes:
 
-\begin{lstlisting}
-pub trait MerkleCommitment<H: MerkleHasher, S: MerkleShape> {
-    fn commit(&self, msg: &[H::Symbol]) -> Committed<...>;
-    fn open(&self, td: &Committed<...>, indices: &[usize])
-        -> OpeningProof<...>;
-    fn check(&self, root: &H::Digest,
-             opening: &Opening<H::Symbol>,
-             proof: &OpeningProof<...>) -> bool;
-}
+\vspace{0.3em}
+\textbf{1. Per-codeword $\to$ one tree.} PESAT commits $l_1$ fresh codewords. Leaves are the column-tuples $(c_0[i], \dots, c_{l_1-1}[i])$, hashed as \texttt{Vec<F>}. One root authenticates all codewords; opening returns all $m$ values per index in one call.
 
-// Multi-vector variant: one root over m interleaved codewords,
-// one OpeningProof for arbitrary-many indices. WARP uses this.
-pub struct MultiVectorMerkleCommitment<H, S, F> { ... }
-\end{lstlisting}
+\vspace{0.3em}
+\textbf{2. Per-query $\to$ one proof.} Old: $t$ queries meant $t$ separate \texttt{Path<MT>}, each carrying its own $\log n$ siblings. New: a single \texttt{OpeningProof} covering all $t$ positions, with shared upper-layer siblings sent once (path-pruned per book §20: union of copaths minus union of paths).
 
 \vspace{0.4em}
+\textbf{Concretely}, $n = 2^{15}$, $t = 100$:
 \begin{itemize}\small
-  \item Single multi-opening proof per commitment (fewer auth paths than per-index).
-  \item Backend-agnostic: \texttt{Blake3FieldHasher}, Poseidon hasher, hybrid stacks.
-  \item WARP migrated onto it: \texttt{Path<MT>} $\to$ \texttt{OpeningProof<LayerGroup<H>>}; \texttt{MerkleTree<MT>} $\to$ \texttt{MultiVectorCommitted<H, S, F>}; \texttt{H: MerkleHasher} replaces \texttt{MT: Config} across phases. 33/33 tests still green.
+  \item Old: $100 \times 15 = 1500$ sibling hashes. Many duplicated near the root.
+  \item New: $\approx 100 \times \log(n/t) \approx 730$ hashes. Savings grow with $t$.
 \end{itemize}
+
+\vspace{0.3em}
+\textbf{In WARP types:} \texttt{MerkleTree<MT>} $\to$ \texttt{MultiVectorCommitted<H,S,F>}; \texttt{Path<MT>} $\to$ \texttt{OpeningProof<HashRegion<H>>}; \texttt{H: MerkleHasher<Symbol = Vec<F>>} replaces \texttt{MT: Config} across all phases. Same soundness, less data on the wire, fewer hash invocations on both sides.
 \end{frame}
 
 % --------------------------------------------------------------------

@@ -154,12 +154,8 @@ fn make_fixture() -> Fixture {
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _, H>::new(
-        warp_cfg2,
-        code,
-        r1cs.clone(),
-        Blake3FieldHasher::<F>::new(),
-    );
+    let warp =
+        WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
@@ -176,10 +172,7 @@ fn make_fixture() -> Fixture {
                 beta: (taus, xs),
                 eta: etas,
             },
-            AccumulatorWitness {
-                td: tds,
-                w: ws,
-            },
+            AccumulatorWitness { td: tds, w: ws },
         )
         .unwrap();
 

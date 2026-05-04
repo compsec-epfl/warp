@@ -9,7 +9,7 @@
 use ark_codes::traits::LinearCode;
 use ark_ff::Field;
 use ark_mt::{
-    layer_stack::LayerGroup, multi_vector::MultiVectorMerkleCommitment, shape::PerfectBinary,
+    hash_region::HashRegion, multi_vector::MultiVectorMerkleCommitment, shape::PerfectBinary,
     MerkleHasher,
 };
 
@@ -24,7 +24,7 @@ pub type WarpCommitted<H, F> = ark_mt::multi_vector::MultiVectorCommitted<H, Per
 pub type WarpOpening<F> = ark_mt::multi_vector::MultiVectorOpening<F>;
 
 /// Authentication paths for the opened indices.
-pub type WarpProof<H> = ark_mt::OpeningProof<LayerGroup<H>>;
+pub type WarpProof<H> = ark_mt::OpeningProof<HashRegion<H>>;
 
 /// Build a `WarpScheme` for a given hasher and codeword length.
 pub fn warp_scheme<H, F>(hasher: H, code_len: usize) -> WarpScheme<H, F>
@@ -37,9 +37,6 @@ where
 
 /// Encode `witnesses` into codewords. Returns the codewords (one per
 /// witness). Each codeword has length `code.code_len()`.
-pub fn encode_codewords<F: Field, C: LinearCode<F>>(
-    code: &C,
-    witnesses: &[Vec<F>],
-) -> Vec<Vec<F>> {
+pub fn encode_codewords<F: Field, C: LinearCode<F>>(code: &C, witnesses: &[Vec<F>]) -> Vec<Vec<F>> {
     witnesses.iter().map(|w| code.encode(w)).collect()
 }

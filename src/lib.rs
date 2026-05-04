@@ -144,10 +144,7 @@ where
             td: acc_tds,
             w: acc_ws,
         } = acc_witness;
-        let acc_fs: Vec<Vec<F>> = acc_tds
-            .iter()
-            .map(|td| td.codewords()[0].clone())
-            .collect();
+        let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
 
         // Phase 2: PESAT
         let pesat_phase = Pesat::<F, C, H> {
@@ -482,10 +479,9 @@ where
 
         // Re-commit and check root.
         let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), self.params.code.code_len());
-        let recomputed = scheme.commit(&[computed_f.clone()]);
+        let recomputed = scheme.commit(std::slice::from_ref(&computed_f));
         (acc_instance.rt[0] == *recomputed.root()).ok_or_err(DeciderError::MerkleRoot)?;
-        (acc_witness.td[0].root() == recomputed.root())
-            .ok_or_err(DeciderError::MerkleTrapDoor)?;
+        (acc_witness.td[0].root() == recomputed.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
 
         // MLE evaluation check.
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(

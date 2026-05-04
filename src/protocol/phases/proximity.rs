@@ -8,8 +8,7 @@
 //! IOR signature
 //! -------------
 //! - `Statement`        — `(queries, l2, t, n)`. `n` is the codeword length;
-//!                       the verifier needs it to construct the `WarpScheme`
-//!                       used for `check`.
+//!   the verifier needs it to construct the `WarpScheme` used for `check`.
 //! - `Witness`          — `()`
 //! - `ProverInputs`     — fresh `WarpCommitted` + l2 accumulated `WarpCommitted`s
 //! - `VerifierInputs`   — fresh root + l2 acc roots + opening proofs + answers
@@ -143,11 +142,13 @@ where
         // (acc_codewords ++ fresh_codewords).
         let shift_query_answers = {
             let _s = tracing::info_span!("proximity.shift_queries").entered();
-            let total_codewords =
-                inputs.acc_td.iter().map(|td| td.num_codewords()).sum::<usize>()
-                    + inputs.td_0.num_codewords();
-            let mut answers =
-                vec![vec![F::default(); total_codewords]; leaf_positions.len()];
+            let total_codewords = inputs
+                .acc_td
+                .iter()
+                .map(|td| td.num_codewords())
+                .sum::<usize>()
+                + inputs.td_0.num_codewords();
+            let mut answers = vec![vec![F::default(); total_codewords]; leaf_positions.len()];
             for (qi, idx) in leaf_positions.iter().enumerate() {
                 let mut col = 0usize;
                 for td in inputs.acc_td.iter() {
