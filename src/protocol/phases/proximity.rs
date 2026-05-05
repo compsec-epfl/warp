@@ -26,6 +26,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
 use crate::error::{ProverError, VerifierError};
+use crate::protocol::phases::oracle_handle::IndexedOracle;
 use crate::protocol::phases::IOR;
 use crate::protocol::query::QueryIndices;
 use crate::BoolResult;
@@ -51,18 +52,23 @@ where
 /// Verifier-side inputs for Proximity.
 ///
 /// The phase verifier no longer sees roots / opening proofs / answer
-/// tables directly; it sees a list of [`IndexedOracle`] handles and
-/// triggers their (lazy, memoized) BCS validation. Phases stay
-/// BCS-agnostic at the type level — the orchestrator constructs the
-/// concrete [`oracle_handle::MerkleIndexedOracle`] handles.
-pub struct ProximityVerifierInputs<'a, F: Field, H: MerkleHasher<Symbol = Vec<F>>> {
+/// tables directly; it sees [`IndexedOracle`] handles and triggers
+/// their (lazy, memoized) BCS validation. Phases stay BCS-agnostic at
+/// the type level — the orchestrator picks the concrete handle type
+/// (today: [`oracle_handle::MerkleIndexedOracle`]).
+///
+/// Generic over `O: IndexedOracle<Vec<F>>` so dispatch is static; no
+/// trait objects.
+pub struct ProximityVerifierInputs<'a, F, O>
+where
+    F: Field,
+    O: IndexedOracle<Vec<F>>,
+{
     /// Handle for the fresh PESAT multi-vector commitment (m = l1).
-    pub fresh: &'a dyn crate::protocol::phases::oracle_handle::IndexedOracle<Vec<F>>,
+    pub fresh: &'a O,
     /// One handle per accumulated commitment (each with m = 1).
-    pub acc: &'a [&'a dyn crate::protocol::phases::oracle_handle::IndexedOracle<Vec<F>>],
-    /// Phantom marker so this struct still mentions H (handles are
-    /// trait-objects so don't carry H in their type).
-    pub _h: std::marker::PhantomData<H>,
+    pub acc: &'a [O],
+    pub _f: PhantomData<F>,
 }
 
 pub struct ProximityProofString<F, H>
@@ -98,7 +104,11 @@ where
     type Statement = ProximityStatement<F>;
     type Witness = ();
     type ProverInputs = ProximityProverInputs<'a, F, H>;
-    type VerifierInputs = ProximityVerifierInputs<'a, F, H>;
+    type VerifierInputs = ProximityVerifierInputs<
+        'a,
+        F,
+        crate::protocol::phases::oracle_handle::MerkleIndexedOracle<'a, F, H>,
+    >;
     type ReductionInputs = ();
     type ReducedStatement = ();
     type ProofString = ProximityProofString<F, H>;

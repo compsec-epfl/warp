@@ -35,7 +35,7 @@ use error::{DeciderError, ProverError, VerifierError};
 use protocol::phases::{
     batching::{Batching, BatchingProverInputs, BatchingStatement, BatchingVerifierInputs},
     ood::{Ood, OodProverInputs, OodStatement},
-    oracle_handle::{IndexedOracle, MerkleIndexedOracle},
+    oracle_handle::MerkleIndexedOracle,
     pesat::{Pesat, PesatStatement, PesatWitness},
     proximity::{Proximity, ProximityProverInputs, ProximityStatement, ProximityVerifierInputs},
     twin_constraint::{
@@ -445,11 +445,6 @@ where
                 )
             })
             .collect();
-        let acc_refs: Vec<&dyn IndexedOracle<Vec<F>>> = acc_handles
-            .iter()
-            .map(|h| h as &dyn IndexedOracle<Vec<F>>)
-            .collect();
-
         let proximity_phase = Proximity::<F, H> {
             hasher: &self.params.hasher,
             _phantom: PhantomData,
@@ -464,8 +459,8 @@ where
             },
             &ProximityVerifierInputs {
                 fresh: &fresh_handle,
-                acc: &acc_refs,
-                _h: PhantomData,
+                acc: &acc_handles,
+                _f: PhantomData,
             },
         )?;
 
