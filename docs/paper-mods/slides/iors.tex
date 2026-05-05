@@ -320,6 +320,41 @@ The migration replaced \texttt{ark-crypto-primitives::merkle\_tree} with a multi
 \end{frame}
 
 % --------------------------------------------------------------------
+\begin{frame}{IOR trait revisions \,---\, signature corrections (1 of 2)}
+PR \#22 review surfaced four corrections. The first two are signature tweaks that document contracts already true in code:
+
+\vspace{0.5em}
+\textbf{1. \texttt{Witness} / \texttt{ProverInputs} $\to$ \texttt{\&}.}\quad
+Today: by-value. Empirically read-only across WARP / WHIR / STIR / FRI / sumcheck — no protocol in this family consumes its witness at the IOR level. Switching to \texttt{\&} documents the contract; the consume-the-witness escape hatch we kept open isn't used and isn't likely to be.
+
+\vspace{0.6em}
+\textbf{2. \texttt{ProverOutputs} $\to$ \texttt{ProofString} + \texttt{ReducedWitness}.}\quad
+Every nonempty \texttt{ProverOutputs} we have is unambiguously one role: PESAT / TwinConstraint / Batching are pure \texttt{ReducedWitness}; Proximity is pure \texttt{ProofString}. WHIR's final-round reveal forces the split structurally — the leftover folded polynomial is a reduced witness *sent to the verifier in the clear*, so the role boundary can't be ``private vs. public.''
+\end{frame}
+
+% --------------------------------------------------------------------
+\begin{frame}[fragile]{IOR trait revisions \,---\, structural additions (2 of 2)}
+\textbf{3. Verifier-side oracles $\to$ handle traits.}\quad
+Today's \texttt{ProximityVerifierInputs \{ rt\_0, l2\_roots, auth\_0, auth\_j, shift\_query\_answers \}} bakes the BCS instantiation into the IOR-level type. Slide 4 says ``by handle''; the code says ``by precomputed table.''
+\begin{lstlisting}
+trait IndexedOracle<A> { fn query(&self, i: usize) -> Option<A>; }
+trait EvalOracle<F>    { fn eval(&self, x: &[F])  -> Option<F>; }
+\end{lstlisting}
+Two impls per trait: trusted (prover, backed by \texttt{\&[F]}) and BCS-checked (verifier, opening validated inside \texttt{query}). Phases become BCS-agnostic; iBCS / ARG composition slots in by providing a different impl.
+
+\vspace{0.4em}
+\textbf{4. \texttt{reduce\_statement} + inner-method split.}\quad
+Today the prover and verifier each compute \texttt{ReducedStatement} via parallel-but-different code (TwinConstraint: prover pulls $\zeta_0/\beta_\tau$ from sumcheck CC state; verifier recomputes via \texttt{scale\_and\_sum}). One side gets patched, the other doesn't, drift ships.
+\begin{lstlisting}
+fn reduce_statement(&self, stmt: &Stmt, in: &ReductionInputs) -> Reduced;
+fn prove_inner(...)  -> (ReductionInputs, ProofString, ReducedWitness);
+fn verify_inner(...) -> (ReductionInputs, VerifierOutputs);
+// default `prove`/`verify` chain *_inner -> reduce_statement automatically
+\end{lstlisting}
+Implementor writes the three; trait wires them so drift is structurally impossible.
+\end{frame}
+
+% --------------------------------------------------------------------
 \begin{frame}{Where this leaves us \,---\, the next move}
 \textbf{Paper section (accumulator as typed state).} Describe the IOR trait as a paper-aligned realisation \emph{of WARP's protocol structure}, framed as a \emph{template other protocols can follow}, not a contract they must.
 

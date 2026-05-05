@@ -11,8 +11,10 @@
 //! - `Witness`          — `&[Vec<F>]` (fresh witnesses to encode)
 //! - `ProverInputs`     — `()`
 //! - `VerifierInputs`   — `()`
+//! - `ReductionInputs`  — `(mus, taus)` — both sides derive from transcript
 //! - `ReducedStatement` — `(mus, taus)` — code-eval claims + zero-check randomness
-//! - `ProverOutputs`    — full codewords + multi-vector commit
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — full codewords + multi-vector commit
 //! - `VerifierOutputs`  — Merkle root only
 
 use ark_codes::traits::LinearCode;
@@ -35,12 +37,17 @@ pub struct PesatWitness<'a, F: Field> {
     pub witnesses: &'a [Vec<F>],
 }
 
+pub struct PesatReductionInputs<F: Field> {
+    pub mus: Vec<F>,
+    pub taus: Vec<Vec<F>>,
+}
+
 pub struct PesatReducedStatement<F: Field> {
     pub mus: Vec<F>,
     pub taus: Vec<Vec<F>>,
 }
 
-pub struct PesatProverOutputs<F, H>
+pub struct PesatReducedWitness<F, H>
 where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
@@ -76,22 +83,42 @@ where
     type Witness = PesatWitness<'a, F>;
     type ProverInputs = ();
     type VerifierInputs = ();
+    type ReductionInputs = PesatReductionInputs<F>;
     type ReducedStatement = PesatReducedStatement<F>;
-    type ProverOutputs = PesatProverOutputs<F, H>;
+    type ProofString = ();
+    type ReducedWitness = PesatReducedWitness<F, H>;
     type VerifierOutputs = PesatVerifierOutputs<H>;
+
+    fn reduce_statement(
+        &self,
+        _statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        PesatReducedStatement {
+            mus: inputs.mus.clone(),
+            taus: inputs.taus.clone(),
+        }
+    }
 
     #[tracing::instrument(
         name = "pesat",
         skip_all,
         fields(l1 = statement.l1, log_m = statement.log_m, n_witnesses = witness.witnesses.len())
     )]
-    fn prove(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: Self::Witness,
-        _inputs: Self::ProverInputs,
-    ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
+        witness: &Self::Witness,
+        _inputs: &Self::ProverInputs,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    > {
         // a. encode witnesses
         let codewords = {
             let _s = tracing::info_span!("pesat.encode").entered();
@@ -122,11 +149,12 @@ where
         };
 
         Ok((
-            PesatReducedStatement {
+            PesatReductionInputs {
                 mus: mus.clone(),
                 taus,
             },
-            PesatProverOutputs { codewords, td_0 },
+            (),
+            PesatReducedWitness { codewords, td_0 },
         ))
     }
 
@@ -135,12 +163,12 @@ where
         skip_all,
         fields(l1 = statement.l1, log_m = statement.log_m)
     )]
-    fn verify<'b>(
+    fn verify_inner<'b>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
         // commitment digest
         let rt_0: H::Digest = verifier_state.prover_message()?;
 
@@ -157,7 +185,7 @@ where
             .collect();
 
         Ok((
-            PesatReducedStatement { mus, taus },
+            PesatReductionInputs { mus, taus },
             PesatVerifierOutputs { rt_0 },
         ))
     }

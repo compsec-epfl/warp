@@ -35,6 +35,7 @@ use error::{DeciderError, ProverError, VerifierError};
 use protocol::phases::{
     batching::{Batching, BatchingProverInputs, BatchingStatement, BatchingVerifierInputs},
     ood::{Ood, OodProverInputs, OodStatement},
+    oracle_handle::{IndexedOracle, MerkleIndexedOracle},
     pesat::{Pesat, PesatStatement, PesatWitness},
     proximity::{Proximity, ProximityProverInputs, ProximityStatement, ProximityVerifierInputs},
     twin_constraint::{
@@ -152,13 +153,13 @@ where
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
-        let (pesat_red, pesat_out) = pesat_phase.prove(
+        let (pesat_red, _pesat_proof, pesat_red_wit) = pesat_phase.prove(
             prover_state,
             &PesatStatement { l1, log_m },
-            PesatWitness {
+            &PesatWitness {
                 witnesses: &witnesses,
             },
-            (),
+            &(),
         )?;
 
         // Phase 3a: twin-constraint sumcheck
@@ -166,7 +167,7 @@ where
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
-        let (tc_red, tc_out) = tc_phase.prove(
+        let (tc_red, _tc_proof, tc_red_wit) = tc_phase.prove(
             prover_state,
             &TwinConstraintStatement {
                 acc_instance,
@@ -176,13 +177,13 @@ where
                 log_m,
                 log_n,
             },
-            TwinConstraintWitness {
+            &TwinConstraintWitness {
                 acc_witness_w: &acc_ws,
                 instances: &instances,
                 witnesses: &witnesses,
             },
-            TwinConstraintProverInputs {
-                fresh_codewords: &pesat_out.codewords,
+            &TwinConstraintProverInputs {
+                fresh_codewords: &pesat_red_wit.codewords,
                 acc_codewords: &acc_fs,
             },
         )?;
@@ -194,11 +195,11 @@ where
         let eta = self
             .params
             .p
-            .evaluate_bundled(&beta_eq_evals, &tc_out.z)
+            .evaluate_bundled(&beta_eq_evals, &tc_red_wit.z)
             .map_err(|_| ProverError::SpongeFish)?;
-        let nu_0 = tc_out.f.query_at_point(&tc_red.zeta_0);
+        let nu_0 = tc_red_wit.f.query_at_point(&tc_red.zeta_0);
 
-        let (new_x, new_w) = tc_out.z.split_at(N - k);
+        let (new_x, new_w) = tc_red_wit.z.split_at(N - k);
         let new_x = new_x.to_vec();
         let new_w = new_w.to_vec();
         let new_beta = (vec![tc_red.beta_tau.clone()], vec![new_x]);
@@ -208,7 +209,7 @@ where
             let _s = tracing::info_span!("warp.commit_new_oracle").entered();
             count_ops!(MerkleTreeBuilds);
             let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), n);
-            let new_codeword = tc_out.f.evals().to_vec();
+            let new_codeword = tc_red_wit.f.evals().to_vec();
             scheme.commit(&[new_codeword])
         };
         prover_state.prover_message(td_new.root());
@@ -217,14 +218,16 @@ where
 
         // Phase 3c: OOD
         let ood_phase = Ood::<F>::new();
-        let (ood_red, _) = ood_phase.prove(
+        let (ood_red, _, _) = ood_phase.prove(
             prover_state,
             &OodStatement {
                 s: self.params.config.s,
                 log_n,
             },
-            (),
-            OodProverInputs { oracle: &tc_out.f },
+            &(),
+            &OodProverInputs {
+                oracle: &tc_red_wit.f,
+            },
         )?;
 
         // Sample shift queries.
@@ -242,7 +245,7 @@ where
         }
 
         let batching_phase = Batching::<F>::new();
-        let (batching_red, batching_out) = batching_phase.prove(
+        let (batching_red, _, batching_red_wit) = batching_phase.prove(
             prover_state,
             &BatchingStatement {
                 zetas_prefix: zetas,
@@ -251,8 +254,10 @@ where
                 log_n,
                 _phantom: PhantomData,
             },
-            (),
-            BatchingProverInputs { oracle: &tc_out.f },
+            &(),
+            &BatchingProverInputs {
+                oracle: &tc_red_wit.f,
+            },
         )?;
 
         // Phase 3e: proximity.
@@ -260,7 +265,7 @@ where
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
-        let (_, prox) = proximity_phase.prove(
+        let (_, prox, _) = proximity_phase.prove(
             prover_state,
             &ProximityStatement {
                 queries: queries.clone(),
@@ -268,9 +273,9 @@ where
                 t: self.params.config.t,
                 n,
             },
-            (),
-            ProximityProverInputs {
-                td_0: &pesat_out.td_0,
+            &(),
+            &ProximityProverInputs {
+                td_0: &pesat_red_wit.td_0,
                 acc_td: &acc_tds,
             },
         )?;
@@ -283,7 +288,7 @@ where
         let new_acc_instance = AccumulatorInstance {
             rt: vec![td_new.root().clone()],
             alpha: vec![batching_red.alpha],
-            mu: vec![batching_out.mu],
+            mu: vec![batching_red_wit.mu],
             beta: new_beta,
             eta: vec![eta],
         };
@@ -292,7 +297,7 @@ where
             w: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: pesat_out.td_0.root().clone(),
+            rt_0: pesat_red_wit.td_0.root().clone(),
             mu_i: pesat_red.mus,
             nu_0,
             nu_i: nus,
@@ -338,7 +343,7 @@ where
             _phantom: PhantomData,
         };
         let (pesat_red, pesat_v_out) =
-            pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, ())?;
+            pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, &())?;
         let l1_mus = pesat_red.mus;
         let l1_taus = pesat_red.taus;
         let rt_0 = pesat_v_out.rt_0;
@@ -358,7 +363,7 @@ where
                 log_m,
                 log_n,
             },
-            (),
+            &(),
         )?;
 
         // 4. Read between TC and OOD: td (new commitment), η, ν₀.
@@ -377,7 +382,7 @@ where
                 s: self.params.config.s,
                 log_n,
             },
-            (),
+            &(),
         )?;
 
         // 7. Squeeze shift-query bytes; build queries; Proximity::verify.
@@ -387,6 +392,63 @@ where
             .collect();
         let queries: QueryIndices<F> =
             QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
+
+        // Arity checks on the proof's shape. The orchestrator owns these
+        // since they're whole-proof shape checks, not per-oracle opening
+        // validity (which lives behind the IndexedOracle handles).
+        (proof.shift_query_answers.len() == self.params.config.t)
+            .ok_or_err(VerifierError::NumShiftQueries)?;
+        (proof.auth_j.len() == l2).ok_or_err(VerifierError::NumL2Instances)?;
+
+        // Build (sorted, unique) leaf positions and a map from each unique
+        // position to a row in shift_query_answers (duplicates land on the
+        // same row).
+        let mut indexed: Vec<(usize, usize)> = queries
+            .leaf_positions
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(row, pos)| (pos, row))
+            .collect();
+        indexed.sort_by_key(|&(pos, _)| pos);
+        indexed.dedup_by_key(|&mut (pos, _)| pos);
+        let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
+        let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
+
+        // Construct the BCS-checked oracle handles. The Proximity phase
+        // itself stays BCS-agnostic — it only sees `&dyn IndexedOracle`.
+        // Each handle gets its own `WarpScheme` built from the hasher value.
+        let fresh_values: Vec<Vec<F>> = row_indices
+            .iter()
+            .map(|&r| proof.shift_query_answers[r][l2..].to_vec())
+            .collect();
+        let fresh_handle = MerkleIndexedOracle::new(
+            warp_scheme::<H, F>(self.params.hasher.clone(), n),
+            &rt_0,
+            &proof.auth_0,
+            sorted_unique.clone(),
+            fresh_values,
+        );
+
+        let acc_handles: Vec<MerkleIndexedOracle<F, H>> = (0..l2)
+            .map(|k| {
+                let acc_values: Vec<Vec<F>> = row_indices
+                    .iter()
+                    .map(|&r| vec![proof.shift_query_answers[r][k]])
+                    .collect();
+                MerkleIndexedOracle::new(
+                    warp_scheme::<H, F>(self.params.hasher.clone(), n),
+                    &l2_roots[k],
+                    &proof.auth_j[k],
+                    sorted_unique.clone(),
+                    acc_values,
+                )
+            })
+            .collect();
+        let acc_refs: Vec<&dyn IndexedOracle<Vec<F>>> = acc_handles
+            .iter()
+            .map(|h| h as &dyn IndexedOracle<Vec<F>>)
+            .collect();
 
         let proximity_phase = Proximity::<F, H> {
             hasher: &self.params.hasher,
@@ -400,12 +462,10 @@ where
                 t: self.params.config.t,
                 n,
             },
-            ProximityVerifierInputs {
-                rt_0: &rt_0,
-                l2_roots: &l2_roots,
-                auth_0: &proof.auth_0,
-                auth_j: &proof.auth_j,
-                shift_query_answers: &proof.shift_query_answers,
+            &ProximityVerifierInputs {
+                fresh: &fresh_handle,
+                acc: &acc_refs,
+                _h: PhantomData,
             },
         )?;
 
@@ -443,7 +503,7 @@ where
                 log_n,
                 _phantom: PhantomData,
             },
-            BatchingVerifierInputs {
+            &BatchingVerifierInputs {
                 nus,
                 acc_mu: acc_mu_first,
             },

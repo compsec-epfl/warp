@@ -24,8 +24,11 @@
 //! - `ProverInputs`     — full codewords (from PESAT) + accumulated codewords
 //! - `VerifierInputs`   — `()` — the deferred oracle check (final\_claim ≟ eq(τ,γ)·(ν₀+ω·η))
 //!   runs in the orchestrator after ν₀ and η arrive on the transcript
+//! - `ReductionInputs`  — `(ω, τ, γ, final_claim)` — both sides feed these into
+//!   `reduce_statement`, which computes ζ₀ / β_τ via `scale_and_sum` (single source of truth).
 //! - `ReducedStatement` — sumcheck challenges γ + unchecked final_claim + ω, τ + new α (ζ₀) + new β_τ
-//! - `ProverOutputs`    — the new reduced oracle `f` + the reduced witness vector `z`
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — the new reduced oracle `f` + the reduced witness vector `z`
 //! - `VerifierOutputs`  — `()` (the new commitment is read from the transcript by the orchestrator)
 
 use ark_ff::{Field, PrimeField};
@@ -241,7 +244,21 @@ pub struct TwinConstraintReducedStatement<F: Field> {
     pub deferred: DeferredOracleCheck<F>,
 }
 
-pub struct TwinConstraintProverOutputs<F: Field> {
+/// Inputs to [`TwinConstraint::reduce_statement`]. Both prover and
+/// verifier produce this struct from their respective machinery and feed
+/// it into the shared reduction. Drift between the two sides is
+/// structurally impossible because ζ₀ / β_τ are computed in exactly one
+/// place — `reduce_statement` — using `scale_and_sum`.
+pub struct TwinConstraintReductionInputs<F: Field> {
+    pub omega: F,
+    pub tau: Vec<F>,
+    /// Sumcheck challenge vector (LSB-indexed).
+    pub gamma: Vec<F>,
+    /// Sumcheck final value (the unchecked claim).
+    pub final_claim: F,
+}
+
+pub struct TwinConstraintReducedWitness<F: Field> {
     /// New reduced codeword oracle.
     pub f: Oracle<F>,
     /// Reduced witness vector `z = (x, w)` — consumed by η evaluation.
@@ -267,22 +284,75 @@ where
     type Witness = TwinConstraintWitness<'a, F>;
     type ProverInputs = TwinConstraintProverInputs<'a, F>;
     type VerifierInputs = ();
+    type ReductionInputs = TwinConstraintReductionInputs<F>;
     type ReducedStatement = TwinConstraintReducedStatement<F>;
-    type ProverOutputs = TwinConstraintProverOutputs<F>;
+    type ProofString = ();
+    type ReducedWitness = TwinConstraintReducedWitness<F>;
     type VerifierOutputs = ();
+
+    /// Single source of truth for ζ₀ / β_τ. Both prover and verifier
+    /// land here with `(ω, τ, γ, final_claim)`; the new accumulator
+    /// state is computed identically on both sides.
+    fn reduce_statement(
+        &self,
+        statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        let log_l = statement.log_l;
+        let log_n = statement.log_n;
+        let l1 = statement.l1_mus.len();
+
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &inputs.gamma);
+
+        let alpha_vecs = concat_slices(
+            &statement.acc_instance.alpha,
+            &vec![vec![F::zero(); log_n]; l1],
+        );
+        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
+
+        // β τ-vectors: accumulated taus first (length l2), then PESAT taus
+        // (length l1). The τ component of the new β = Σ γ_eq(i) · β_i.
+        let beta_taus: Vec<Vec<F>> = statement
+            .acc_instance
+            .beta
+            .0
+            .iter()
+            .cloned()
+            .chain(statement.l1_taus.iter().cloned())
+            .collect();
+        let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
+
+        TwinConstraintReducedStatement {
+            gamma: inputs.gamma.clone(),
+            zeta_0,
+            beta_tau,
+            deferred: DeferredOracleCheck {
+                omega: inputs.omega,
+                tau: inputs.tau.clone(),
+                claim: inputs.final_claim,
+            },
+        }
+    }
 
     #[tracing::instrument(
         name = "twin_constraint",
         skip_all,
         fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn prove(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: Self::Witness,
-        inputs: Self::ProverInputs,
-    ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
+        witness: &Self::Witness,
+        inputs: &Self::ProverInputs,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    > {
         let l1 = inputs.fresh_codewords.len();
         let log_l = statement.log_l;
         let log_m = statement.log_m;
@@ -346,28 +416,24 @@ where
         };
         debug_assert_eq!(proof.challenges.len(), log_l);
 
-        // d. pull the single remaining row out of each tablewise table.
+        // d. pull only the reduced *witness* halves out of CC. ζ₀ and β_τ
+        // are NOT pulled here — `reduce_statement` recomputes them from
+        // (statement, γ) via `scale_and_sum`, which is the single source
+        // of truth that both prover and verifier go through.
         let reduced = cc.tablewise();
         debug_assert!(reduced.iter().all(|t| t.len() == 1));
         let f = reduced[0][0].clone();
         let z = reduced[1][0].clone();
-        let zeta_0 = reduced[2][0].clone();
-        let beta_tau = reduced[3][0].clone();
-
-        let final_claim = proof.final_value;
 
         Ok((
-            TwinConstraintReducedStatement {
+            TwinConstraintReductionInputs {
+                omega,
+                tau,
                 gamma: proof.challenges,
-                zeta_0,
-                beta_tau,
-                deferred: DeferredOracleCheck {
-                    omega,
-                    tau,
-                    claim: final_claim,
-                },
+                final_claim: proof.final_value,
             },
-            TwinConstraintProverOutputs {
+            (),
+            TwinConstraintReducedWitness {
                 f: Oracle::from_evals(f),
                 z,
             },
@@ -379,16 +445,15 @@ where
         skip_all,
         fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn verify<'b>(
+    fn verify_inner<'b>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
         let log_l = statement.log_l;
         let log_n = statement.log_n;
         let l1 = statement.l1_mus.len();
-        let l2 = statement.acc_instance.mu.len();
 
         // Squeeze ω, τ matching the prover.
         let omega: F = verifier_state.verifier_message();
@@ -417,9 +482,7 @@ where
         // Run the sumcheck. The deferred oracle check
         //   final_claim == eq(τ, γ) · (ν₀ + ω · η)
         // is left to the orchestrator because ν₀ and η arrive on the
-        // transcript AFTER the sumcheck rounds (between TwinConstraint and
-        // OOD). We surface the unchecked final_claim and ω, τ, γ via
-        // ReducedStatement so the orchestrator can finish the check.
+        // transcript AFTER the sumcheck rounds.
         let tc_degree = 1 + (log_n + 1).max(statement.log_m + 2);
         let (gamma, final_claim) = {
             let mut wrap = EffscVerifierTranscript(verifier_state);
@@ -427,38 +490,12 @@ where
             (res.challenges, res.final_claim)
         };
 
-        // Compute ζ₀ and β_τ from the sumcheck challenges (mirror the prover's
-        // sumcheck-fold of α and β).
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
-        let alpha_vecs = concat_slices(
-            &statement.acc_instance.alpha,
-            &vec![vec![F::zero(); log_n]; l1],
-        );
-        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
-
-        // β τ-vectors: accumulated taus first (length l2), then PESAT taus
-        // (length l1). We need the τ component of the new β = sum_{i} γ_eq(i) · β_i.
-        let beta_taus: Vec<Vec<F>> = statement
-            .acc_instance
-            .beta
-            .0
-            .iter()
-            .cloned()
-            .chain(statement.l1_taus.iter().cloned())
-            .collect();
-        debug_assert_eq!(beta_taus.len(), l2 + l1);
-        let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
-
         Ok((
-            TwinConstraintReducedStatement {
+            TwinConstraintReductionInputs {
+                omega,
+                tau,
                 gamma,
-                zeta_0,
-                beta_tau,
-                deferred: DeferredOracleCheck {
-                    omega,
-                    tau,
-                    claim: final_claim,
-                },
+                final_claim,
             },
             (),
         ))

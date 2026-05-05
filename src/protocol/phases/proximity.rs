@@ -12,12 +12,14 @@
 //! - `Witness`          — `()`
 //! - `ProverInputs`     — fresh `WarpCommitted` + l2 accumulated `WarpCommitted`s
 //! - `VerifierInputs`   — fresh root + l2 acc roots + opening proofs + answers
+//! - `ReductionInputs`  — `()` (no reduction)
 //! - `ReducedStatement` — `()` (Proximity is a check, not a reduction)
-//! - `ProverOutputs`    — opening proofs + shift_query_answers (proof artifacts)
+//! - `ProofString`      — opening proofs + shift_query_answers
+//! - `ReducedWitness`   — `()`
 //! - `VerifierOutputs`  — `()`
 
 use ark_ff::Field;
-use ark_mt::{multi_vector::MultiVectorOpening, MerkleHasher};
+use ark_mt::MerkleHasher;
 use spongefish::{ProverState, VerifierState};
 use std::marker::PhantomData;
 
@@ -46,15 +48,24 @@ where
     pub acc_td: &'a [WarpCommitted<H, F>],
 }
 
-pub struct ProximityVerifierInputs<'a, F: Field, H: MerkleHasher> {
-    pub rt_0: &'a H::Digest,
-    pub l2_roots: &'a [H::Digest],
-    pub auth_0: &'a WarpProof<H>,
-    pub auth_j: &'a [WarpProof<H>],
-    pub shift_query_answers: &'a [Vec<F>],
+/// Verifier-side inputs for Proximity.
+///
+/// The phase verifier no longer sees roots / opening proofs / answer
+/// tables directly; it sees a list of [`IndexedOracle`] handles and
+/// triggers their (lazy, memoized) BCS validation. Phases stay
+/// BCS-agnostic at the type level — the orchestrator constructs the
+/// concrete [`oracle_handle::MerkleIndexedOracle`] handles.
+pub struct ProximityVerifierInputs<'a, F: Field, H: MerkleHasher<Symbol = Vec<F>>> {
+    /// Handle for the fresh PESAT multi-vector commitment (m = l1).
+    pub fresh: &'a dyn crate::protocol::phases::oracle_handle::IndexedOracle<Vec<F>>,
+    /// One handle per accumulated commitment (each with m = 1).
+    pub acc: &'a [&'a dyn crate::protocol::phases::oracle_handle::IndexedOracle<Vec<F>>],
+    /// Phantom marker so this struct still mentions H (handles are
+    /// trait-objects so don't carry H in their type).
+    pub _h: std::marker::PhantomData<H>,
 }
 
-pub struct ProximityProverOutputs<F, H>
+pub struct ProximityProofString<F, H>
 where
     F: Field,
     H: MerkleHasher,
@@ -88,9 +99,18 @@ where
     type Witness = ();
     type ProverInputs = ProximityProverInputs<'a, F, H>;
     type VerifierInputs = ProximityVerifierInputs<'a, F, H>;
+    type ReductionInputs = ();
     type ReducedStatement = ();
-    type ProverOutputs = ProximityProverOutputs<F, H>;
+    type ProofString = ProximityProofString<F, H>;
+    type ReducedWitness = ();
     type VerifierOutputs = ();
+
+    fn reduce_statement(
+        &self,
+        _statement: &Self::Statement,
+        _inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+    }
 
     #[tracing::instrument(
         name = "proximity",
@@ -100,13 +120,20 @@ where
             n_accumulators = inputs.acc_td.len(),
         )
     )]
-    fn prove(
+    fn prove_inner(
         &self,
         _prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: Self::Witness,
-        inputs: Self::ProverInputs,
-    ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
+        _witness: &Self::Witness,
+        inputs: &Self::ProverInputs,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    > {
         let leaf_positions = &statement.queries.leaf_positions;
 
         // ark-mt's `open()` requires strictly-sorted, unique indices. Query
@@ -167,11 +194,12 @@ where
 
         Ok((
             (),
-            ProximityProverOutputs {
+            ProximityProofString {
                 auth_0,
                 auth_j,
                 shift_query_answers,
             },
+            (),
         ))
     }
 
@@ -180,59 +208,34 @@ where
         skip_all,
         fields(t = statement.t, l2 = statement.l2)
     )]
-    fn verify<'b>(
+    fn verify_inner<'b>(
         &self,
         _verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        inputs: Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
-        let leaf_positions = &statement.queries.leaf_positions;
+        inputs: &Self::VerifierInputs,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        // Arity / shape checks (orchestrator-side concerns the phase still
+        // owns: number of accumulator openings must match l2; number of
+        // shift queries is implicitly checked by the handle constructors).
+        (inputs.acc.len() == statement.l2).ok_or_err(VerifierError::NumL2Instances)?;
 
-        (inputs.shift_query_answers.len() == statement.t)
-            .ok_or_err(VerifierError::NumShiftQueries)?;
-        (inputs.auth_j.len() == statement.l2).ok_or_err(VerifierError::NumL2Instances)?;
-
-        // Build the (sorted, unique) positions used by the merkle openings
-        // and remember which row of `shift_query_answers` corresponds to
-        // each unique position. Duplicate queries land on the same row.
-        let mut indexed: Vec<(usize, usize)> = leaf_positions
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(row, pos)| (pos, row))
-            .collect();
-        indexed.sort_by_key(|&(pos, _)| pos);
-        indexed.dedup_by_key(|&mut (pos, _)| pos);
-        let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
-        let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
-
-        let scheme = warp_scheme::<H, F>(self.hasher.clone(), statement.n);
-
-        // Fresh PESAT opening: per unique position, take the l1-suffix of the
-        // corresponding answers row.
-        let fresh_values: Vec<Vec<F>> = row_indices
-            .iter()
-            .map(|&r| inputs.shift_query_answers[r][statement.l2..].to_vec())
-            .collect();
-        let fresh_opening = MultiVectorOpening::new(sorted_unique.clone(), fresh_values)
-            .map_err(|_| VerifierError::ShiftQueryIndex)?;
-        scheme
-            .check(inputs.rt_0, &fresh_opening, inputs.auth_0)
+        // Validate each oracle handle. The handle is a trait-object
+        // partial function: validate() runs the (lazy, memoized) BCS
+        // check internally — this phase code is BCS-agnostic.
+        inputs
+            .fresh
+            .validate()
             .ok_or_err(VerifierError::ShiftQuery)?;
-        count_ops!(MerklePathsVerified, sorted_unique.len() as u64);
-
-        // Accumulator openings: each is m=1 (single codeword).
-        for (k, root) in inputs.l2_roots.iter().enumerate() {
-            let acc_values: Vec<Vec<F>> = row_indices
-                .iter()
-                .map(|&r| vec![inputs.shift_query_answers[r][k]])
-                .collect();
-            let acc_opening = MultiVectorOpening::new(sorted_unique.clone(), acc_values)
-                .map_err(|_| VerifierError::ShiftQueryIndex)?;
-            scheme
-                .check(root, &acc_opening, &inputs.auth_j[k])
-                .ok_or_err(VerifierError::ShiftQuery)?;
-            count_ops!(MerklePathsVerified, sorted_unique.len() as u64);
+        count_ops!(
+            MerklePathsVerified,
+            statement.queries.leaf_positions.len() as u64
+        );
+        for handle in inputs.acc.iter() {
+            handle.validate().ok_or_err(VerifierError::ShiftQuery)?;
+            count_ops!(
+                MerklePathsVerified,
+                statement.queries.leaf_positions.len() as u64
+            );
         }
 
         Ok(((), ()))

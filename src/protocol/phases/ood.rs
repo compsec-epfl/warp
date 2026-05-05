@@ -12,8 +12,11 @@
 //! - `ProverInputs`     — `&Oracle<F>` (the committed oracle, full data)
 //! - `VerifierInputs`   — `()` (the oracle check is deferred to the batching
 //!   sumcheck's final claim)
+//! - `ReductionInputs`  — `(samples_flat, answers)` — both sides arrive here
+//!   from the same transcript reads and feed into `reduce_statement`.
 //! - `ReducedStatement` — `(samples_flat, answers)` — query points + their answers
-//! - `ProverOutputs`    — `()`
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — `()`
 //! - `VerifierOutputs`  — `()`
 
 use ark_ff::{Field, PrimeField};
@@ -32,6 +35,11 @@ pub struct OodStatement {
 
 pub struct OodProverInputs<'a, F: Field> {
     pub oracle: &'a Oracle<F>,
+}
+
+pub struct OodReductionInputs<F: Field> {
+    pub samples_flat: Vec<F>,
+    pub answers: Vec<F>,
 }
 
 pub struct OodReducedStatement<F: Field> {
@@ -69,18 +77,38 @@ where
     type Witness = ();
     type ProverInputs = OodProverInputs<'a, F>;
     type VerifierInputs = ();
+    type ReductionInputs = OodReductionInputs<F>;
     type ReducedStatement = OodReducedStatement<F>;
-    type ProverOutputs = ();
+    type ProofString = ();
+    type ReducedWitness = ();
     type VerifierOutputs = ();
 
+    fn reduce_statement(
+        &self,
+        _statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        OodReducedStatement {
+            samples_flat: inputs.samples_flat.clone(),
+            answers: inputs.answers.clone(),
+        }
+    }
+
     #[tracing::instrument(name = "ood", skip_all, fields(s = statement.s, log_n = statement.log_n))]
-    fn prove(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: Self::Witness,
-        inputs: Self::ProverInputs,
-    ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
+        _witness: &Self::Witness,
+        inputs: &Self::ProverInputs,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    > {
         let samples_flat = prover_state.verifier_messages_vec::<F>(statement.s * statement.log_n);
         count_ops!(OodPointQueries, statement.s as u64);
         let answers = samples_flat
@@ -89,10 +117,11 @@ where
             .collect::<Vec<F>>();
         prover_state.prover_messages(&answers);
         Ok((
-            OodReducedStatement {
+            OodReductionInputs {
                 samples_flat,
                 answers,
             },
+            (),
             (),
         ))
     }
@@ -102,18 +131,18 @@ where
         skip_all,
         fields(s = statement.s, log_n = statement.log_n)
     )]
-    fn verify<'b>(
+    fn verify_inner<'b>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
         let samples_flat: Vec<F> = (0..statement.s * statement.log_n)
             .map(|_| verifier_state.verifier_message::<F>())
             .collect();
         let answers: Vec<F> = verifier_state.prover_messages_vec(statement.s)?;
         Ok((
-            OodReducedStatement {
+            OodReductionInputs {
                 samples_flat,
                 answers,
             },

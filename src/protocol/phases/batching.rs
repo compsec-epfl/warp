@@ -18,8 +18,11 @@
 //! - `ProverInputs`     — `&Oracle<F>` (the committed oracle, full data)
 //! - `VerifierInputs`   — `(nus, acc_mu)` — used to compute `σ₂` and the
 //!   final-claim oracle check.
+//! - `ReductionInputs`  — `alpha` (the LSB sumcheck challenges); both sides
+//!   compute and feed it through `reduce_statement`.
 //! - `ReducedStatement` — `alpha` — the new code-eval point (LSB-indexed)
-//! - `ProverOutputs`    — `mu` — the prover's reported `\hat f(α)`
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — `mu` — the prover's reported `\hat f(α)`
 //! - `VerifierOutputs`  — `()`
 
 use ark_ff::{Field, PrimeField};
@@ -104,12 +107,17 @@ pub struct BatchingVerifierInputs<F: Field> {
     pub acc_mu: F,
 }
 
+pub struct BatchingReductionInputs<F: Field> {
+    /// LSB-indexed sumcheck challenge vector.
+    pub alpha: Vec<F>,
+}
+
 pub struct BatchingReducedStatement<F: Field> {
     /// New code-eval point (LSB-indexed).
     pub alpha: Vec<F>,
 }
 
-pub struct BatchingProverOutputs<F: Field> {
+pub struct BatchingReducedWitness<F: Field> {
     /// `\hat f(α)` — prover's report.
     pub mu: F,
 }
@@ -141,22 +149,41 @@ where
     type Witness = ();
     type ProverInputs = BatchingProverInputs<'a, F>;
     type VerifierInputs = BatchingVerifierInputs<F>;
+    type ReductionInputs = BatchingReductionInputs<F>;
     type ReducedStatement = BatchingReducedStatement<F>;
-    type ProverOutputs = BatchingProverOutputs<F>;
+    type ProofString = ();
+    type ReducedWitness = BatchingReducedWitness<F>;
     type VerifierOutputs = ();
+
+    fn reduce_statement(
+        &self,
+        _statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        BatchingReducedStatement {
+            alpha: inputs.alpha.clone(),
+        }
+    }
 
     #[tracing::instrument(
         name = "batching",
         skip_all,
         fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn prove(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: Self::Witness,
-        inputs: Self::ProverInputs,
-    ) -> Result<(Self::ReducedStatement, Self::ProverOutputs), ProverError> {
+        _witness: &Self::Witness,
+        inputs: &Self::ProverInputs,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    > {
         let n = inputs.oracle.len();
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
@@ -200,10 +227,11 @@ where
         let mu = inputs.oracle.query_at_point(&alpha);
 
         Ok((
-            BatchingReducedStatement {
+            BatchingReductionInputs {
                 alpha: alpha.clone(),
             },
-            BatchingProverOutputs { mu },
+            (),
+            BatchingReducedWitness { mu },
         ))
     }
 
@@ -212,12 +240,12 @@ where
         skip_all,
         fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn verify<'b>(
+    fn verify_inner<'b>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        inputs: Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
+        inputs: &Self::VerifierInputs,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);
@@ -253,6 +281,6 @@ where
                 .fold(F::zero(), |acc, (a, b)| acc + a * *b);
         (expected == res.final_claim).ok_or_err(VerifierError::Target)?;
 
-        Ok((BatchingReducedStatement { alpha: alpha_lsb }, ()))
+        Ok((BatchingReductionInputs { alpha: alpha_lsb }, ()))
     }
 }
