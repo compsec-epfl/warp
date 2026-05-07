@@ -4,173 +4,237 @@
 //!
 //! **Sketch, not yet wired.** The orchestrator in [`crate::WARP::prove`] /
 //! [`crate::WARP::verify`] still threads the five phases by hand. This
-//! module lays out the trait shape that would let us replace those ~250
-//! lines of bespoke threading with a typed pipeline value, and explains
-//! the open design questions before we migrate.
+//! module proposes a layered design — keep [`IOR`] as the single-phase
+//! abstraction it already is, build a new [`Pipeline`] trait above it
+//! for composition.
 //!
-//! # Goal
+//! # Why two traits, not one extended one
 //!
-//! Today, swapping out (say) [`crate::protocol::phases::batching::Batching`]
-//! for a different sumcheck variant requires editing the orchestrator at
-//! two sites (prove + verify), updating the proof struct, and re-deriving
-//! by hand which fields flow into which downstream phase. We want this to
-//! be a one-line type change at the pipeline definition.
+//! `IOR` is well-shaped for one phase: `(stmt, wit, oracles_in) →
+//! (reduced_stmt, oracles_out)` plus the [`IOR::reduce_statement`] single
+//! source of truth. Trying to make a `Then<A, B>` value `impl IOR` runs
+//! into three problems:
 //!
-//! # The two shapes WARP actually needs
+//! - `ReductionInputs` doesn't generalize. It's per-phase by construction
+//!   — a composition reduces a *sequence* of statements, not one.
+//! - `ProofString = (A::ProofString, B::ProofString)` nests 5-deep for
+//!   WARP. Extracting pieces to assemble the global proof is just the
+//!   hand-threading we wanted to eliminate, in a different shape.
+//! - WARP's data flow isn't a clean linear chain — it's DAG-shaped.
+//!   `BatchingStatement` reads from TwinConstraint's reduction *and*
+//!   Ood's outputs *and* orchestrator-sampled queries. `IOR` has no
+//!   place for "between-phase orchestrator work."
 //!
-//! ## (a) Linear chain
+//! Analogy: `Functor` captures `fmap`, `Monad` captures sequencing —
+//! they're separate traits because they're different concepts. Same here:
+//! `IOR` captures phase semantics; `Pipeline` captures composition.
+//! Folding sequencing into `IOR` makes both worse.
 //!
-//! Most pairs of WARP phases compose as `A.ReducedStatement → B.Statement`
-//! plus a constructor that may pull in extra orchestrator state. The
-//! [`Then`] combinator below captures this case.
-//!
-//! ## (b) Fan-in / shared state
-//!
-//! The hard case: [`crate::protocol::phases::batching::BatchingStatement`]
-//! is built from *three* upstream sources — the TwinConstraint reduction
-//! (`zeta_0`), the Ood phase (`samples_flat`), and the orchestrator's
-//! sampled query indices. A pure `A.then(B)` chain can't express that
-//! directly. Two reasonable answers:
-//!
-//! - **Pipeline state:** thread an opaque accumulator value through the
-//!   chain, with each phase reading from / writing to it. Closer to a
-//!   typed monadic state-machine. Good ergonomics, more boilerplate per
-//!   phase to declare what state it touches.
-//! - **Explicit assembly nodes:** make the assembly itself a typed node
-//!   in the pipeline (think: a "construct BatchingStatement from prior
-//!   outputs" node), and let the chain only handle the IORs proper. The
-//!   `from_phase_outputs` constructor on `BatchingStatement` (added in
-//!   the IOR-cleanup pass) is already the right shape for this — we'd
-//!   lift it to a trait method.
-//!
-//! The second is closer to the "single source of truth" pattern that
-//! [`IOR::reduce_statement`] already enforces inside each phase, and
-//! plays well with the orchestrator owning between-phase computations
-//! (e.g. the `eta` / `nu_0` reads, the `td_new` commit, the query
-//! sampling). The pipeline holds the phases; the orchestrator owns the
-//! glue.
-//!
-//! # Sketch
+//! # The shape
 //!
 //! ```ignore
-//! let pipeline = Pesat::new(...)
-//!     .then(TwinConstraint::new(...))
-//!     .then(Ood::new())
-//!     .then(Batching::new())
-//!     .then(Proximity::new(...));
-//!
-//! let (final_reduced, proof) = pipeline.prove(&mut prover_state, statement, witness)?;
+//! trait Pipeline {
+//!     type Statement;
+//!     type Witness;
+//!     type Context;        // orchestrator-owned state read by phases
+//!     type Proof;          // flat — pipeline owns the assembly
+//!     type FinalReduced;   // the last phase's ReducedStatement
+//!     fn prove(...) -> Result<(Self::FinalReduced, Self::Proof), ProverError>;
+//!     fn verify(...) -> Result<Self::FinalReduced, VerifierError>;
+//! }
 //! ```
 //!
-//! Open: how `Witness` flows. WARP phases mostly take witness slices by
-//! reference, with each phase reading a different subset. A pipeline
-//! value either has to (a) accept a single tuple-of-all-witnesses and
-//! pluck per phase, or (b) take the witness once and re-borrow into
-//! each phase. (b) is closer to the current orchestrator and avoids
-//! re-cloning, but requires a `WitnessProjection<P>` associated type on
-//! each phase.
+//! Three things make this work where the bare `Then.impl IOR` attempt
+//! didn't:
+//!
+//! 1. **Context as a first-class associated type.** WARP's actual data
+//!    flow has each phase reading some upstream-phase output *and* some
+//!    pipeline-level shared state (the `acc_instance`, the fresh
+//!    witnesses, the sampled queries, etc.). Context is that shared
+//!    state. The orchestrator builds it once; each phase reads what it
+//!    needs.
+//! 2. **Witness projection.** Each phase reads a different slice of the
+//!    pipeline's `Witness`. A composition combinator takes a
+//!    user-supplied projection `Self::Witness → SubPhase::Witness` so
+//!    no re-cloning is forced.
+//! 3. **Flat `Proof`.** The pipeline owns proof assembly — a leaf
+//!    pipeline produces a concrete user-defined proof type via a
+//!    user-supplied `assemble` function. No nested-tuple
+//!    `(((A, B), C), D)` shapes leak out.
+//!
+//! # Worked example: how WARP would compose
+//!
+//! ```ignore
+//! // Context = everything the orchestrator computes / holds across phases.
+//! struct WARPContext<'a, F, H> {
+//!     acc_instance: &'a AccumulatorInstance<F, H>,
+//!     acc_witness: &'a AccumulatorWitness<F, H>,
+//!     acc_codewords: &'a [Vec<F>],
+//!     instances: &'a [Vec<F>],
+//!     witnesses: &'a [Vec<F>],
+//!     queries: Option<QueryIndices<F>>,        // populated mid-pipeline
+//!     pesat_outputs: Option<PesatReduced<F>>,  // populated by Pesat phase
+//!     // ... etc.
+//! }
+//!
+//! let pipeline =
+//!     Pesat::new(...)
+//!         .lift(/* prover_inputs_fn */ |_, ctx| (), /* witness_fn */ |w, _| w.fresh)
+//!     .then(
+//!         TwinConstraint::new(...).lift(...),
+//!         /* make_next_stmt */ |pesat_red, ctx| TwinConstraintStatement {
+//!             acc_instance: ctx.acc_instance.clone(),
+//!             l1_mus: pesat_red.mus.clone(),
+//!             l1_taus: pesat_red.taus.clone(),
+//!             ..
+//!         },
+//!     )
+//!     .then(Ood::new().lift(...), /* make_next_stmt */ |_, _| OodStatement { .. })
+//!     .then(Batching::new().lift(...), |_, ctx| BatchingStatement::from_phase_outputs(...))
+//!     .then(Proximity::new(...).lift(...), |_, ctx| ProximityStatement { .. })
+//!     .assemble(|reduced, parts, ctx| WARPProof {
+//!         rt_0: parts.pesat.td_0_root,
+//!         mu_i: parts.pesat.mus,
+//!         // ... pluck from named parts, not nested tuples
+//!     });
+//! ```
+//!
+//! Swapping `Batching` for a different sumcheck variant becomes a one-line
+//! type change at the pipeline definition. The phases stay
+//! self-contained; the assembly function is the only place that names
+//! the global proof shape.
+//!
+//! # Open design questions
+//!
+//! - **Is `Context` `&mut`?** Some phases mutate (e.g., the orchestrator
+//!   sampling query indices "between" Ood and Batching). A `&mut Context`
+//!   threaded through `prove` is one answer; an explicit "context node"
+//!   in the pipeline (no IOR call, just a context update) is another.
+//! - **`ProverInputs` lifetime story.** Phases like
+//!   [`crate::protocol::phases::twin_constraint::TwinConstraintProverInputs`]
+//!   borrow from upstream reduced witnesses. The pipeline value can't
+//!   live longer than those borrows. Either (a) `prove` takes a
+//!   `WitnessRef` instead of `Witness`, or (b) the lifetime is on
+//!   `Pipeline` itself.
+//! - **Verifier-side oracle handles.** Verifier `ProverInputs` carry
+//!   `IndexedOracle` / `EvalOracle` handles — exactly the refactor
+//!   already noted in
+//!   `[crate::protocol::phases::oracle_handle]`. Pipeline composition
+//!   slots in *over* that abstraction; we shouldn't conflate the two.
 
 use spongefish::{ProverState, VerifierState};
 
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::phases::IOR;
 
-/// Two-phase linear composition. The next phase's statement is built
-/// from the previous phase's [`IOR::ReducedStatement`] via `make_next`.
+/// Composition of one or more [`IOR`]s into a typed pipeline.
 ///
-/// **Limitation:** captures only "B's statement is fully determined by
-/// A's reduced statement" — does not handle WARP's fan-in case where
-/// downstream phases need state from multiple upstream phases plus the
-/// orchestrator. See module docs.
-pub struct Then<A, B, MakeNext> {
-    pub first: A,
-    pub second: B,
-    pub make_next: MakeNext,
-}
-
-impl<A, B, MakeNext> Then<A, B, MakeNext> {
-    pub fn new(first: A, second: B, make_next: MakeNext) -> Self {
-        Self {
-            first,
-            second,
-            make_next,
-        }
-    }
-}
-
-/// Extension trait so any [`IOR`] can be chained with `.then(next, make_next)`.
-pub trait IORChain: IOR + Sized {
-    fn then<B, MakeNext>(self, next: B, make_next: MakeNext) -> Then<Self, B, MakeNext>
-    where
-        B: IOR,
-        MakeNext: Fn(&Self::ReducedStatement) -> B::Statement,
-    {
-        Then::new(self, next, make_next)
-    }
-}
-
-impl<T: IOR> IORChain for T {}
-
-/// Composed prove: run `first.prove`, derive `second`'s statement via
-/// `make_next`, run `second.prove`. Returns `second`'s reduced statement
-/// and a tuple of both proof strings.
+/// Models WARP-shaped flows: each phase reads from its own statement
+/// plus a shared `Context`, and emits a chunk of proof bytes plus its
+/// reduced statement. The pipeline value owns proof assembly: callers
+/// see one flat [`Pipeline::Proof`] type and one flat
+/// [`Pipeline::FinalReduced`] result, not nested tuples.
 ///
-/// **Why this isn't yet a `impl IOR for Then<...>`**: the composition's
-/// associated types (`ReducedStatement`, `ProofString`, etc.) don't
-/// align trivially with the [`IOR`] trait — the proof string becomes a
-/// tuple, the reduced witness becomes the second's, and pipeline-level
-/// `Statement` / `Witness` need projections. Working out those projections
-/// is the next design task; the prove/verify methods below are the
-/// minimum viable demonstration.
-impl<A, B, MakeNext> Then<A, B, MakeNext>
-where
-    A: IOR,
-    B: IOR,
-    MakeNext: Fn(&A::ReducedStatement) -> B::Statement,
-{
-    #[allow(clippy::type_complexity)]
-    pub fn prove(
+/// **Not yet wired.** The methods below are the minimum-viable shape;
+/// no current WARP code calls them. See module docs for the worked
+/// example of how the five phases would compose.
+pub trait Pipeline {
+    /// Top-level statement supplied to the pipeline. Each phase derives
+    /// its own statement from this plus the upstream reduction.
+    type Statement;
+    /// Top-level witness. Each phase projects out the slice it needs.
+    type Witness;
+    /// Orchestrator-owned shared state read by phases. WARP's
+    /// `acc_instance`, fresh witnesses, sampled queries, and inter-phase
+    /// derived values live here.
+    type Context;
+    /// Flat global proof value. Pipeline owns assembly.
+    type Proof;
+    /// The last phase's [`IOR::ReducedStatement`].
+    type FinalReduced;
+
+    fn prove(
         &self,
         prover_state: &mut ProverState,
-        a_statement: &A::Statement,
-        a_witness: &A::Witness,
-        a_inputs: &A::ProverInputs,
-        b_witness: &B::Witness,
-        b_inputs: &B::ProverInputs,
-    ) -> Result<
-        (
-            B::ReducedStatement,
-            (A::ProofString, B::ProofString),
-            B::ReducedWitness,
-        ),
-        ProverError,
-    > {
-        let (a_reduced, a_proof, _a_red_wit) =
-            self.first.prove(prover_state, a_statement, a_witness, a_inputs)?;
-        let b_statement = (self.make_next)(&a_reduced);
-        let (b_reduced, b_proof, b_red_wit) =
-            self.second
-                .prove(prover_state, &b_statement, b_witness, b_inputs)?;
-        Ok((b_reduced, (a_proof, b_proof), b_red_wit))
-    }
+        statement: &Self::Statement,
+        witness: &Self::Witness,
+        context: &mut Self::Context,
+    ) -> Result<(Self::FinalReduced, Self::Proof), ProverError>;
 
-    #[allow(clippy::type_complexity)]
-    pub fn verify<'a>(
+    fn verify<'a>(
         &self,
         verifier_state: &mut VerifierState<'a>,
-        a_statement: &A::Statement,
-        a_inputs: &A::VerifierInputs,
-        b_inputs: &B::VerifierInputs,
-    ) -> Result<
-        (
-            B::ReducedStatement,
-            (A::VerifierOutputs, B::VerifierOutputs),
-        ),
-        VerifierError,
-    > {
-        let (a_reduced, a_vouts) = self.first.verify(verifier_state, a_statement, a_inputs)?;
-        let b_statement = (self.make_next)(&a_reduced);
-        let (b_reduced, b_vouts) = self.second.verify(verifier_state, &b_statement, b_inputs)?;
-        Ok((b_reduced, (a_vouts, b_vouts)))
-    }
+        statement: &Self::Statement,
+        context: &mut Self::Context,
+        proof: &Self::Proof,
+    ) -> Result<Self::FinalReduced, VerifierError>;
+}
+
+/// Lift a single [`IOR`] into a one-phase [`Pipeline`].
+///
+/// The user-supplied closures bridge [`IOR`]'s per-phase types
+/// (`Statement`, `Witness`, `ProverInputs`, `VerifierInputs`) to the
+/// pipeline-level types — they're how a phase declares "here's how I
+/// project myself out of the pipeline-level state."
+///
+/// **Sketch only.** Concrete implementation deferred until the lifetime
+/// design (open question #2 in module docs) is settled — the closures
+/// likely need to return references rather than owned values for
+/// production use.
+pub struct Lift<I, MakeStmt, MakeWit, MakeProverInputs, MakeVerifierInputs, AssembleProof> {
+    pub inner: I,
+    pub make_statement: MakeStmt,
+    pub make_witness: MakeWit,
+    pub make_prover_inputs: MakeProverInputs,
+    pub make_verifier_inputs: MakeVerifierInputs,
+    pub assemble_proof: AssembleProof,
+}
+
+/// Sequential composition of two pipelines.
+///
+/// `make_next_context` runs *between* the two phases' `prove`/`verify`
+/// calls. It's where orchestrator-owned glue lives — sampling queries,
+/// reading `eta`/`nu_0` off the transcript, committing to a new oracle.
+/// In the WARP case, the `td_new` commit and the OOD-to-Batching
+/// `zetas_prefix` assembly would land here.
+pub struct Then<A, B, MakeNextContext> {
+    pub first: A,
+    pub second: B,
+    pub make_next_context: MakeNextContext,
+}
+
+/// Convert a pipeline's nested intermediate values into a flat
+/// user-defined [`Pipeline::Proof`].
+///
+/// Wraps any `Pipeline` and replaces its `Proof` type. The `Map` closure
+/// receives the inner proof + final reduced statement and returns the
+/// caller's flat proof shape. This is the leaf that closes the
+/// "no nested tuples leak out" property promised in the trait docs.
+pub struct WithFlatProof<P, FlatProof, Map> {
+    pub inner: P,
+    pub map: Map,
+    pub _phantom: std::marker::PhantomData<FlatProof>,
+}
+
+// Trait bounds and impls deliberately omitted from this sketch.
+//
+// Writing `impl<...> Pipeline for Then<...>` requires resolving the
+// `Context` + lifetime questions in the module docs first; doing it
+// prematurely would bake those decisions into the public surface and
+// force a churn-y revision later. Treat this file as a design landing
+// pad: extend the types and add impls once a concrete migration target
+// is picked (probably starting with the Pesat → TwinConstraint pair,
+// the smallest WARP-internal composition that exercises Context-passing
+// and `make_next_statement` together).
+
+// Suppress warnings about the unused IOR / spongefish imports — they
+// document the design dependencies even though no code uses them yet.
+#[allow(dead_code)]
+fn _design_deps_marker<I: IOR>(
+    _: &mut ProverState,
+    _: &mut VerifierState<'_>,
+    _: ProverError,
+    _: VerifierError,
+    _: &I,
+) {
 }
