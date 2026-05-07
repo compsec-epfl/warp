@@ -74,9 +74,18 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     type Statement = OodStatement;
-    type Witness = ();
-    type ProverInputs = OodProverInputs<'a, F>;
-    type VerifierInputs = ();
+    type Witness<'b>
+        = ()
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = OodProverInputs<'b, F>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = ()
+    where
+        Self: 'b;
     type ReductionInputs = OodReductionInputs<F>;
     type ReducedStatement = OodReducedStatement<F>;
     type ProofString = ();
@@ -95,12 +104,12 @@ where
     }
 
     #[tracing::instrument(name = "ood", skip_all, fields(s = statement.s, log_n = statement.log_n))]
-    fn prove_inner(
+    fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        _witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -108,7 +117,10 @@ where
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        'a: 'b,
+    {
         let samples_flat = prover_state.verifier_messages_vec::<F>(statement.s * statement.log_n);
         count_ops!(OodPointQueries, statement.s as u64);
         let answers = samples_flat
@@ -131,12 +143,15 @@ where
         skip_all,
         fields(s = statement.s, log_n = statement.log_n)
     )]
-    fn verify_inner<'b>(
+    fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        'a: 'c,
+    {
         let samples_flat: Vec<F> = (0..statement.s * statement.log_n)
             .map(|_| verifier_state.verifier_message::<F>())
             .collect();

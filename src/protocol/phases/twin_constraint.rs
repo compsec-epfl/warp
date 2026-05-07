@@ -290,9 +290,18 @@ where
     H: MerkleHasher,
 {
     type Statement = TwinConstraintStatement<F, H>;
-    type Witness = TwinConstraintWitness<'a, F>;
-    type ProverInputs = TwinConstraintProverInputs<'a, F>;
-    type VerifierInputs = ();
+    type Witness<'b>
+        = TwinConstraintWitness<'b, F>
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = TwinConstraintProverInputs<'b, F>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = ()
+    where
+        Self: 'b;
     type ReductionInputs = TwinConstraintReductionInputs<F>;
     type ReducedStatement = TwinConstraintReducedStatement<F>;
     type ProofString = ();
@@ -348,12 +357,12 @@ where
         skip_all,
         fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn prove_inner(
+    fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -361,7 +370,11 @@ where
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        'a: 'b,
+        H: 'b,
+    {
         let l1 = inputs.fresh_codewords.len();
         let log_l = statement.log_l;
         let log_m = statement.log_m;
@@ -454,12 +467,16 @@ where
         skip_all,
         fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn verify_inner<'b>(
+    fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        'a: 'c,
+        H: 'c,
+    {
         let log_l = statement.log_l;
         let log_n = statement.log_n;
         let l1 = statement.l1_mus.len();

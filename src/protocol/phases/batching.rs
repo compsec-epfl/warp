@@ -178,9 +178,18 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     type Statement = BatchingStatement<F>;
-    type Witness = ();
-    type ProverInputs = BatchingProverInputs<'a, F>;
-    type VerifierInputs = BatchingVerifierInputs<F>;
+    type Witness<'b>
+        = ()
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = BatchingProverInputs<'b, F>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = BatchingVerifierInputs<F>
+    where
+        Self: 'b;
     type ReductionInputs = BatchingReductionInputs<F>;
     type ReducedStatement = BatchingReducedStatement<F>;
     type ProofString = ();
@@ -202,12 +211,12 @@ where
         skip_all,
         fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn prove_inner(
+    fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        _witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -215,7 +224,10 @@ where
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        'a: 'b,
+    {
         let n = inputs.oracle.len();
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
@@ -272,12 +284,15 @@ where
         skip_all,
         fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn verify_inner<'b>(
+    fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        'a: 'c,
+    {
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);

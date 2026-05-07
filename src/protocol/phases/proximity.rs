@@ -102,13 +102,22 @@ where
     H: MerkleHasher<Symbol = Vec<F>>,
 {
     type Statement = ProximityStatement<F>;
-    type Witness = ();
-    type ProverInputs = ProximityProverInputs<'a, F, H>;
-    type VerifierInputs = ProximityVerifierInputs<
-        'a,
-        F,
-        crate::protocol::phases::oracle_handle::MerkleIndexedOracle<'a, F, H>,
-    >;
+    type Witness<'b>
+        = ()
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = ProximityProverInputs<'b, F, H>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = ProximityVerifierInputs<
+            'b,
+            F,
+            crate::protocol::phases::oracle_handle::MerkleIndexedOracle<'b, F, H>,
+        >
+    where
+        Self: 'b;
     type ReductionInputs = ();
     type ReducedStatement = ();
     type ProofString = ProximityProofString<F, H>;
@@ -130,12 +139,12 @@ where
             n_accumulators = inputs.acc_td.len(),
         )
     )]
-    fn prove_inner(
+    fn prove_inner<'b>(
         &self,
         _prover_state: &mut ProverState,
         statement: &Self::Statement,
-        _witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        _witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -143,7 +152,11 @@ where
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        'a: 'b,
+        H: 'b,
+    {
         let leaf_positions = &statement.queries.leaf_positions;
 
         // ark-mt's `open()` requires strictly-sorted, unique indices. Query
@@ -218,12 +231,16 @@ where
         skip_all,
         fields(t = statement.t, l2 = statement.l2)
     )]
-    fn verify_inner<'b>(
+    fn verify_inner<'b, 'c>(
         &self,
         _verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        'a: 'c,
+        H: 'c,
+    {
         // Arity / shape checks (orchestrator-side concerns the phase still
         // owns: number of accumulator openings must match l2; number of
         // shift queries is implicitly checked by the handle constructors).

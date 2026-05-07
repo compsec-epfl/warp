@@ -60,13 +60,22 @@ use crate::error::{ProverError, VerifierError};
 pub trait IOR {
     /// Pre-reduction claim. Visible to prover and verifier.
     type Statement;
-    /// Prover-only data the prover reads (typically a reference-holding
-    /// wrapper — see the convention note on the trait).
-    type Witness;
+    /// Prover-only data the prover reads. Lifetime-parameterized so a
+    /// pipeline composition can borrow inter-phase data into the witness
+    /// for one `prove` call without the borrow leaking into the phase
+    /// struct's lifetime — see `crate::protocol::composition`.
+    type Witness<'a>
+    where
+        Self: 'a;
     /// Oracles flowing in from upstream IORs (prover view: full data).
-    type ProverInputs;
+    /// Lifetime-parameterized for the same reason as `Witness`.
+    type ProverInputs<'a>
+    where
+        Self: 'a;
     /// Oracles flowing in from upstream IORs (verifier view: commitments).
-    type VerifierInputs;
+    type VerifierInputs<'a>
+    where
+        Self: 'a;
     /// Explicit inputs that determine [`Self::ReducedStatement`]. Both
     /// prover-side and verifier-side machinery produce this struct, then
     /// hand it to [`Self::reduce_statement`] for the (single) statement
@@ -103,12 +112,12 @@ pub trait IOR {
     /// Implementor's prover-side body. Runs the protocol's prover
     /// machinery and returns the inputs `reduce_statement` needs, plus
     /// the proof string and reduced witness.
-    fn prove_inner(
+    fn prove_inner<'a>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        witness: &Self::Witness<'a>,
+        inputs: &Self::ProverInputs<'a>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -116,25 +125,29 @@ pub trait IOR {
             Self::ReducedWitness,
         ),
         ProverError,
-    >;
+    >
+    where
+        Self: 'a;
 
     /// Implementor's verifier-side body. Runs the protocol's verifier
     /// machinery (sumcheck checks, transcript reads, soundness checks)
     /// and returns the inputs `reduce_statement` needs.
-    fn verify_inner<'a>(
+    fn verify_inner<'a, 'b>(
         &self,
         verifier_state: &mut VerifierState<'a>,
         statement: &Self::Statement,
-        inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>;
+        inputs: &Self::VerifierInputs<'b>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        Self: 'b;
 
     /// Default impl. Implementors should not override.
-    fn prove(
+    fn prove<'a>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: &Self::Witness,
-        inputs: &Self::ProverInputs,
+        witness: &Self::Witness<'a>,
+        inputs: &Self::ProverInputs<'a>,
     ) -> Result<
         (
             Self::ReducedStatement,
@@ -142,7 +155,10 @@ pub trait IOR {
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        Self: 'a,
+    {
         let (red_inputs, proof, red_wit) =
             self.prove_inner(prover_state, statement, witness, inputs)?;
         let reduced = self.reduce_statement(statement, &red_inputs);
@@ -150,12 +166,15 @@ pub trait IOR {
     }
 
     /// Default impl. Implementors should not override.
-    fn verify<'a>(
+    fn verify<'a, 'b>(
         &self,
         verifier_state: &mut VerifierState<'a>,
         statement: &Self::Statement,
-        inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError> {
+        inputs: &Self::VerifierInputs<'b>,
+    ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError>
+    where
+        Self: 'b,
+    {
         let (red_inputs, vouts) = self.verify_inner(verifier_state, statement, inputs)?;
         let reduced = self.reduce_statement(statement, &red_inputs);
         Ok((reduced, vouts))

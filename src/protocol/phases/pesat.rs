@@ -80,9 +80,18 @@ where
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     type Statement = PesatStatement;
-    type Witness = PesatWitness<'a, F>;
-    type ProverInputs = ();
-    type VerifierInputs = ();
+    type Witness<'b>
+        = PesatWitness<'b, F>
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = ()
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = ()
+    where
+        Self: 'b;
     type ReductionInputs = PesatReductionInputs<F>;
     type ReducedStatement = PesatReducedStatement<F>;
     type ProofString = ();
@@ -105,12 +114,12 @@ where
         skip_all,
         fields(l1 = statement.l1, log_m = statement.log_m, n_witnesses = witness.witnesses.len())
     )]
-    fn prove_inner(
+    fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
         statement: &Self::Statement,
-        witness: &Self::Witness,
-        _inputs: &Self::ProverInputs,
+        witness: &Self::Witness<'b>,
+        _inputs: &Self::ProverInputs<'b>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -118,7 +127,11 @@ where
             Self::ReducedWitness,
         ),
         ProverError,
-    > {
+    >
+    where
+        'a: 'b,
+        H: 'b,
+    {
         // a. encode witnesses
         let codewords = {
             let _s = tracing::info_span!("pesat.encode").entered();
@@ -163,12 +176,16 @@ where
         skip_all,
         fields(l1 = statement.l1, log_m = statement.log_m)
     )]
-    fn verify_inner<'b>(
+    fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
         statement: &Self::Statement,
-        _inputs: &Self::VerifierInputs,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError> {
+        _inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
+    where
+        'a: 'c,
+        H: 'c,
+    {
         // commitment digest
         let rt_0: H::Digest = verifier_state.prover_message()?;
 
