@@ -216,25 +216,173 @@ pub struct WithFlatProof<P, FlatProof, Map> {
     pub _phantom: std::marker::PhantomData<FlatProof>,
 }
 
-// Trait bounds and impls deliberately omitted from this sketch.
-//
-// Writing `impl<...> Pipeline for Then<...>` requires resolving the
-// `Context` + lifetime questions in the module docs first; doing it
-// prematurely would bake those decisions into the public surface and
-// force a churn-y revision later. Treat this file as a design landing
-// pad: extend the types and add impls once a concrete migration target
-// is picked (probably starting with the Pesat → TwinConstraint pair,
-// the smallest WARP-internal composition that exercises Context-passing
-// and `make_next_statement` together).
+// Generic `Lift` / `Then` / `WithFlatProof` impls deliberately omitted
+// for now. The concrete composition below — `PesatTwinConstraint` —
+// validates that the GAT-decoupled `IOR` trait actually composes; the
+// generic combinators wait on the verifier-side oracle-handle refactor
+// (open question #3 above) so the abstraction lands once, against the
+// final `IOR` shape.
 
-// Suppress warnings about the unused IOR / spongefish imports — they
-// document the design dependencies even though no code uses them yet.
-#[allow(dead_code)]
-fn _design_deps_marker<I: IOR>(
-    _: &mut ProverState,
-    _: &mut VerifierState<'_>,
-    _: ProverError,
-    _: VerifierError,
-    _: &I,
-) {
+// ─── Concrete demo: Pesat → TwinConstraint ────────────────────────────────
+//
+// First real composition built on the GAT'd `IOR`. Holds both phases by
+// value so the same pipeline can serve many `prove` calls with
+// different witnesses — the lifetime decoupling that motivated the GAT
+// migration. Used by `tests/composition_demo.rs`.
+
+use ark_codes::traits::LinearCode;
+use ark_ff::{Field, PrimeField};
+use ark_mt::MerkleHasher;
+use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize};
+use std::marker::PhantomData;
+
+use crate::protocol::phases::pesat::{
+    Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatWitness,
+};
+use crate::protocol::phases::twin_constraint::{
+    TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
+    TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
+};
+use crate::relations::r1cs::R1CSConstraints;
+use crate::types::AccumulatorInstance;
+
+/// Pipeline value chaining Pesat into TwinConstraint.
+///
+/// Holds both phases as data. Constructed once, calls `prove` many
+/// times — each call passes new short-lived witnesses without forcing
+/// the phase structs (or their `R1CSConstraints` / code / hasher
+/// borrows) to be reconstructed.
+pub struct PesatTwinConstraint<'phase, F, C, H>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    C: LinearCode<F>,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+{
+    pub pesat: Pesat<'phase, F, C, H>,
+    pub twin_constraint: TwinConstraint<'phase, F, H>,
+}
+
+impl<'phase, F, C, H> PesatTwinConstraint<'phase, F, C, H>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    C: LinearCode<F>,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+{
+    /// Build the pipeline. Borrows `code`, `hasher`, and `r1cs` for
+    /// `'phase` — the lifetime of the WARP params, typically.
+    pub fn new(code: &'phase C, hasher: &'phase H, r1cs: &'phase R1CSConstraints<F>) -> Self {
+        Self {
+            pesat: Pesat {
+                code,
+                hasher,
+                _phantom: PhantomData,
+            },
+            twin_constraint: TwinConstraint {
+                r1cs,
+                _phantom: PhantomData,
+            },
+        }
+    }
+}
+
+/// Static config (dimensions) consumed by both phases. Cheap to clone;
+/// pass by reference.
+pub struct PesatTcConfig {
+    pub l1: usize,
+    pub log_l: usize,
+    pub log_m: usize,
+    pub log_n: usize,
+}
+
+/// Per-call inputs. Lifetime `'a` is independent of the pipeline's
+/// `'phase` — exactly what the GAT migration unlocked.
+pub struct PesatTcInputs<'a, F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    pub witnesses: &'a [Vec<F>],
+    pub instances: &'a [Vec<F>],
+    pub acc_witness_w: &'a [Vec<F>],
+    pub acc_codewords: &'a [Vec<F>],
+    /// Moves into `TwinConstraintStatement`. Cloned across calls if a
+    /// single accumulator is reused.
+    pub acc_instance: AccumulatorInstance<F, H>,
+}
+
+/// Reduced output of the Pesat → TwinConstraint chain. Holds both
+/// phases' reduced statements + reduced witnesses; downstream phases
+/// (Ood / Batching / Proximity) read from these.
+pub struct PesatTcReduced<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    pub pesat: PesatReducedStatement<F>,
+    pub tc: TwinConstraintReducedStatement<F>,
+    pub pesat_witness: PesatReducedWitness<F, H>,
+    pub tc_witness: TwinConstraintReducedWitness<F>,
+}
+
+impl<'phase, F, C, H> PesatTwinConstraint<'phase, F, C, H>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    C: LinearCode<F>,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+{
+    /// Run Pesat then TwinConstraint, threading the upstream reduction
+    /// into the downstream statement and the upstream reduced witness's
+    /// codewords into the downstream prover inputs.
+    pub fn prove<'a>(
+        &self,
+        prover_state: &mut ProverState,
+        config: &PesatTcConfig,
+        inputs: PesatTcInputs<'a, F, H>,
+    ) -> Result<PesatTcReduced<F, H>, ProverError> {
+        let (pesat_red, _, pesat_witness) = self.pesat.prove(
+            prover_state,
+            &PesatStatement {
+                l1: config.l1,
+                log_m: config.log_m,
+            },
+            &PesatWitness {
+                witnesses: inputs.witnesses,
+            },
+            &(),
+        )?;
+
+        // l1_taus is consumed below; clone it for the statement so the
+        // returned `pesat_red` keeps its own copy via `pesat.taus` (the
+        // values *are* the same — `reduce_statement` produces them).
+        let (tc_red, _, tc_witness) = self.twin_constraint.prove(
+            prover_state,
+            &TwinConstraintStatement {
+                acc_instance: inputs.acc_instance,
+                l1_mus: pesat_red.mus.clone(),
+                l1_taus: pesat_red.taus.clone(),
+                log_l: config.log_l,
+                log_m: config.log_m,
+                log_n: config.log_n,
+            },
+            &TwinConstraintWitness {
+                acc_witness_w: inputs.acc_witness_w,
+                instances: inputs.instances,
+                witnesses: inputs.witnesses,
+            },
+            &TwinConstraintProverInputs {
+                fresh_codewords: &pesat_witness.codewords,
+                acc_codewords: inputs.acc_codewords,
+            },
+        )?;
+
+        Ok(PesatTcReduced {
+            pesat: pesat_red,
+            tc: tc_red,
+            pesat_witness,
+            tc_witness,
+        })
+    }
 }
