@@ -242,13 +242,16 @@ use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted};
 use crate::protocol::phases::batching::{
     Batching, BatchingProverInputs, BatchingReducedStatement, BatchingStatement,
+    BatchingVerifierInputs,
 };
 use crate::protocol::phases::ood::{Ood, OodProverInputs, OodReducedStatement, OodStatement};
+use crate::protocol::phases::oracle_handle::MerkleIndexedOracle;
 use crate::protocol::phases::pesat::{
     Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatWitness,
 };
 use crate::protocol::phases::proximity::{
     Proximity, ProximityProofString, ProximityProverInputs, ProximityStatement,
+    ProximityVerifierInputs,
 };
 use crate::protocol::phases::twin_constraint::{
     TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
@@ -257,7 +260,7 @@ use crate::protocol::phases::twin_constraint::{
 use crate::protocol::query::QueryIndices;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::relations::BundledPESAT;
-use crate::types::AccumulatorInstance;
+use crate::types::{AccumulatorInstance, WARPProof};
 
 /// Full prove-side pipeline value: Pesat → TwinConstraint → Ood →
 /// Batching → Proximity.
@@ -555,6 +558,271 @@ where
             queries,
             batching_mu: batching_witness.mu,
             proximity_proof,
+        })
+    }
+}
+
+/// Per-call inputs for [`WarpPipeline::verify`]. Mirror of
+/// [`WarpPipelineInputs`] for the verifier side.
+///
+/// The orchestrator parses the transcript prefix (`parse_statement`)
+/// and slices off `acc_mu_first` from the prior accumulator before
+/// calling the pipeline. Everything the pipeline phases themselves
+/// read from the transcript is read inside the phases — `parsed_acc`
+/// supplies the public bits the TC phase needs in its
+/// `Statement`, `acc_mu_first` is the Batching final-claim multiplier,
+/// and the proof feeds the Proximity-side oracle handles.
+pub struct WarpPipelineVerifyInputs<'a, F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    /// Pre-parsed accumulator instance (the `l2` accumulated entries).
+    /// Moves into TC's `Statement`. The orchestrator owns the
+    /// transcript-parsing step (`parse_statement`).
+    pub parsed_acc: AccumulatorInstance<F, H>,
+    /// `acc_instance.mu[0]` from the prior single-entry accumulator.
+    /// Feeds Batching's `acc_mu` final-claim multiplier.
+    pub acc_mu_first: F,
+    /// The proof object the verifier received. Borrowed so the
+    /// orchestrator keeps its own copy for any post-pipeline checks.
+    pub proof: &'a WARPProof<F, H>,
+}
+
+/// Output of the verify-side pipeline.
+///
+/// Holds the values the orchestrator (`WARP::verify`) still needs after
+/// the pipeline returns: the post-Batching consistency checks against
+/// the prior accumulator's `α` and `β` are orchestrator-owned because
+/// they cross-reference data outside the pipeline's scope (the
+/// `acc_alpha_first` / `acc_beta_*_first` cached before the call).
+///
+/// Kept minimal — only the fields `WARP::verify` reads after the
+/// inline-pipeline block ends.
+pub struct WarpPipelineVerified<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    /// PESAT's reduced statement — the orchestrator reads `taus`
+    /// (the `l1_taus`) for the post-pipeline `β` consistency check.
+    pub pesat: PesatReducedStatement<F>,
+    /// TwinConstraint's reduced statement — the orchestrator reads
+    /// `gamma` (for `gamma_eq_evals`) when assembling the expected
+    /// `β` from the accumulated and fresh `(τ, x)` pairs.
+    pub tc: TwinConstraintReducedStatement<F>,
+    /// OOD's reduced statement (kept for completeness / debugging;
+    /// post-pipeline checks don't read it directly).
+    pub ood: OodReducedStatement<F>,
+    /// Batching's reduced statement — the orchestrator checks
+    /// `acc_alpha_first == batching.alpha`.
+    pub batching: BatchingReducedStatement<F>,
+    /// `(η, ν₀)` read off the transcript between TC and OOD. Kept so
+    /// callers debugging a verify failure can inspect them; not
+    /// required for the post-pipeline checks.
+    pub eta: F,
+    pub nu_0: F,
+    /// Shift query indices sampled between OOD and Batching. Kept for
+    /// the same reason as `eta` / `nu_0`.
+    pub queries: QueryIndices<F>,
+    /// Recomputed `ν` vector (`1 + s + t`) — Batching's input. Kept
+    /// for debugging.
+    pub nus: Vec<F>,
+    /// Phantom binding for the hasher type; the digest type appears
+    /// in `parsed_acc` but the verified output itself doesn't carry
+    /// it.
+    pub _phantom: PhantomData<H>,
+}
+
+impl<'phase, F, P, C, H> WarpPipeline<'phase, F, P, C, H>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: BundledPESAT<F>,
+    C: LinearCode<F>,
+    H: MerkleHasher<Symbol = Vec<F>>,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone + Eq,
+{
+    /// Run the verifier-side pipeline:
+    /// PESAT::verify → TC::verify → (read `td_digest, η, ν₀`,
+    /// discharge TC's deferred oracle check) → OOD::verify → (sample
+    /// shift queries, arity checks, build Merkle oracle handles) →
+    /// Proximity::verify → (recompute `ν` vector) → Batching::verify.
+    ///
+    /// Mirrors [`WarpPipeline::prove`] block-for-block. The
+    /// orchestrator handles `parse_statement` and the post-pipeline
+    /// `(α, β)` consistency checks against the prior accumulator —
+    /// those cross-reference data outside the pipeline's scope.
+    pub fn verify<'verifier, 'a>(
+        &self,
+        verifier_state: &mut VerifierState<'verifier>,
+        config: &WarpPipelineConfig,
+        inputs: WarpPipelineVerifyInputs<'a, F, H>,
+    ) -> Result<WarpPipelineVerified<F, H>, VerifierError> {
+        let n = self.code_len;
+
+        // Cache the accumulated roots before `parsed_acc` moves into TC's
+        // statement — Proximity needs them for the per-acc Merkle handles.
+        let l2_roots = inputs.parsed_acc.rt.clone();
+
+        // ── Phase 2: PESAT ─────────────────────────────────────────────
+        let (pesat_red, pesat_v_out) = self.pesat.verify(
+            verifier_state,
+            &PesatStatement {
+                l1: config.l1,
+                log_m: config.log_m,
+            },
+            &(),
+        )?;
+        let rt_0 = pesat_v_out.rt_0;
+
+        // ── Phase 3a: twin-constraint sumcheck ─────────────────────────
+        let (tc_red, _) = self.twin_constraint.verify(
+            verifier_state,
+            &TwinConstraintStatement {
+                acc_instance: inputs.parsed_acc,
+                l1_mus: pesat_red.mus.clone(),
+                l1_taus: pesat_red.taus.clone(),
+                log_l: config.log_l,
+                log_m: config.log_m,
+                log_n: config.log_n,
+            },
+            &(),
+        )?;
+
+        // ── Phase 3b: TC→Ood glue (read td_digest, η, ν₀, discharge) ──
+        let _td_digest: H::Digest = verifier_state.prover_message()?;
+        let eta: F = verifier_state.prover_message()?;
+        let nu_0: F = verifier_state.prover_message()?;
+        tc_red.deferred.discharge(&tc_red.gamma, nu_0, eta)?;
+
+        // ── Phase 3c: OOD ─────────────────────────────────────────────
+        let (ood_red, _) = self.ood.verify(
+            verifier_state,
+            &OodStatement {
+                s: config.s,
+                log_n: config.log_n,
+            },
+            &(),
+        )?;
+
+        // ── Phase 3c→3d glue: sample shift query indices, arity checks,
+        // build Merkle oracle handles ────────────────────────────────
+        let n_shift_query_bytes = (config.t * config.log_n).div_ceil(8);
+        let bytes_shift_queries: Vec<u8> = (0..n_shift_query_bytes)
+            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
+            .collect();
+        let queries: QueryIndices<F> =
+            QueryIndices::from_squeezed_bytes(&bytes_shift_queries, config.log_n, config.t);
+
+        // Whole-proof arity checks. The pipeline owns these — every
+        // phase past this point reads from `proof` and assumes the
+        // shape matches.
+        (inputs.proof.shift_query_answers.len() == config.t)
+            .then_some(())
+            .ok_or(VerifierError::NumShiftQueries)?;
+        (inputs.proof.auth_j.len() == config.l2)
+            .then_some(())
+            .ok_or(VerifierError::NumL2Instances)?;
+
+        // Build (sorted, unique) leaf positions and a row-mapping into
+        // the shift_query_answers table — same construction as the
+        // prover side / inline `WARP::verify`.
+        let mut indexed: Vec<(usize, usize)> = queries
+            .leaf_positions
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(row, pos)| (pos, row))
+            .collect();
+        indexed.sort_by_key(|&(pos, _)| pos);
+        indexed.dedup_by_key(|&mut (pos, _)| pos);
+        let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
+        let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
+
+        let fresh_values: Vec<Vec<F>> = row_indices
+            .iter()
+            .map(|&r| inputs.proof.shift_query_answers[r][config.l2..].to_vec())
+            .collect();
+        let fresh_handle = MerkleIndexedOracle::new(
+            warp_scheme::<H, F>(self.pesat.hasher.clone(), n),
+            &rt_0,
+            &inputs.proof.auth_0,
+            sorted_unique.clone(),
+            fresh_values,
+        );
+
+        let acc_handles: Vec<MerkleIndexedOracle<F, H>> = (0..config.l2)
+            .map(|k| {
+                let acc_values: Vec<Vec<F>> = row_indices
+                    .iter()
+                    .map(|&r| vec![inputs.proof.shift_query_answers[r][k]])
+                    .collect();
+                MerkleIndexedOracle::new(
+                    warp_scheme::<H, F>(self.pesat.hasher.clone(), n),
+                    &l2_roots[k],
+                    &inputs.proof.auth_j[k],
+                    sorted_unique.clone(),
+                    acc_values,
+                )
+            })
+            .collect();
+
+        // ── Phase 3e: proximity (shift-query openings) ────────────────
+        self.proximity.verify(
+            verifier_state,
+            &ProximityStatement {
+                queries: queries.clone(),
+                l2: config.l2,
+                t: config.t,
+                n,
+            },
+            &ProximityVerifierInputs {
+                fresh: &fresh_handle,
+                acc: &acc_handles,
+                _f: PhantomData,
+            },
+        )?;
+
+        // ── Recompute ν vector from shift answers ────────────────────
+        let gamma_eq_evals = compute_hypercube_eq_evals(config.log_l, &tc_red.gamma);
+        let mut nus = Vec::with_capacity(1 + config.s + config.t);
+        nus.push(nu_0);
+        nus.extend(ood_red.answers.iter().copied());
+        for v_jk in inputs.proof.shift_query_answers.iter() {
+            let nu_st = v_jk
+                .iter()
+                .zip(&gamma_eq_evals)
+                .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
+            nus.push(nu_st);
+        }
+
+        // ── Phase 3d: batching sumcheck ──────────────────────────────
+        let (batching_red, _) = self.batching.verify(
+            verifier_state,
+            &BatchingStatement::from_phase_outputs(
+                tc_red.zeta_0.clone(),
+                &ood_red.samples_flat,
+                &queries.evaluation_points,
+                config.s,
+                config.t,
+                config.log_n,
+            ),
+            &BatchingVerifierInputs {
+                nus: nus.clone(),
+                acc_mu: inputs.acc_mu_first,
+            },
+        )?;
+
+        Ok(WarpPipelineVerified {
+            pesat: pesat_red,
+            tc: tc_red,
+            ood: ood_red,
+            batching: batching_red,
+            eta,
+            nu_0,
+            queries,
+            nus,
+            _phantom: PhantomData,
         })
     }
 }
