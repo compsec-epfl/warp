@@ -1,3 +1,4 @@
+pub mod composition;
 pub mod oracle;
 pub mod phases;
 pub mod query;
