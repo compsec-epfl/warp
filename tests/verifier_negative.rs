@@ -42,7 +42,7 @@ use warp::relations::{
     BundledPESAT, Relation, ToPolySystem,
 };
 use warp::traits::AccumulationScheme;
-use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
+use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProof, WARPProverKey, WARPVerifierKey};
 use warp::utils::poseidon;
 use warp::WARP;
 
@@ -54,7 +54,7 @@ type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, H>;
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
-    vk: (usize, usize, usize),
+    vk: WARPVerifierKey,
     acc_x: AccumulatorInstance<F, H>,
     proof: WARPProof<F, H>,
     narg_str: Vec<u8>,
@@ -134,7 +134,7 @@ fn make_fixture() -> Fixture {
         let mut ps = ds.without_session().instance(&0u32).std_prover();
         let ((acc_x, acc_w), _) = w1
             .prove(
-                (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
                 &mut ps,
                 witnesses.clone(),
                 instances.clone(),
@@ -161,7 +161,7 @@ fn make_fixture() -> Fixture {
     let mut ps = ds.without_session().instance(&0u32).std_prover();
     let ((acc_x, _acc_w), proof) = warp
         .prove(
-            (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
             &mut ps,
             witnesses,
             instances,
@@ -178,7 +178,7 @@ fn make_fixture() -> Fixture {
 
     Fixture {
         warp,
-        vk: (r1cs.m, r1cs.n, r1cs.k),
+        vk: WARPVerifierKey { m: r1cs.m, n: r1cs.n, k: r1cs.k },
         acc_x,
         proof,
         narg_str: ps.narg_string().to_vec(),
@@ -266,4 +266,82 @@ fn tampered_mu_raises_target() {
     let mut acc_x = fix.acc_x.clone();
     acc_x.mu[0] += F::from(1u64);
     assert_err(fix.verify(acc_x, fix.proof.clone()), "Target");
+}
+
+#[test]
+fn prove_rejects_mismatched_instance_witness_lengths() {
+    use warp::error::ProverError;
+
+    let l1 = 4;
+    let s = 8;
+    let t = 7;
+    let hash_chain_size = 4;
+    let mut rng = thread_rng();
+    let poseidon_config = poseidon::initialize_poseidon_config::<F>();
+    let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+        poseidon_config.clone(),
+        hash_chain_size,
+    ))
+    .unwrap();
+    let code_config = ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code = ReedSolomon::new(code_config);
+
+    let (instances, witnesses): (Vec<_>, Vec<_>) = (0..l1)
+        .map(|_| {
+            let preimage = vec![F::rand(&mut rng)];
+            let instance = HashChainInstance {
+                digest: compute_hash_chain::<F, CRH<_>>(
+                    &poseidon_config,
+                    &preimage,
+                    hash_chain_size,
+                ),
+            };
+            let witness = HashChainWitness {
+                preimage,
+                _crhs_scheme: PhantomData::<CRH<F>>,
+            };
+            let relation = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::new(
+                instance,
+                witness,
+                (poseidon_config.clone(), hash_chain_size),
+            );
+            (relation.x, relation.w)
+        })
+        .unzip();
+
+    let warp_cfg = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
+    let warp = WARP::<F, R1CS<F>, _, H>::new(
+        warp_cfg,
+        code,
+        r1cs.clone(),
+        Blake3FieldHasher::<F>::new(),
+    );
+
+    let mut witnesses_short = witnesses;
+    witnesses_short.pop();
+
+    let ds = spongefish::domain_separator!("test::warp::prove_negative");
+    let mut ps = ds.without_session().instance(&0u32).std_prover();
+    let result = warp.prove(
+        WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+        &mut ps,
+        witnesses_short,
+        instances,
+        AccumulatorInstance::empty(),
+        AccumulatorWitness::empty(),
+    );
+
+    let err = result
+        .err()
+        .expect("prove must reject mismatched instance/witness lengths");
+    match err {
+        ProverError::InstanceWitnessLengthMismatch {
+            instances,
+            witnesses,
+        } => {
+            assert_eq!(instances, l1);
+            assert_eq!(witnesses, l1 - 1);
+        }
+        other => panic!("expected InstanceWitnessLengthMismatch, got {other:?}"),
+    }
 }

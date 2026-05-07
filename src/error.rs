@@ -33,6 +33,16 @@ pub enum ProverError {
     SpongeFish,
     #[error("Expected eval, got None")]
     EmptyEval,
+    #[error("instance batch must contain at least 2 instances; got {got}")]
+    InsufficientInstances { got: usize },
+    #[error("instances.len() ({instances}) != witnesses.len() ({witnesses})")]
+    InstanceWitnessLengthMismatch { instances: usize, witnesses: usize },
+    #[error("acc_witness.td.len() ({roots}) != acc_instance.rt.len() ({instances})")]
+    AccumulatorShapeMismatch { instances: usize, roots: usize },
+    #[error("config parameter invalid: {reason}")]
+    ConfigParameterInvalid { reason: String },
+    #[error("instance length mismatch: expected {expected}, got {got}")]
+    InstanceLengthMismatch { expected: usize, got: usize },
 }
 
 impl From<spongefish::VerificationError> for ProverError {

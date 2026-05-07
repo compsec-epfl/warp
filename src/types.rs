@@ -8,6 +8,23 @@ use crate::crypto::merkle::{WarpCommitted, WarpProof};
 use crate::error::ProverError;
 use crate::relations::BundledPESAT;
 
+/// Prover key — the relation index plus dimensions `(M, N, k)`.
+#[derive(Clone)]
+pub struct WARPProverKey<P> {
+    pub index: P,
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+}
+
+/// Verifier key — dimensions only `(M, N, k)`.
+#[derive(Clone, Copy)]
+pub struct WARPVerifierKey {
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+}
+
 // result of a prove call: (new accumulator instance + witness, proof)
 pub type ProveResult<F, H> = Result<
     (

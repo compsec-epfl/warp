@@ -30,7 +30,7 @@ use warp::relations::{
     BundledPESAT, Relation, ToPolySystem,
 };
 use warp::traits::AccumulationScheme;
-use warp::types::{AccumulatorInstance, AccumulatorWitness};
+use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
 use warp::utils::poseidon;
 use warp::WARP;
 
@@ -108,7 +108,7 @@ fn json_layer_emits_phase_records() {
 
     hash_chain_warp
         .prove(
-            (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
             &mut prover_state,
             witnesses,
             instances,
