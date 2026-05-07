@@ -162,14 +162,23 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
                 .collect(),
         );
 
-        // t(X) = tau_even + (tau_odd - tau_even) · X
-        let t = linear_poly(tau_even, tau_odd);
-
-        // h(X) = (f(X) + ω·p(X)) · t(X)
-        let h = (f + p * self.omega).naive_mul(&t);
-
-        for (c, &hc) in coeffs.iter_mut().zip(h.coeffs.iter()) {
-            *c += hc;
+        // h(X) = (f(X) + ω·p(X)) · t(X) where t is linear t_0 + t_1·X.
+        // Closed form per coefficient: h_i = q_{i-1}·t_1 + q_i·t_0 with
+        // q_i = f_i + ω·p_i. We accumulate directly into `coeffs` so the
+        // (f + ω·p) sum and the (·t) multiplication never allocate temporary
+        // DensePolynomials — the per-pair allocation count drops by 3
+        // (the +, the *omega, and the naive_mul each used to allocate).
+        let t0 = tau_even;
+        let t1 = tau_odd - tau_even;
+        let f_coeffs = &f.coeffs;
+        let p_coeffs = &p.coeffs;
+        let mut q_im1 = F::zero();
+        for (i, c) in coeffs.iter_mut().enumerate() {
+            let f_i = f_coeffs.get(i).copied().unwrap_or(F::zero());
+            let p_i = p_coeffs.get(i).copied().unwrap_or(F::zero());
+            let q_i = f_i + self.omega * p_i;
+            *c += q_im1 * t1 + q_i * t0;
+            q_im1 = q_i;
         }
     }
 }
