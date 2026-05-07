@@ -265,26 +265,17 @@ where
         let queries = QueryIndices::<F>::sample(prover_state, log_n, self.params.config.t);
 
         // Phase 3d: batching sumcheck.
-        let mut zetas: Vec<Vec<F>> =
-            Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
-        zetas.push(tc_red.zeta_0.clone());
-        for chunk in ood_red.samples_flat.chunks(log_n) {
-            zetas.push(chunk.to_vec());
-        }
-        for q in &queries.evaluation_points {
-            zetas.push(q.clone());
-        }
-
         let batching_phase = Batching::<F>::new();
         let (batching_red, _, batching_red_wit) = batching_phase.prove(
             prover_state,
-            &BatchingStatement {
-                zetas_prefix: zetas,
-                s: self.params.config.s,
-                t: self.params.config.t,
+            &BatchingStatement::from_phase_outputs(
+                tc_red.zeta_0.clone(),
+                &ood_red.samples_flat,
+                &queries.evaluation_points,
+                self.params.config.s,
+                self.params.config.t,
                 log_n,
-                _phantom: PhantomData,
-            },
+            ),
             &(),
             &BatchingProverInputs {
                 oracle: &tc_red_wit.f,
@@ -508,27 +499,18 @@ where
             nus.push(nu_st);
         }
 
-        // 9. Build zetas_prefix; Batching::verify.
-        let mut zetas: Vec<Vec<F>> =
-            Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
-        zetas.push(tc_red.zeta_0.clone());
-        for chunk in ood_red.samples_flat.chunks(log_n) {
-            zetas.push(chunk.to_vec());
-        }
-        for pt in &queries.evaluation_points {
-            zetas.push(pt.clone());
-        }
-
+        // 9. Batching::verify.
         let batching_phase = Batching::<F>::new();
         let (batching_red, _) = batching_phase.verify(
             verifier_state,
-            &BatchingStatement {
-                zetas_prefix: zetas,
-                s: self.params.config.s,
-                t: self.params.config.t,
+            &BatchingStatement::from_phase_outputs(
+                tc_red.zeta_0.clone(),
+                &ood_red.samples_flat,
+                &queries.evaluation_points,
+                self.params.config.s,
+                self.params.config.t,
                 log_n,
-                _phantom: PhantomData,
-            },
+            ),
             &BatchingVerifierInputs {
                 nus,
                 acc_mu: acc_mu_first,

@@ -96,6 +96,38 @@ pub struct BatchingStatement<F: Field> {
     pub _phantom: std::marker::PhantomData<F>,
 }
 
+impl<F: Field> BatchingStatement<F> {
+    /// Single source of truth for the `zetas_prefix` shape — both the
+    /// prover and verifier orchestrators construct their `BatchingStatement`
+    /// through this. Drift between sides becomes structurally impossible.
+    ///
+    /// Layout: `[ζ_0, ood_chunk_0, …, ood_chunk_{s-1}, query_0, …, query_{t-1}]`.
+    pub fn from_phase_outputs(
+        zeta_0: Vec<F>,
+        ood_samples_flat: &[F],
+        query_eval_points: &[Vec<F>],
+        s: usize,
+        t: usize,
+        log_n: usize,
+    ) -> Self {
+        let mut zetas: Vec<Vec<F>> = Vec::with_capacity(1 + s + t);
+        zetas.push(zeta_0);
+        for chunk in ood_samples_flat.chunks(log_n) {
+            zetas.push(chunk.to_vec());
+        }
+        for q in query_eval_points {
+            zetas.push(q.clone());
+        }
+        Self {
+            zetas_prefix: zetas,
+            s,
+            t,
+            log_n,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
 pub struct BatchingProverInputs<'a, F: Field> {
     pub oracle: &'a Oracle<F>,
 }
