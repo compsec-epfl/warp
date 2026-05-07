@@ -5,6 +5,7 @@ use ark_relations::gr1cs::ConstraintSystemRef;
 use rayon::prelude::*;
 
 use crate::error::WARPError;
+use crate::relations::SerializableConstraintMatrices;
 
 use super::BundledPESAT;
 
@@ -119,7 +120,26 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     }
 
     fn description(&self) -> Vec<u8> {
-        todo!()
+        // Serializes the *concrete matrix triple* so two R1CS systems with
+        // identical (m, n, k) but different constraints absorb to different
+        // bytes (and therefore distinct transcripts). Without this,
+        // `WARP::index` would only commit to dimensions — a soundness hole
+        // in any downstream protocol that trusts `index()` to bind the
+        // relation.
+        let a: Vec<Vec<(F, usize)>> = self.p.iter().map(|(a, _, _)| a.clone()).collect();
+        let b: Vec<Vec<(F, usize)>> = self.p.iter().map(|(_, b, _)| b.clone()).collect();
+        let c: Vec<Vec<(F, usize)>> = self.p.iter().map(|(_, _, c)| c.clone()).collect();
+        let serializable = SerializableConstraintMatrices {
+            num_instance_variables: self.n - self.k,
+            num_witness_variables: self.k,
+            num_constraints: self.m,
+            a: SerializableConstraintMatrices::serialize_nested_field(a),
+            b: SerializableConstraintMatrices::serialize_nested_field(b),
+            c: SerializableConstraintMatrices::serialize_nested_field(c),
+        };
+        serde_json::to_string(&serializable)
+            .expect("matrix serialization is infallible")
+            .into_bytes()
     }
 
     fn constraints(&self) -> &Self::Constraints {
