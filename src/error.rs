@@ -17,12 +17,6 @@ pub enum WARPError {
     ZeroEvaderSize(usize, usize),
     #[error("LC does not exist")]
     R1CSNonExistingLC,
-    #[error("Error decoding codeword")]
-    DecodeFailed,
-    #[error("Bundled PESAT eval returned {0}, multilinear evals returned {1}")]
-    UnsatisfiedMultiConstraints(bool, bool),
-    #[error("f.len() is {0}, but tried accessing at {1}")]
-    CodewordSize(usize, usize),
 }
 
 #[derive(Error, Debug)]
@@ -31,8 +25,6 @@ pub enum ProverError {
     ArkError(#[from] Error),
     #[error("Spongefish verification error")]
     SpongeFish,
-    #[error("Expected eval, got None")]
-    EmptyEval,
     #[error("instance batch must contain at least 2 instances; got {got}")]
     InsufficientInstances { got: usize },
     #[error("instances.len() ({instances}) != witnesses.len() ({witnesses})")]

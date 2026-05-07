@@ -33,6 +33,19 @@ pub mod traits;
 pub mod types;
 pub mod utils;
 
+/// Re-exports the handful of items every WARP consumer needs. Use as
+/// `use warp::prelude::*;`.
+pub mod prelude {
+    pub use crate::config::WARPConfig;
+    pub use crate::error::{DeciderError, ProverError, VerifierError, WARPError};
+    pub use crate::traits::AccumulationScheme;
+    pub use crate::types::{
+        AccumulatorEntry, AccumulatorInstance, AccumulatorWitness, AccumulatorWitnessEntry,
+        WARPProof, WARPProverKey, WARPVerifierKey,
+    };
+    pub use crate::WARP;
+}
+
 use crate::crypto::merkle::warp_scheme;
 use error::{DeciderError, ProverError, VerifierError};
 use protocol::phases::{
