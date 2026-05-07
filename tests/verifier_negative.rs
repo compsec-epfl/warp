@@ -125,14 +125,13 @@ fn make_fixture() -> Fixture {
         Blake3FieldHasher::<F>::new(),
     );
 
-    let (mut roots, mut alphas, mut mus, mut taus, mut xs, mut etas) =
-        (vec![], vec![], vec![], vec![], vec![], vec![]);
-    let (mut tds, mut ws) = (vec![], vec![]);
+    let mut acc_x = AccumulatorInstance::empty();
+    let mut acc_w = AccumulatorWitness::empty();
 
     for _ in 0..l1 {
         let ds = spongefish::domain_separator!("test::warp::negative");
         let mut ps = ds.without_session().instance(&0u32).std_prover();
-        let ((acc_x, acc_w), _) = w1
+        let ((new_x, new_w), _) = w1
             .prove(
                 WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
                 &mut ps,
@@ -142,14 +141,8 @@ fn make_fixture() -> Fixture {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        roots.push(acc_x.rt[0].clone());
-        alphas.push(acc_x.alpha[0].clone());
-        mus.push(acc_x.mu[0]);
-        taus.push(acc_x.beta.0[0].clone());
-        xs.push(acc_x.beta.1[0].clone());
-        etas.push(acc_x.eta[0]);
-        tds.push(acc_w.td[0].clone());
-        ws.push(acc_w.w[0].clone());
+        acc_x = acc_x.extend(new_x);
+        acc_w = acc_w.extend(new_w);
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
@@ -165,14 +158,8 @@ fn make_fixture() -> Fixture {
             &mut ps,
             witnesses,
             instances,
-            AccumulatorInstance {
-                rt: roots,
-                alpha: alphas,
-                mu: mus,
-                beta: (taus, xs),
-                eta: etas,
-            },
-            AccumulatorWitness { td: tds, w: ws },
+            acc_x,
+            acc_w,
         )
         .unwrap();
 

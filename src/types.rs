@@ -71,6 +71,66 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
             eta: vec![],
         }
     }
+
+    /// Number of accumulated entries.
+    pub fn len(&self) -> usize {
+        self.rt.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rt.is_empty()
+    }
+
+    /// Builder-style merge: append every field of `other` to `self`. Used
+    /// by callers that fold per-round single-entry outputs into a
+    /// multi-entry input for the next round.
+    pub fn extend(mut self, other: Self) -> Self {
+        self.rt.extend(other.rt);
+        self.alpha.extend(other.alpha);
+        self.mu.extend(other.mu);
+        self.beta.0.extend(other.beta.0);
+        self.beta.1.extend(other.beta.1);
+        self.eta.extend(other.eta);
+        self
+    }
+
+    /// Push a single typed entry. Pivots `AccumulatorEntry` (AoS) into the
+    /// internal parallel-Vec (SoA) layout.
+    pub fn push_entry(&mut self, entry: AccumulatorEntry<F, H>)
+    where
+        H::Digest: Clone,
+    {
+        self.rt.push(entry.rt);
+        self.alpha.push(entry.alpha);
+        self.mu.push(entry.mu);
+        self.beta.0.push(entry.tau);
+        self.beta.1.push(entry.x);
+        self.eta.push(entry.eta);
+    }
+
+    /// Construct from an explicit list of typed entries.
+    pub fn from_entries(entries: Vec<AccumulatorEntry<F, H>>) -> Self
+    where
+        H::Digest: Clone,
+    {
+        let mut acc = Self::empty();
+        for entry in entries {
+            acc.push_entry(entry);
+        }
+        acc
+    }
+}
+
+/// One accumulated claim, AoS view of `AccumulatorInstance`. Use this
+/// when constructing entries one at a time; pipe through
+/// [`AccumulatorInstance::push_entry`] / [`AccumulatorInstance::from_entries`].
+pub struct AccumulatorEntry<F: Field, H: MerkleHasher> {
+    pub rt: H::Digest,
+    pub alpha: Vec<F>,
+    pub mu: F,
+    pub tau: Vec<F>,
+    pub x: Vec<F>,
+    pub eta: F,
 }
 
 /// Accumulator witness — the private part of an accumulated claim.
@@ -113,6 +173,45 @@ where
             w: vec![],
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.td.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.td.is_empty()
+    }
+
+    /// Builder-style merge — counterpart of [`AccumulatorInstance::extend`].
+    pub fn extend(mut self, other: Self) -> Self {
+        self.td.extend(other.td);
+        self.w.extend(other.w);
+        self
+    }
+
+    pub fn push_entry(&mut self, entry: AccumulatorWitnessEntry<F, H>) {
+        self.td.push(entry.td);
+        self.w.push(entry.w);
+    }
+
+    pub fn from_entries(entries: Vec<AccumulatorWitnessEntry<F, H>>) -> Self {
+        let mut acc = Self::empty();
+        for entry in entries {
+            acc.push_entry(entry);
+        }
+        acc
+    }
+}
+
+/// One witness entry for an accumulated claim — AoS counterpart of
+/// `AccumulatorWitness`.
+pub struct AccumulatorWitnessEntry<F, H>
+where
+    F: Field,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    pub td: crate::crypto::merkle::WarpCommitted<H, F>,
+    pub w: Vec<F>,
 }
 
 /// Proof produced by the WARP accumulation prover.

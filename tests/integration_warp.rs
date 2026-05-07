@@ -92,14 +92,13 @@ fn warp_test() {
         Blake3FieldHasher::<BLS12_381>::new(),
     );
 
-    let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
-        (vec![], vec![], vec![], vec![], vec![], vec![]);
-    let (mut acc_tds, mut acc_ws) = (vec![], vec![]);
+    let mut acc_x = AccumulatorInstance::empty();
+    let mut acc_w = AccumulatorWitness::empty();
 
     for _ in 0..l1 {
         let domainsep = spongefish::domain_separator!("test::warp");
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
-        let ((acc_x, acc_w), _pf) = hash_chain_warp
+        let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
                 WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
                 &mut prover_state,
@@ -109,15 +108,8 @@ fn warp_test() {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        acc_roots.push(acc_x.rt[0].clone());
-        acc_alphas.push(acc_x.alpha[0].clone());
-        acc_mus.push(acc_x.mu[0]);
-        acc_taus.push(acc_x.beta.0[0].clone());
-        acc_xs.push(acc_x.beta.1[0].clone());
-        acc_eta.push(acc_x.eta[0]);
-
-        acc_tds.push(acc_w.td[0].clone());
-        acc_ws.push(acc_w.w[0].clone());
+        acc_x = acc_x.extend(new_x);
+        acc_w = acc_w.extend(new_w);
     }
 
     let domainsep = spongefish::domain_separator!("test::warp");
@@ -138,17 +130,8 @@ fn warp_test() {
             &mut prover_state,
             instances_witnesses.1,
             instances_witnesses.0,
-            AccumulatorInstance {
-                rt: acc_roots,
-                alpha: acc_alphas,
-                mu: acc_mus,
-                beta: (acc_taus, acc_xs),
-                eta: acc_eta,
-            },
-            AccumulatorWitness {
-                td: acc_tds,
-                w: acc_ws,
-            },
+            acc_x,
+            acc_w,
         )
         .unwrap();
 
@@ -245,14 +228,13 @@ fn warp_test_goldilocks() {
             Blake3FieldHasher::<Goldilocks>::new(),
         );
 
-    let (mut acc_roots, mut acc_alphas, mut acc_mus, mut acc_taus, mut acc_xs, mut acc_eta) =
-        (vec![], vec![], vec![], vec![], vec![], vec![]);
-    let (mut acc_tds, mut acc_ws) = (vec![], vec![]);
+    let mut acc_x = AccumulatorInstance::empty();
+    let mut acc_w = AccumulatorWitness::empty();
 
     for _ in 0..l1 {
         let domainsep = spongefish::domain_separator!("test::warp");
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
-        let ((acc_x, acc_w), _pf) = hash_chain_warp
+        let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
                 WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
                 &mut prover_state,
@@ -262,15 +244,8 @@ fn warp_test_goldilocks() {
                 AccumulatorWitness::empty(),
             )
             .unwrap();
-        acc_roots.push(acc_x.rt[0].clone());
-        acc_alphas.push(acc_x.alpha[0].clone());
-        acc_mus.push(acc_x.mu[0]);
-        acc_taus.push(acc_x.beta.0[0].clone());
-        acc_xs.push(acc_x.beta.1[0].clone());
-        acc_eta.push(acc_x.eta[0]);
-
-        acc_tds.push(acc_w.td[0].clone());
-        acc_ws.push(acc_w.w[0].clone());
+        acc_x = acc_x.extend(new_x);
+        acc_w = acc_w.extend(new_w);
     }
 
     let domainsep = spongefish::domain_separator!("test::warp");
@@ -293,17 +268,8 @@ fn warp_test_goldilocks() {
             &mut prover_state,
             instances_witnesses.1,
             instances_witnesses.0,
-            AccumulatorInstance {
-                rt: acc_roots,
-                alpha: acc_alphas,
-                mu: acc_mus,
-                beta: (acc_taus, acc_xs),
-                eta: acc_eta,
-            },
-            AccumulatorWitness {
-                td: acc_tds,
-                w: acc_ws,
-            },
+            acc_x,
+            acc_w,
         )
         .unwrap();
 
