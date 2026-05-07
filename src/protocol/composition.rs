@@ -240,6 +240,9 @@ use effsc::hypercube::compute_hypercube_eq_evals;
 
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted};
+use crate::protocol::phases::batching::{
+    Batching, BatchingProverInputs, BatchingReducedStatement, BatchingStatement,
+};
 use crate::protocol::phases::ood::{Ood, OodProverInputs, OodReducedStatement, OodStatement};
 use crate::protocol::phases::pesat::{
     Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatWitness,
@@ -248,21 +251,21 @@ use crate::protocol::phases::twin_constraint::{
     TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
     TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
 };
+use crate::protocol::query::QueryIndices;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::relations::BundledPESAT;
 use crate::types::AccumulatorInstance;
 
-/// Growing pipeline value: Pesat → TwinConstraint → Ood.
+/// Growing pipeline value: Pesat → TwinConstraint → Ood → Batching.
 ///
-/// Holds three phases as data plus the few `WARPParams` references
+/// Holds four phases as data plus the few `WARPParams` references
 /// the inter-phase glue needs (`bundled_pesat`, `hasher`, `code_len`).
 /// Constructed once, `prove` is callable many times with short-lived
 /// per-batch inputs — the GAT decoupling on [`crate::protocol::phases::IOR`]
 /// keeps that ergonomic.
 ///
-/// Will grow: Batching next (with the DAG fan-in from `zeta_0` +
-/// `samples_flat` + sampled queries), then Proximity, at which point
-/// this struct becomes the full replacement for `WARP::prove`.
+/// Will grow once more: Proximity next, at which point this struct
+/// becomes the full replacement for `WARP::prove`.
 pub struct WarpPipeline<'phase, F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
@@ -274,6 +277,7 @@ where
     pub pesat: Pesat<'phase, F, C, H>,
     pub twin_constraint: TwinConstraint<'phase, F, H>,
     pub ood: Ood<'phase, F>,
+    pub batching: Batching<'phase, F>,
     /// `BundledPESAT` for the inter-phase `eta` evaluation between TC
     /// and Ood. Kept by reference so the pipeline value doesn't own
     /// the relation.
@@ -309,6 +313,7 @@ where
                 _phantom: PhantomData,
             },
             ood: Ood::new(),
+            batching: Batching::new(),
             bundled_pesat,
             code_len,
         }
@@ -316,7 +321,7 @@ where
 }
 
 /// Static config (dimensions + per-phase tuning). Cheap to pass by
-/// reference; covers all phases through Ood.
+/// reference; covers all phases through Batching.
 pub struct WarpPipelineConfig {
     pub l1: usize,
     pub log_l: usize,
@@ -327,6 +332,8 @@ pub struct WarpPipelineConfig {
     pub n_minus_k: usize,
     /// Number of OOD samples (Ood phase).
     pub s: usize,
+    /// Number of shift queries (Batching + Proximity phases).
+    pub t: usize,
 }
 
 /// Per-call inputs. Lifetime `'a` is independent of the pipeline's
@@ -346,9 +353,9 @@ where
 }
 
 /// Reduced output of the prefix pipeline. Holds the per-phase
-/// reductions plus the TC→Ood inter-phase published values
-/// (`eta`, `nu_0`, `td_new`) that downstream Batching/Proximity will
-/// consume — and that the new accumulator instance carries.
+/// reductions plus the inter-phase published values (`eta`, `nu_0`,
+/// `td_new`, `queries`, batching's `mu`) that downstream Proximity and
+/// the next accumulator instance will consume.
 pub struct WarpPipelineReduced<F, H>
 where
     F: Field,
@@ -357,6 +364,7 @@ where
     pub pesat: PesatReducedStatement<F>,
     pub tc: TwinConstraintReducedStatement<F>,
     pub ood: OodReducedStatement<F>,
+    pub batching: BatchingReducedStatement<F>,
     pub pesat_witness: PesatReducedWitness<F, H>,
     pub tc_witness: TwinConstraintReducedWitness<F>,
     /// Bundled-PESAT evaluation of the reduced witness — the `η` value
@@ -372,6 +380,12 @@ where
     /// Become the instance/witness components of the next accumulator.
     pub new_x: Vec<F>,
     pub new_w: Vec<F>,
+    /// Shift query indices sampled between Ood and Batching. Carried
+    /// forward for Proximity (the next phase to land in this pipeline).
+    pub queries: QueryIndices<F>,
+    /// Batching's reduced witness `μ = f̂(α)`. Becomes the next
+    /// accumulator's `μ`.
+    pub batching_mu: F,
 }
 
 impl<'phase, F, P, C, H> WarpPipeline<'phase, F, P, C, H>
@@ -469,10 +483,32 @@ where
             },
         )?;
 
+        // ── Phase 3c→3d glue: sample shift query indices ──────────────
+        let queries = QueryIndices::<F>::sample(prover_state, config.log_n, config.t);
+
+        // ── Phase 3d: batching sumcheck (DAG fan-in from tc.zeta_0 +
+        // ood.samples_flat + queries.evaluation_points) ───────────────
+        let (batching_red, _, batching_witness) = self.batching.prove(
+            prover_state,
+            &BatchingStatement::from_phase_outputs(
+                tc_red.zeta_0.clone(),
+                &ood_red.samples_flat,
+                &queries.evaluation_points,
+                config.s,
+                config.t,
+                config.log_n,
+            ),
+            &(),
+            &BatchingProverInputs {
+                oracle: &tc_witness.f,
+            },
+        )?;
+
         Ok(WarpPipelineReduced {
             pesat: pesat_red,
             tc: tc_red,
             ood: ood_red,
+            batching: batching_red,
             pesat_witness,
             tc_witness,
             eta,
@@ -480,6 +516,8 @@ where
             td_new,
             new_x,
             new_w,
+            queries,
+            batching_mu: batching_witness.mu,
         })
     }
 }

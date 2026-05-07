@@ -66,6 +66,7 @@ fn pipeline_runs_pesat_tc_ood_twice() {
     // ── setup: long-lived ─────────────────────────────────────────────
     let l1 = 4;
     let s = 8;
+    let t = 7;
     let log_l = (l1 as f64).log2() as usize;
     let hash_chain_size = 4;
     let mut rng = thread_rng();
@@ -90,6 +91,7 @@ fn pipeline_runs_pesat_tc_ood_twice() {
         log_n,
         n_minus_k: r1cs.n - r1cs.k,
         s,
+        t,
     };
 
     // Build the pipeline ONCE — borrows code / hasher / r1cs / bundled
@@ -156,10 +158,18 @@ fn pipeline_runs_pesat_tc_ood_twice() {
     assert_eq!(red_a.new_x.len(), r1cs.n - r1cs.k);
     assert_eq!(red_a.new_w.len(), r1cs.k);
 
+    // Batching: t shift queries sampled, alpha is the new code-eval point
+    // (a log_n-length challenge vector).
+    assert_eq!(red_a.queries.evaluation_points.len(), t);
+    assert_eq!(red_a.queries.leaf_positions.len(), t);
+    assert_eq!(red_a.batching.alpha.len(), log_n);
+
     assert_eq!(red_b.pesat.mus.len(), l1);
     assert_eq!(red_b.ood.answers.len(), s);
+    assert_eq!(red_b.queries.evaluation_points.len(), t);
 
     // Independent randomness across calls => reductions differ.
     assert_ne!(red_a.pesat.mus, red_b.pesat.mus);
     assert_ne!(red_a.eta, red_b.eta);
+    assert_ne!(red_a.batching_mu, red_b.batching_mu);
 }
