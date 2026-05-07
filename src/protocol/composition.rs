@@ -247,6 +247,9 @@ use crate::protocol::phases::ood::{Ood, OodProverInputs, OodReducedStatement, Oo
 use crate::protocol::phases::pesat::{
     Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatWitness,
 };
+use crate::protocol::phases::proximity::{
+    Proximity, ProximityProofString, ProximityProverInputs, ProximityStatement,
+};
 use crate::protocol::phases::twin_constraint::{
     TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
     TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
@@ -256,16 +259,18 @@ use crate::relations::r1cs::R1CSConstraints;
 use crate::relations::BundledPESAT;
 use crate::types::AccumulatorInstance;
 
-/// Growing pipeline value: Pesat → TwinConstraint → Ood → Batching.
+/// Full prove-side pipeline value: Pesat → TwinConstraint → Ood →
+/// Batching → Proximity.
 ///
-/// Holds four phases as data plus the few `WARPParams` references
+/// Holds all five phases as data plus the few `WARPParams` references
 /// the inter-phase glue needs (`bundled_pesat`, `hasher`, `code_len`).
 /// Constructed once, `prove` is callable many times with short-lived
 /// per-batch inputs — the GAT decoupling on [`crate::protocol::phases::IOR`]
 /// keeps that ergonomic.
 ///
-/// Will grow once more: Proximity next, at which point this struct
-/// becomes the full replacement for `WARP::prove`.
+/// At this point the pipeline expresses the full prover; `WARP::prove`
+/// becomes a thin wrapper that builds inputs, runs the pipeline, and
+/// assembles the global proof object from the pipeline's output.
 pub struct WarpPipeline<'phase, F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
@@ -278,6 +283,7 @@ where
     pub twin_constraint: TwinConstraint<'phase, F, H>,
     pub ood: Ood<'phase, F>,
     pub batching: Batching<'phase, F>,
+    pub proximity: Proximity<'phase, F, H>,
     /// `BundledPESAT` for the inter-phase `eta` evaluation between TC
     /// and Ood. Kept by reference so the pipeline value doesn't own
     /// the relation.
@@ -314,6 +320,10 @@ where
             },
             ood: Ood::new(),
             batching: Batching::new(),
+            proximity: Proximity {
+                hasher,
+                _phantom: PhantomData,
+            },
             bundled_pesat,
             code_len,
         }
@@ -321,7 +331,7 @@ where
 }
 
 /// Static config (dimensions + per-phase tuning). Cheap to pass by
-/// reference; covers all phases through Batching.
+/// reference; covers all five phases.
 pub struct WarpPipelineConfig {
     pub l1: usize,
     pub log_l: usize,
@@ -334,6 +344,8 @@ pub struct WarpPipelineConfig {
     pub s: usize,
     /// Number of shift queries (Batching + Proximity phases).
     pub t: usize,
+    /// Number of accumulated instances (`l - l1`). Used by Proximity.
+    pub l2: usize,
 }
 
 /// Per-call inputs. Lifetime `'a` is independent of the pipeline's
@@ -347,15 +359,19 @@ where
     pub instances: &'a [Vec<F>],
     pub acc_witness_w: &'a [Vec<F>],
     pub acc_codewords: &'a [Vec<F>],
+    /// Accumulated commitments (one per accumulated entry). Read by
+    /// Proximity for shift-query openings.
+    pub acc_td: &'a [WarpCommitted<H, F>],
     /// Moves into `TwinConstraintStatement`. Cloned across calls if a
     /// single accumulator is reused.
     pub acc_instance: AccumulatorInstance<F, H>,
 }
 
-/// Reduced output of the prefix pipeline. Holds the per-phase
-/// reductions plus the inter-phase published values (`eta`, `nu_0`,
-/// `td_new`, `queries`, batching's `mu`) that downstream Proximity and
-/// the next accumulator instance will consume.
+/// Full output of the prove-side pipeline. Holds per-phase reductions,
+/// inter-phase published values (`eta`, `nu_0`, `td_new`,
+/// batching's `mu`), and Proximity's proof string. The orchestrator
+/// (`WARP::prove`) assembles the new accumulator instance and the
+/// global `WARPProof` from these.
 pub struct WarpPipelineReduced<F, H>
 where
     F: Field,
@@ -380,12 +396,16 @@ where
     /// Become the instance/witness components of the next accumulator.
     pub new_x: Vec<F>,
     pub new_w: Vec<F>,
-    /// Shift query indices sampled between Ood and Batching. Carried
-    /// forward for Proximity (the next phase to land in this pipeline).
+    /// Shift query indices sampled between Ood and Batching. Used by
+    /// the verifier to reconstruct the same query positions and as
+    /// part of the data flow into Proximity.
     pub queries: QueryIndices<F>,
     /// Batching's reduced witness `μ = f̂(α)`. Becomes the next
     /// accumulator's `μ`.
     pub batching_mu: F,
+    /// Proximity proof string: per-commitment opening proofs and the
+    /// flat shift-query answer table. Goes straight into `WARPProof`.
+    pub proximity_proof: ProximityProofString<F, H>,
 }
 
 impl<'phase, F, P, C, H> WarpPipeline<'phase, F, P, C, H>
@@ -504,6 +524,22 @@ where
             },
         )?;
 
+        // ── Phase 3e: proximity (shift-query openings) ────────────────
+        let (_, proximity_proof, _) = self.proximity.prove(
+            prover_state,
+            &ProximityStatement {
+                queries: queries.clone(),
+                l2: config.l2,
+                t: config.t,
+                n: self.code_len,
+            },
+            &(),
+            &ProximityProverInputs {
+                td_0: &pesat_witness.td_0,
+                acc_td: inputs.acc_td,
+            },
+        )?;
+
         Ok(WarpPipelineReduced {
             pesat: pesat_red,
             tc: tc_red,
@@ -518,6 +554,7 @@ where
             new_w,
             queries,
             batching_mu: batching_witness.mu,
+            proximity_proof,
         })
     }
 }

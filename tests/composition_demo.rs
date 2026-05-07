@@ -92,6 +92,7 @@ fn pipeline_runs_pesat_tc_ood_twice() {
         n_minus_k: r1cs.n - r1cs.k,
         s,
         t,
+        l2: 0,
     };
 
     // Build the pipeline ONCE — borrows code / hasher / r1cs / bundled
@@ -120,6 +121,7 @@ fn pipeline_runs_pesat_tc_ood_twice() {
                 instances: &instances_a,
                 acc_witness_w: &acc_w_empty,
                 acc_codewords: &acc_codewords_empty,
+                acc_td: &[],
                 acc_instance: AccumulatorInstance::<F, H>::empty(),
             },
         )
@@ -140,6 +142,7 @@ fn pipeline_runs_pesat_tc_ood_twice() {
                 instances: &instances_b,
                 acc_witness_w: &acc_w_empty,
                 acc_codewords: &acc_codewords_empty,
+                acc_td: &[],
                 acc_instance: AccumulatorInstance::<F, H>::empty(),
             },
         )
@@ -167,6 +170,15 @@ fn pipeline_runs_pesat_tc_ood_twice() {
     assert_eq!(red_b.pesat.mus.len(), l1);
     assert_eq!(red_b.ood.answers.len(), s);
     assert_eq!(red_b.queries.evaluation_points.len(), t);
+
+    // Proximity proof string: per-query-row size = (l2 + l1) and
+    // outer length = t.
+    assert_eq!(red_a.proximity_proof.shift_query_answers.len(), t);
+    assert_eq!(
+        red_a.proximity_proof.shift_query_answers[0].len(),
+        config.l2 + l1
+    );
+    assert_eq!(red_a.proximity_proof.auth_j.len(), config.l2);
 
     // Independent randomness across calls => reductions differ.
     assert_ne!(red_a.pesat.mus, red_b.pesat.mus);
