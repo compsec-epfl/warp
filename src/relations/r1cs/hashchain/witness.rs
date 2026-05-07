@@ -10,7 +10,20 @@ where
     H: CRHScheme<Input = [F]>,
 {
     pub preimage: Vec<F>,
-    pub _crhs_scheme: PhantomData<H>,
+    pub(crate) _crhs_scheme: PhantomData<H>,
+}
+
+impl<F, H> HashChainWitness<F, H>
+where
+    F: Field + PrimeField,
+    H: CRHScheme<Input = [F]>,
+{
+    pub fn new(preimage: Vec<F>) -> Self {
+        Self {
+            preimage,
+            _crhs_scheme: PhantomData,
+        }
+    }
 }
 
 impl<F, H> Clone for HashChainWitness<F, H>

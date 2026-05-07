@@ -19,8 +19,6 @@ use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_mt::blake3::Blake3FieldHasher;
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
-use std::marker::PhantomData;
-
 use warp::config::WARPConfig;
 use warp::relations::{
     r1cs::{
@@ -82,10 +80,7 @@ fn json_layer_emits_phase_records() {
                     hash_chain_size,
                 ),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<BLS12_381>>,
-            };
+            let witness = HashChainWitness::<BLS12_381, CRH<BLS12_381>>::new(preimage);
             let relation = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,

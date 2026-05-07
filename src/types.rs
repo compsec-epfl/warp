@@ -36,7 +36,7 @@ pub type ProveResult<F, H> = Result<
 
 /// Protocol parameters for WARP — the shared configuration used by all IOR phases.
 pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
-    pub _f: PhantomData<F>,
+    pub(crate) _f: PhantomData<F>,
     pub config: WARPConfig<F, P>,
     pub code: C,
     pub p: P,

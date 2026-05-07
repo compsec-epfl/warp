@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use ark_crypto_primitives::{
     crh::poseidon::{constraints::CRHGadget, CRH},
     sponge::{poseidon::PoseidonConfig, Absorb},
@@ -37,10 +35,7 @@ pub fn get_hashchain_instance_witness_pairs<F: PrimeField + Absorb>(
             let instance = HashChainInstance {
                 digest: compute_hash_chain::<F, CRH<_>>(poseidon_config, &preimage, hashchain_size),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<F>>,
-            };
+            let witness = HashChainWitness::<F, CRH<F>>::new(preimage);
             let relation = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,

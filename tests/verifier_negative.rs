@@ -20,8 +20,6 @@
 //!   `SpongeFish`.
 //! - `SumcheckRound` is not raised from any code path right now.
 
-use std::marker::PhantomData;
-
 use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::{
     reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
@@ -102,10 +100,7 @@ fn make_fixture() -> Fixture {
                     hash_chain_size,
                 ),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<F>>,
-            };
+            let witness = HashChainWitness::<F, CRH<F>>::new(preimage);
             let relation = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,
@@ -283,10 +278,7 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
                     hash_chain_size,
                 ),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<F>>,
-            };
+            let witness = HashChainWitness::<F, CRH<F>>::new(preimage);
             let relation = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,

@@ -12,8 +12,6 @@
 //! differ enough that a single generic function would need a long
 //! `where` clause for marginal DRY gain.
 
-use std::marker::PhantomData;
-
 use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::{
     reed_solomon::{config::ReedSolomonConfig, ReedSolomon},
@@ -65,10 +63,7 @@ fn warp_test() {
                     hash_chain_size,
                 ),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<BLS12_381>>,
-            };
+            let witness = HashChainWitness::<BLS12_381, CRH<BLS12_381>>::new(preimage);
             let relation = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,
@@ -200,10 +195,7 @@ fn warp_test_goldilocks() {
                     hash_chain_size,
                 ),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<Goldilocks>>,
-            };
+            let witness = HashChainWitness::<Goldilocks, CRH<Goldilocks>>::new(preimage);
             let relation = HashChainRelation::<Goldilocks, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,

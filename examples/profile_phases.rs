@@ -31,7 +31,6 @@ fn main() {
 #[cfg(feature = "profile")]
 mod inner {
     use std::io::{self, Write};
-    use std::marker::PhantomData;
     use std::sync::{Arc, Mutex};
 
     use ark_codes::reed_solomon::config::ReedSolomonConfig;
@@ -111,10 +110,7 @@ mod inner {
                         hash_chain_size,
                     ),
                 };
-                let witness = HashChainWitness {
-                    preimage,
-                    _crhs_scheme: PhantomData::<CRH<Goldilocks>>,
-                };
+                let witness = HashChainWitness::<Goldilocks, CRH<Goldilocks>>::new(preimage);
                 let relation = HashChainRelation::<Goldilocks, CRH<_>, CRHGadget<_>>::new(
                     instance,
                     witness,
