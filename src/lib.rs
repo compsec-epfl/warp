@@ -60,21 +60,6 @@ use protocol::phases::{
     IOR,
 };
 
-pub trait BoolResult {
-    fn ok_or_err<E>(self, err: E) -> Result<(), E>;
-}
-
-impl BoolResult for bool {
-    #[inline]
-    fn ok_or_err<E>(self, err: E) -> Result<(), E> {
-        if self {
-            Ok(())
-        } else {
-            Err(err)
-        }
-    }
-}
-
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
     pub params: WARPParams<F, P, C, H>,
 }
@@ -432,8 +417,8 @@ where
         // since they're whole-proof shape checks, not per-oracle opening
         // validity (which lives behind the IndexedOracle handles).
         (proof.shift_query_answers.len() == self.params.config.t)
-            .ok_or_err(VerifierError::NumShiftQueries)?;
-        (proof.auth_j.len() == l2).ok_or_err(VerifierError::NumL2Instances)?;
+            .then_some(()).ok_or(VerifierError::NumShiftQueries)?;
+        (proof.auth_j.len() == l2).then_some(()).ok_or(VerifierError::NumL2Instances)?;
 
         // Build (sorted, unique) leaf positions and a map from each unique
         // position to a row in shift_query_answers (duplicates land on the
@@ -531,7 +516,7 @@ where
         )?;
 
         // 10. Accumulator consistency.
-        (acc_alpha_first == batching_red.alpha).ok_or_err(VerifierError::CodeEvaluationPoint)?;
+        (acc_alpha_first == batching_red.alpha).then_some(()).ok_or(VerifierError::CodeEvaluationPoint)?;
 
         let betas = l2_taus
             .into_iter()
@@ -541,7 +526,7 @@ where
             .collect::<Vec<Vec<F>>>();
         let beta = scale_and_sum(&betas, &gamma_eq_evals);
         let expected_beta = concat_slices(&acc_beta_0_first, &acc_beta_1_first);
-        (expected_beta == beta).ok_or_err(VerifierError::CircuitEvaluationPoint)?;
+        (expected_beta == beta).then_some(()).ok_or(VerifierError::CircuitEvaluationPoint)?;
 
         Ok(())
     }
@@ -556,13 +541,13 @@ where
 
         // Re-encode the witness; check codeword match.
         let computed_f = self.params.code.encode(&acc_witness.w[0]);
-        (acc_codeword == &computed_f).ok_or_err(DeciderError::EncodedWitness)?;
+        (acc_codeword == &computed_f).then_some(()).ok_or(DeciderError::EncodedWitness)?;
 
         // Re-commit and check root.
         let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), self.params.code.code_len());
         let recomputed = scheme.commit(std::slice::from_ref(&computed_f));
-        (acc_instance.rt[0] == *recomputed.root()).ok_or_err(DeciderError::MerkleRoot)?;
-        (acc_witness.td[0].root() == recomputed.root()).ok_or_err(DeciderError::MerkleTrapDoor)?;
+        (acc_instance.rt[0] == *recomputed.root()).then_some(()).ok_or(DeciderError::MerkleRoot)?;
+        (acc_witness.td[0].root() == recomputed.root()).then_some(()).ok_or(DeciderError::MerkleTrapDoor)?;
 
         // MLE evaluation check.
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
@@ -570,7 +555,7 @@ where
             acc_codeword,
         );
         (f_hat.evaluate(&acc_instance.alpha[0]) == acc_instance.mu[0])
-            .ok_or_err(DeciderError::MLExtensionEvaluation)?;
+            .then_some(()).ok_or(DeciderError::MLExtensionEvaluation)?;
 
         // Bundled-evaluation check.
         let tau = &acc_instance.beta.0[0];
@@ -582,7 +567,7 @@ where
             .p
             .evaluate_bundled(&tau_zero_evader, &z)
             .unwrap();
-        (computed_eta == acc_instance.eta[0]).ok_or_err(DeciderError::BundledEvaluation)?;
+        (computed_eta == acc_instance.eta[0]).then_some(()).ok_or(DeciderError::BundledEvaluation)?;
 
         Ok(())
     }

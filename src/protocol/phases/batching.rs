@@ -41,7 +41,6 @@ use crate::protocol::oracle::Oracle;
 use crate::protocol::phases::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
-use crate::BoolResult;
 
 /// [CBBZ23] / HyperPlonk sparse-evaluation optimization: for shift-query
 /// zetas (indices `1+s..r`), each ζ is a 0/1 vector representing a single
@@ -326,7 +325,7 @@ where
                 .into_iter()
                 .zip(&xi_eq_evals)
                 .fold(F::zero(), |acc, (a, b)| acc + a * *b);
-        (expected == res.final_claim).ok_or_err(VerifierError::Target)?;
+        (expected == res.final_claim).then_some(()).ok_or(VerifierError::Target)?;
 
         Ok((BatchingReductionInputs { alpha: alpha_lsb }, ()))
     }

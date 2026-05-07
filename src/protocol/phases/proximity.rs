@@ -29,7 +29,6 @@ use crate::error::{ProverError, VerifierError};
 use crate::protocol::phases::oracle_handle::IndexedOracle;
 use crate::protocol::phases::IOR;
 use crate::protocol::query::QueryIndices;
-use crate::BoolResult;
 
 pub struct ProximityStatement<F: Field> {
     pub queries: QueryIndices<F>,
@@ -244,7 +243,7 @@ where
         // Arity / shape checks (orchestrator-side concerns the phase still
         // owns: number of accumulator openings must match l2; number of
         // shift queries is implicitly checked by the handle constructors).
-        (inputs.acc.len() == statement.l2).ok_or_err(VerifierError::NumL2Instances)?;
+        (inputs.acc.len() == statement.l2).then_some(()).ok_or(VerifierError::NumL2Instances)?;
 
         // Validate each oracle handle. The handle is a trait-object
         // partial function: validate() runs the (lazy, memoized) BCS
@@ -252,13 +251,13 @@ where
         inputs
             .fresh
             .validate()
-            .ok_or_err(VerifierError::ShiftQuery)?;
+            .then_some(()).ok_or(VerifierError::ShiftQuery)?;
         count_ops!(
             MerklePathsVerified,
             statement.queries.leaf_positions.len() as u64
         );
         for handle in inputs.acc.iter() {
-            handle.validate().ok_or_err(VerifierError::ShiftQuery)?;
+            handle.validate().then_some(()).ok_or(VerifierError::ShiftQuery)?;
             count_ops!(
                 MerklePathsVerified,
                 statement.queries.leaf_positions.len() as u64

@@ -58,7 +58,6 @@ use crate::utils::{
     poly::{eq_poly, eq_poly_non_binary},
     scale_and_sum,
 };
-use crate::BoolResult;
 
 /// Degree-1 polynomial interpolating two field elements: `lo + (hi - lo)·X`.
 fn linear_poly<F: Field>(lo: F, hi: F) -> DensePolynomial<F> {
@@ -236,7 +235,7 @@ impl<F: Field> DeferredOracleCheck<F> {
     /// transcript segment immediately following the TwinConstraint sumcheck.
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
         let expected = eq_poly_non_binary(&self.tau, gamma) * (nu_0 + self.omega * eta);
-        (expected == self.claim).ok_or_err(VerifierError::Target)
+        (expected == self.claim).then_some(()).ok_or(VerifierError::Target)
     }
 }
 
