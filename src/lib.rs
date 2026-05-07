@@ -12,7 +12,6 @@ use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::log2;
 use config::WARPConfig;
 use effsc::hypercube::compute_hypercube_eq_evals;
-use protocol::query::QueryIndices;
 use protocol::transcript::{absorb_instances, parse_statement};
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -48,15 +47,8 @@ pub mod prelude {
 
 use crate::crypto::merkle::warp_scheme;
 use error::{DeciderError, ProverError, VerifierError};
-use protocol::composition::{WarpPipeline, WarpPipelineConfig, WarpPipelineInputs};
-use protocol::phases::{
-    batching::{Batching, BatchingStatement, BatchingVerifierInputs},
-    ood::{Ood, OodStatement},
-    oracle_handle::MerkleIndexedOracle,
-    pesat::{Pesat, PesatStatement},
-    proximity::{Proximity, ProximityStatement, ProximityVerifierInputs},
-    twin_constraint::{TwinConstraint, TwinConstraintStatement},
-    IOR,
+use protocol::composition::{
+    WarpPipeline, WarpPipelineConfig, WarpPipelineInputs, WarpPipelineVerifyInputs,
 };
 
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
@@ -257,179 +249,58 @@ where
         let n = self.params.code.code_len();
         let log_n = log2(n) as usize;
 
-        // 1. Parse statement
+        // Parse the transcript-side statement (l1 fresh instances + l2
+        // accumulated entries). Stays in the orchestrator: it crosses
+        // the pipeline/non-pipeline boundary by definition.
         let (l1_xs, parsed_acc) =
             parse_statement::<F, H>(verifier_state, l1, l2, N - k, log_n, log_m)?;
+
+        // Cache prior-accumulator values needed by the post-pipeline
+        // (α, β) consistency checks. These cross-reference the prior
+        // single-entry `acc_instance` against the pipeline's reduced
+        // outputs, so they live outside the pipeline.
         let acc_alpha_first = acc_instance.alpha[0].clone();
         let acc_beta_0_first = acc_instance.beta.0[0].clone();
         let acc_beta_1_first = acc_instance.beta.1[0].clone();
         let acc_mu_first = acc_instance.mu[0];
-        let l2_roots = parsed_acc.rt.clone();
         let l2_taus = parsed_acc.beta.0.clone();
         let l2_xs = parsed_acc.beta.1.clone();
 
-        // 2. PESAT::verify
-        let pesat_phase = Pesat::<F, C, H> {
-            code: &self.params.code,
-            hasher: &self.params.hasher,
-            _phantom: PhantomData,
-        };
-        let (pesat_red, pesat_v_out) =
-            pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, &())?;
-        let l1_mus = pesat_red.mus;
-        let l1_taus = pesat_red.taus;
-        let rt_0 = pesat_v_out.rt_0;
-
-        // 3. TwinConstraint::verify
-        let tc_phase = TwinConstraint::<F, H> {
-            r1cs: self.params.p.constraints(),
-            _phantom: PhantomData,
-        };
-        let (tc_red, _) = tc_phase.verify(
-            verifier_state,
-            &TwinConstraintStatement {
-                acc_instance: parsed_acc,
-                l1_mus,
-                l1_taus: l1_taus.clone(),
-                log_l,
-                log_m,
-                log_n,
-            },
-            &(),
-        )?;
-
-        // 4. Read between TC and OOD: td (new commitment), η, ν₀.
-        let _td_digest: H::Digest = verifier_state.prover_message()?;
-        let eta: F = verifier_state.prover_message()?;
-        let nu_0: F = verifier_state.prover_message()?;
-
-        // 5. Discharge the deferred oracle check.
-        tc_red.deferred.discharge(&tc_red.gamma, nu_0, eta)?;
-
-        // 6. OOD::verify
-        let ood_phase = Ood::<F>::new();
-        let (ood_red, _) = ood_phase.verify(
-            verifier_state,
-            &OodStatement {
-                s: self.params.config.s,
-                log_n,
-            },
-            &(),
-        )?;
-
-        // 7. Squeeze shift-query bytes; build queries; Proximity::verify.
-        let n_shift_query_bytes = (self.params.config.t * log_n).div_ceil(8);
-        let bytes_shift_queries: Vec<u8> = (0..n_shift_query_bytes)
-            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
-            .collect();
-        let queries: QueryIndices<F> =
-            QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
-
-        // Arity checks on the proof's shape. The orchestrator owns these
-        // since they're whole-proof shape checks, not per-oracle opening
-        // validity (which lives behind the IndexedOracle handles).
-        (proof.shift_query_answers.len() == self.params.config.t)
-            .then_some(()).ok_or(VerifierError::NumShiftQueries)?;
-        (proof.auth_j.len() == l2).then_some(()).ok_or(VerifierError::NumL2Instances)?;
-
-        // Build (sorted, unique) leaf positions and a map from each unique
-        // position to a row in shift_query_answers (duplicates land on the
-        // same row).
-        let mut indexed: Vec<(usize, usize)> = queries
-            .leaf_positions
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(row, pos)| (pos, row))
-            .collect();
-        indexed.sort_by_key(|&(pos, _)| pos);
-        indexed.dedup_by_key(|&mut (pos, _)| pos);
-        let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
-        let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
-
-        // Construct the BCS-checked oracle handles. The Proximity phase
-        // itself stays BCS-agnostic — it only sees `&dyn IndexedOracle`.
-        // Each handle gets its own `WarpScheme` built from the hasher value.
-        let fresh_values: Vec<Vec<F>> = row_indices
-            .iter()
-            .map(|&r| proof.shift_query_answers[r][l2..].to_vec())
-            .collect();
-        let fresh_handle = MerkleIndexedOracle::new(
-            warp_scheme::<H, F>(self.params.hasher.clone(), n),
-            &rt_0,
-            &proof.auth_0,
-            sorted_unique.clone(),
-            fresh_values,
+        // Run the verifier-side pipeline (PESAT → TC → OOD → Proximity → Batching).
+        let pipeline = WarpPipeline::new(
+            &self.params.code,
+            &self.params.hasher,
+            self.params.p.constraints(),
+            &self.params.p,
+            n,
         );
-
-        let acc_handles: Vec<MerkleIndexedOracle<F, H>> = (0..l2)
-            .map(|k| {
-                let acc_values: Vec<Vec<F>> = row_indices
-                    .iter()
-                    .map(|&r| vec![proof.shift_query_answers[r][k]])
-                    .collect();
-                MerkleIndexedOracle::new(
-                    warp_scheme::<H, F>(self.params.hasher.clone(), n),
-                    &l2_roots[k],
-                    &proof.auth_j[k],
-                    sorted_unique.clone(),
-                    acc_values,
-                )
-            })
-            .collect();
-        let proximity_phase = Proximity::<F, H> {
-            hasher: &self.params.hasher,
-            _phantom: PhantomData,
+        let config = WarpPipelineConfig {
+            l1,
+            log_l,
+            log_m,
+            log_n,
+            n_minus_k: N - k,
+            s: self.params.config.s,
+            t: self.params.config.t,
+            l2,
         };
-        proximity_phase.verify(
+        let verified = pipeline.verify(
             verifier_state,
-            &ProximityStatement {
-                queries: queries.clone(),
-                l2,
-                t: self.params.config.t,
-                n,
-            },
-            &ProximityVerifierInputs {
-                fresh: &fresh_handle,
-                acc: &acc_handles,
-                _f: PhantomData,
+            &config,
+            WarpPipelineVerifyInputs {
+                parsed_acc,
+                acc_mu_first,
+                proof: &proof,
             },
         )?;
 
-        // 8. Compute ν_{s+k} from shift answers; assemble nus.
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &tc_red.gamma);
-        let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
-        nus.push(nu_0);
-        nus.extend(ood_red.answers);
-        for v_jk in proof.shift_query_answers.iter() {
-            let nu_st = v_jk
-                .iter()
-                .zip(&gamma_eq_evals)
-                .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
-            nus.push(nu_st);
-        }
+        // Post-pipeline consistency checks against the prior accumulator.
+        (acc_alpha_first == verified.batching.alpha)
+            .then_some(())
+            .ok_or(VerifierError::CodeEvaluationPoint)?;
 
-        // 9. Batching::verify.
-        let batching_phase = Batching::<F>::new();
-        let (batching_red, _) = batching_phase.verify(
-            verifier_state,
-            &BatchingStatement::from_phase_outputs(
-                tc_red.zeta_0.clone(),
-                &ood_red.samples_flat,
-                &queries.evaluation_points,
-                self.params.config.s,
-                self.params.config.t,
-                log_n,
-            ),
-            &BatchingVerifierInputs {
-                nus,
-                acc_mu: acc_mu_first,
-            },
-        )?;
-
-        // 10. Accumulator consistency.
-        (acc_alpha_first == batching_red.alpha).then_some(()).ok_or(VerifierError::CodeEvaluationPoint)?;
-
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &verified.tc.gamma);
+        let l1_taus = verified.pesat.taus;
         let betas = l2_taus
             .into_iter()
             .chain(l1_taus)
@@ -438,7 +309,9 @@ where
             .collect::<Vec<Vec<F>>>();
         let beta = scale_and_sum(&betas, &gamma_eq_evals);
         let expected_beta = concat_slices(&acc_beta_0_first, &acc_beta_1_first);
-        (expected_beta == beta).then_some(()).ok_or(VerifierError::CircuitEvaluationPoint)?;
+        (expected_beta == beta)
+            .then_some(())
+            .ok_or(VerifierError::CircuitEvaluationPoint)?;
 
         Ok(())
     }
