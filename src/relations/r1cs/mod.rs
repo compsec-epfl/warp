@@ -2,7 +2,7 @@ pub mod hashchain;
 
 use ark_ff::Field;
 use ark_relations::gr1cs::ConstraintSystemRef;
-use effsc::hypercube::Ascending;
+use rayon::prelude::*;
 
 use crate::error::WARPError;
 
@@ -99,15 +99,19 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
-        // TODO: multithread this
-        Ascending::new(self.log_m).try_fold(F::ZERO, |acc, p| {
-            let index = p.index;
-            let eq_tau_i = *zero_evader_evals
-                .get(index)
-                .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), index))?;
-            let p_i = self.eval_p_i(z, index)?;
-            Ok(acc + eq_tau_i * p_i)
-        })
+        if zero_evader_evals.len() < self.m {
+            return Err(WARPError::ZeroEvaderSize(
+                zero_evader_evals.len(),
+                self.m - 1,
+            ));
+        }
+        (0..self.m)
+            .into_par_iter()
+            .map(|i| -> Result<F, WARPError> {
+                let p_i = self.eval_p_i(z, i)?;
+                Ok(zero_evader_evals[i] * p_i)
+            })
+            .try_reduce(|| F::ZERO, |acc, x| Ok(acc + x))
     }
 
     fn config(&self) -> Self::Config {
