@@ -1,93 +1,112 @@
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use ark_mt::MerkleHasher;
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Valid, Write};
 
 use crate::crypto::merkle::WarpProof;
 use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
-#[derive(CanonicalSerialize)]
-pub struct AccWitnessSerializer<F: Field + PrimeField, H: MerkleHasher> {
-    pub w: Vec<F>,
-    _h: std::marker::PhantomData<H>,
-}
+// `AccumulatorInstance` and `WARPProof` carry generic associated types
+// (`H::Digest`, `WarpProof<H>`) whose serializability is not implied by
+// `H: MerkleHasher`. Putting the `CanonicalSerialize` bound in a
+// separate `impl` block (rather than on the struct) keeps the bulk of
+// the IOR / orchestrator code free of that dep — only the size-printing
+// path pulls it in.
 
-impl<F: Field + PrimeField, H: MerkleHasher<Symbol = Vec<F>>> AccWitnessSerializer<F, H> {
-    pub fn new(acc_witness: AccumulatorWitness<F, H>) -> Self {
-        assert_eq!(acc_witness.td.len(), 1);
-        assert_eq!(acc_witness.w.len(), 1);
-        Self {
-            w: acc_witness.w.into_iter().next().unwrap(),
-            _h: std::marker::PhantomData,
-        }
+impl<F, H> CanonicalSerialize for AccumulatorInstance<F, H>
+where
+    F: Field + CanonicalSerialize,
+    H: MerkleHasher,
+    H::Digest: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.rt.serialize_with_mode(&mut writer, compress)?;
+        self.alpha.serialize_with_mode(&mut writer, compress)?;
+        self.mu.serialize_with_mode(&mut writer, compress)?;
+        self.beta.0.serialize_with_mode(&mut writer, compress)?;
+        self.beta.1.serialize_with_mode(&mut writer, compress)?;
+        self.eta.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.rt.serialized_size(compress)
+            + self.alpha.serialized_size(compress)
+            + self.mu.serialized_size(compress)
+            + self.beta.0.serialized_size(compress)
+            + self.beta.1.serialized_size(compress)
+            + self.eta.serialized_size(compress)
     }
 }
 
-#[derive(CanonicalSerialize)]
-pub struct AccInstanceSerializer<F: Field + PrimeField, H: MerkleHasher>
+impl<F, H> Valid for AccumulatorInstance<F, H>
 where
+    F: Field + CanonicalSerialize,
+    H: MerkleHasher,
     H::Digest: CanonicalSerialize,
 {
-    pub rt: H::Digest,
-    pub alpha: Vec<F>,
-    pub mu: F,
-    pub beta: (Vec<F>, Vec<F>),
-    pub eta: F,
-}
-
-impl<F: Field + PrimeField, H: MerkleHasher> AccInstanceSerializer<F, H>
-where
-    H::Digest: CanonicalSerialize,
-{
-    pub fn new(acc_instance: AccumulatorInstance<F, H>) -> Self {
-        assert_eq!(acc_instance.rt.len(), 1);
-        assert_eq!(acc_instance.alpha.len(), 1);
-        assert_eq!(acc_instance.mu.len(), 1);
-        assert_eq!(acc_instance.beta.0.len(), 1);
-        assert_eq!(acc_instance.beta.1.len(), 1);
-        assert_eq!(acc_instance.eta.len(), 1);
-        let beta = (
-            acc_instance.beta.0.into_iter().next().unwrap(),
-            acc_instance.beta.1.into_iter().next().unwrap(),
-        );
-        Self {
-            rt: acc_instance.rt.into_iter().next().unwrap(),
-            alpha: acc_instance.alpha.into_iter().next().unwrap(),
-            mu: acc_instance.mu[0],
-            beta,
-            eta: acc_instance.eta[0],
-        }
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
     }
 }
 
-#[derive(CanonicalSerialize)]
-pub struct ProofSerializer<F: Field + PrimeField, H: MerkleHasher>
+impl<F, H> CanonicalSerialize for WARPProof<F, H>
 where
+    F: Field + CanonicalSerialize,
+    H: MerkleHasher,
     H::Digest: CanonicalSerialize,
     WarpProof<H>: CanonicalSerialize,
 {
-    pub rt_0: H::Digest,
-    pub mu_i: Vec<F>,
-    pub nu_0: F,
-    pub nu_i: Vec<F>,
-    pub auth_0: WarpProof<H>,
-    pub auth_j: Vec<WarpProof<H>>,
-    pub f_i_x_j: Vec<Vec<F>>,
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.rt_0.serialize_with_mode(&mut writer, compress)?;
+        self.mu_i.serialize_with_mode(&mut writer, compress)?;
+        self.nu_0.serialize_with_mode(&mut writer, compress)?;
+        self.nu_i.serialize_with_mode(&mut writer, compress)?;
+        self.auth_0.serialize_with_mode(&mut writer, compress)?;
+        self.auth_j.serialize_with_mode(&mut writer, compress)?;
+        self.shift_query_answers
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.rt_0.serialized_size(compress)
+            + self.mu_i.serialized_size(compress)
+            + self.nu_0.serialized_size(compress)
+            + self.nu_i.serialized_size(compress)
+            + self.auth_0.serialized_size(compress)
+            + self.auth_j.serialized_size(compress)
+            + self.shift_query_answers.serialized_size(compress)
+    }
 }
 
-impl<F: Field + PrimeField, H: MerkleHasher> ProofSerializer<F, H>
+impl<F, H> Valid for WARPProof<F, H>
 where
+    F: Field + CanonicalSerialize,
+    H: MerkleHasher,
     H::Digest: CanonicalSerialize,
     WarpProof<H>: CanonicalSerialize,
 {
-    pub fn new(proof: WARPProof<F, H>) -> Self {
-        Self {
-            rt_0: proof.rt_0,
-            mu_i: proof.mu_i,
-            nu_0: proof.nu_0,
-            nu_i: proof.nu_i,
-            auth_0: proof.auth_0,
-            auth_j: proof.auth_j,
-            f_i_x_j: proof.shift_query_answers,
-        }
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
     }
+}
+
+/// `AccumulatorWitness` deliberately drops `td` (the full Merkle tree)
+/// from the serialized form: only `w` ships across the wire — the tree
+/// is reconstructable by re-encoding `w`. Used for proof-size reporting,
+/// not on-the-wire serialization.
+pub fn acc_witness_size<F, H>(acc_witness: &AccumulatorWitness<F, H>, compress: Compress) -> usize
+where
+    F: Field + CanonicalSerialize,
+    H: MerkleHasher<Symbol = Vec<F>>,
+{
+    acc_witness.w.serialized_size(compress)
 }

@@ -31,7 +31,7 @@ use warp::relations::{
     },
     BundledPESAT, Relation, ToPolySystem,
 };
-use warp::serialize::{AccInstanceSerializer, AccWitnessSerializer, ProofSerializer};
+use warp::serialize::acc_witness_size;
 use warp::traits::AccumulationScheme;
 use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
 use warp::utils::poseidon;
@@ -148,22 +148,9 @@ fn warp_test() {
         .decide(acc_w.clone(), acc_x.clone())
         .unwrap();
 
-    let acc_x_to_serde = AccInstanceSerializer::<_, Blake3FieldHasher<BLS12_381>>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_, Blake3FieldHasher<BLS12_381>>::new(acc_w);
-    let proof_to_serde = ProofSerializer::new(pf);
-
-    println!(
-        "acc_x size: {}",
-        acc_x_to_serde.serialized_size(Compress::Yes)
-    );
-    println!(
-        "acc_w size: {}",
-        acc_w_to_serde.serialized_size(Compress::Yes)
-    );
-    println!(
-        "proof size: {}",
-        proof_to_serde.serialized_size(Compress::Yes)
-    );
+    println!("acc_x size: {}", acc_x.serialized_size(Compress::Yes));
+    println!("acc_w size: {}", acc_witness_size(&acc_w, Compress::Yes));
+    println!("proof size: {}", pf.serialized_size(Compress::Yes));
     println!("narg_str size: {}", narg_str.len());
 }
 
@@ -283,21 +270,14 @@ fn warp_test_goldilocks() {
         .decide(acc_w.clone(), acc_x.clone())
         .unwrap();
 
-    let acc_x_to_serde = AccInstanceSerializer::<_, Blake3FieldHasher<Goldilocks>>::new(acc_x);
-    let acc_w_to_serde = AccWitnessSerializer::<_, Blake3FieldHasher<Goldilocks>>::new(acc_w);
-    let proof_to_serde = ProofSerializer::new(pf);
-
     println!(
         "Goldilocks acc_x size: {}",
-        acc_x_to_serde.serialized_size(Compress::Yes)
+        acc_x.serialized_size(Compress::Yes)
     );
     println!(
         "Goldilocks acc_w size: {}",
-        acc_w_to_serde.serialized_size(Compress::Yes)
+        acc_witness_size(&acc_w, Compress::Yes)
     );
-    println!(
-        "Goldilocks proof size: {}",
-        proof_to_serde.serialized_size(Compress::Yes)
-    );
+    println!("Goldilocks proof size: {}", pf.serialized_size(Compress::Yes));
     println!("Goldilocks narg_str size: {}", narg_str.len());
 }
