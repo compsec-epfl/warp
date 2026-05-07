@@ -236,6 +236,11 @@ use ark_mt::MerkleHasher;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize};
 use std::marker::PhantomData;
 
+use effsc::hypercube::compute_hypercube_eq_evals;
+
+use crate::count_ops;
+use crate::crypto::merkle::{warp_scheme, WarpCommitted};
+use crate::protocol::phases::ood::{Ood, OodProverInputs, OodReducedStatement, OodStatement};
 use crate::protocol::phases::pesat::{
     Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatWitness,
 };
@@ -244,35 +249,55 @@ use crate::protocol::phases::twin_constraint::{
     TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
 };
 use crate::relations::r1cs::R1CSConstraints;
+use crate::relations::BundledPESAT;
 use crate::types::AccumulatorInstance;
 
-/// Pipeline value chaining Pesat into TwinConstraint.
+/// Growing pipeline value: Pesat → TwinConstraint → Ood.
 ///
-/// Holds both phases as data. Constructed once, calls `prove` many
-/// times — each call passes new short-lived witnesses without forcing
-/// the phase structs (or their `R1CSConstraints` / code / hasher
-/// borrows) to be reconstructed.
-pub struct PesatTwinConstraint<'phase, F, C, H>
+/// Holds three phases as data plus the few `WARPParams` references
+/// the inter-phase glue needs (`bundled_pesat`, `hasher`, `code_len`).
+/// Constructed once, `prove` is callable many times with short-lived
+/// per-batch inputs — the GAT decoupling on [`crate::protocol::phases::IOR`]
+/// keeps that ergonomic.
+///
+/// Will grow: Batching next (with the DAG fan-in from `zeta_0` +
+/// `samples_flat` + sampled queries), then Proximity, at which point
+/// this struct becomes the full replacement for `WARP::prove`.
+pub struct WarpPipeline<'phase, F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: BundledPESAT<F>,
     C: LinearCode<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     pub pesat: Pesat<'phase, F, C, H>,
     pub twin_constraint: TwinConstraint<'phase, F, H>,
+    pub ood: Ood<'phase, F>,
+    /// `BundledPESAT` for the inter-phase `eta` evaluation between TC
+    /// and Ood. Kept by reference so the pipeline value doesn't own
+    /// the relation.
+    pub bundled_pesat: &'phase P,
+    /// Cached for building the new-oracle Merkle commit between TC
+    /// and Ood (`warp_scheme(hasher.clone(), code_len)`).
+    pub code_len: usize,
 }
 
-impl<'phase, F, C, H> PesatTwinConstraint<'phase, F, C, H>
+impl<'phase, F, P, C, H> WarpPipeline<'phase, F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: BundledPESAT<F>,
     C: LinearCode<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone + Eq,
 {
-    /// Build the pipeline. Borrows `code`, `hasher`, and `r1cs` for
-    /// `'phase` — the lifetime of the WARP params, typically.
-    pub fn new(code: &'phase C, hasher: &'phase H, r1cs: &'phase R1CSConstraints<F>) -> Self {
+    pub fn new(
+        code: &'phase C,
+        hasher: &'phase H,
+        r1cs: &'phase R1CSConstraints<F>,
+        bundled_pesat: &'phase P,
+        code_len: usize,
+    ) -> Self {
         Self {
             pesat: Pesat {
                 code,
@@ -283,22 +308,30 @@ where
                 r1cs,
                 _phantom: PhantomData,
             },
+            ood: Ood::new(),
+            bundled_pesat,
+            code_len,
         }
     }
 }
 
-/// Static config (dimensions) consumed by both phases. Cheap to clone;
-/// pass by reference.
-pub struct PesatTcConfig {
+/// Static config (dimensions + per-phase tuning). Cheap to pass by
+/// reference; covers all phases through Ood.
+pub struct WarpPipelineConfig {
     pub l1: usize,
     pub log_l: usize,
     pub log_m: usize,
     pub log_n: usize,
+    /// Witness arity: `n - k` instance variables. Used to split the
+    /// reduced-z vector at the TC→Ood boundary.
+    pub n_minus_k: usize,
+    /// Number of OOD samples (Ood phase).
+    pub s: usize,
 }
 
 /// Per-call inputs. Lifetime `'a` is independent of the pipeline's
 /// `'phase` — exactly what the GAT migration unlocked.
-pub struct PesatTcInputs<'a, F, H>
+pub struct WarpPipelineInputs<'a, F, H>
 where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
@@ -312,36 +345,61 @@ where
     pub acc_instance: AccumulatorInstance<F, H>,
 }
 
-/// Reduced output of the Pesat → TwinConstraint chain. Holds both
-/// phases' reduced statements + reduced witnesses; downstream phases
-/// (Ood / Batching / Proximity) read from these.
-pub struct PesatTcReduced<F, H>
+/// Reduced output of the prefix pipeline. Holds the per-phase
+/// reductions plus the TC→Ood inter-phase published values
+/// (`eta`, `nu_0`, `td_new`) that downstream Batching/Proximity will
+/// consume — and that the new accumulator instance carries.
+pub struct WarpPipelineReduced<F, H>
 where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
     pub pesat: PesatReducedStatement<F>,
     pub tc: TwinConstraintReducedStatement<F>,
+    pub ood: OodReducedStatement<F>,
     pub pesat_witness: PesatReducedWitness<F, H>,
     pub tc_witness: TwinConstraintReducedWitness<F>,
+    /// Bundled-PESAT evaluation of the reduced witness — the `η` value
+    /// absorbed between TC and Ood.
+    pub eta: F,
+    /// Reduced-oracle code-eval at `tc.zeta_0` — the `ν₀` absorbed
+    /// between TC and Ood.
+    pub nu_0: F,
+    /// New (single-codeword) Merkle commitment to the reduced
+    /// codeword. Becomes the next accumulator's root.
+    pub td_new: WarpCommitted<H, F>,
+    /// Split halves of the reduced witness vector `z`: `(new_x, new_w)`.
+    /// Become the instance/witness components of the next accumulator.
+    pub new_x: Vec<F>,
+    pub new_w: Vec<F>,
 }
 
-impl<'phase, F, C, H> PesatTwinConstraint<'phase, F, C, H>
+impl<'phase, F, P, C, H> WarpPipeline<'phase, F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: BundledPESAT<F>,
     C: LinearCode<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone + Eq,
 {
-    /// Run Pesat then TwinConstraint, threading the upstream reduction
-    /// into the downstream statement and the upstream reduced witness's
-    /// codewords into the downstream prover inputs.
+    /// Run Pesat → TwinConstraint → (inter-phase glue) → Ood.
+    ///
+    /// Mirrors the orchestrator's data flow exactly:
+    /// - `pesat_red.mus / .taus` feed TC's `Statement`
+    /// - `pesat_witness.codewords` feed TC's `ProverInputs` by reference
+    /// - between TC and Ood: compute `eta` (bundled-PESAT eval),
+    ///   `nu_0` (oracle eval at `tc.zeta_0`), commit to the reduced
+    ///   codeword as `td_new`, absorb `(td_new.root, eta, nu_0)` into
+    ///   the transcript
+    /// - Ood reads its samples / answers from the transcript using
+    ///   `tc_witness.f` as the oracle
     pub fn prove<'a>(
         &self,
         prover_state: &mut ProverState,
-        config: &PesatTcConfig,
-        inputs: PesatTcInputs<'a, F, H>,
-    ) -> Result<PesatTcReduced<F, H>, ProverError> {
+        config: &WarpPipelineConfig,
+        inputs: WarpPipelineInputs<'a, F, H>,
+    ) -> Result<WarpPipelineReduced<F, H>, ProverError> {
+        // ── Phase 2: PESAT ─────────────────────────────────────────────
         let (pesat_red, _, pesat_witness) = self.pesat.prove(
             prover_state,
             &PesatStatement {
@@ -354,9 +412,7 @@ where
             &(),
         )?;
 
-        // l1_taus is consumed below; clone it for the statement so the
-        // returned `pesat_red` keeps its own copy via `pesat.taus` (the
-        // values *are* the same — `reduce_statement` produces them).
+        // ── Phase 3a: twin-constraint sumcheck ─────────────────────────
         let (tc_red, _, tc_witness) = self.twin_constraint.prove(
             prover_state,
             &TwinConstraintStatement {
@@ -378,11 +434,52 @@ where
             },
         )?;
 
-        Ok(PesatTcReduced {
+        // ── Phase 3b: TC→Ood glue (eta, nu_0, td_new commit, absorb) ──
+        let beta_eq_evals = compute_hypercube_eq_evals(config.log_m, &tc_red.beta_tau);
+        let eta = self
+            .bundled_pesat
+            .evaluate_bundled(&beta_eq_evals, &tc_witness.z)
+            .map_err(|_| ProverError::SpongeFish)?;
+        let nu_0 = tc_witness.f.query_at_point(&tc_red.zeta_0);
+
+        let (new_x_slice, new_w_slice) = tc_witness.z.split_at(config.n_minus_k);
+        let new_x = new_x_slice.to_vec();
+        let new_w = new_w_slice.to_vec();
+
+        let td_new = {
+            let _s = tracing::info_span!("warp_pipeline.commit_new_oracle").entered();
+            count_ops!(MerkleTreeBuilds);
+            let scheme = warp_scheme::<H, F>(self.pesat.hasher.clone(), self.code_len);
+            scheme.commit(&[tc_witness.f.evals().to_vec()])
+        };
+        prover_state.prover_message(td_new.root());
+        prover_state.prover_message(&eta);
+        prover_state.prover_message(&nu_0);
+
+        // ── Phase 3c: OOD ─────────────────────────────────────────────
+        let (ood_red, _, _) = self.ood.prove(
+            prover_state,
+            &OodStatement {
+                s: config.s,
+                log_n: config.log_n,
+            },
+            &(),
+            &OodProverInputs {
+                oracle: &tc_witness.f,
+            },
+        )?;
+
+        Ok(WarpPipelineReduced {
             pesat: pesat_red,
             tc: tc_red,
+            ood: ood_red,
             pesat_witness,
             tc_witness,
+            eta,
+            nu_0,
+            td_new,
+            new_x,
+            new_w,
         })
     }
 }

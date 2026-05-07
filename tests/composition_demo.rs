@@ -26,7 +26,7 @@ use ark_ff::UniformRand;
 use ark_mt::blake3::Blake3FieldHasher;
 use ark_std::rand::thread_rng;
 
-use warp::protocol::composition::{PesatTcConfig, PesatTcInputs, PesatTwinConstraint};
+use warp::protocol::composition::{WarpPipeline, WarpPipelineConfig, WarpPipelineInputs};
 use warp::relations::{
     r1cs::hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
     BundledPESAT, Relation, ToPolySystem,
@@ -62,9 +62,10 @@ fn make_batch(
 }
 
 #[test]
-fn pipeline_runs_pesat_then_twin_constraint_twice() {
+fn pipeline_runs_pesat_tc_ood_twice() {
     // ── setup: long-lived ─────────────────────────────────────────────
     let l1 = 4;
+    let s = 8;
     let log_l = (l1 as f64).log2() as usize;
     let hash_chain_size = 4;
     let mut rng = thread_rng();
@@ -82,15 +83,19 @@ fn pipeline_runs_pesat_then_twin_constraint_twice() {
     let n = code.code_len();
     let log_n = (n as f64).log2() as usize;
 
-    let config = PesatTcConfig {
+    let config = WarpPipelineConfig {
         l1,
         log_l,
         log_m: r1cs.log_m,
         log_n,
+        n_minus_k: r1cs.n - r1cs.k,
+        s,
     };
 
-    // Build the pipeline ONCE — borrows code / hasher / r1cs for 'phase.
-    let pipeline = PesatTwinConstraint::<F, _, H>::new(&code, &hasher, &r1cs_constraints);
+    // Build the pipeline ONCE — borrows code / hasher / r1cs / bundled
+    // PESAT relation for 'phase.
+    let pipeline =
+        WarpPipeline::<F, _, _, H>::new(&code, &hasher, &r1cs_constraints, &r1cs, n);
 
     // ── two independent batches with independent lifetimes ────────────
     let (instances_a, witnesses_a) = make_batch(l1, &poseidon_config, hash_chain_size, &mut rng);
@@ -108,7 +113,7 @@ fn pipeline_runs_pesat_then_twin_constraint_twice() {
         .prove(
             &mut prover_state_a,
             &config,
-            PesatTcInputs {
+            WarpPipelineInputs {
                 witnesses: &witnesses_a,
                 instances: &instances_a,
                 acc_witness_w: &acc_w_empty,
@@ -128,7 +133,7 @@ fn pipeline_runs_pesat_then_twin_constraint_twice() {
         .prove(
             &mut prover_state_b,
             &config,
-            PesatTcInputs {
+            WarpPipelineInputs {
                 witnesses: &witnesses_b,
                 instances: &instances_b,
                 acc_witness_w: &acc_w_empty,
@@ -138,20 +143,23 @@ fn pipeline_runs_pesat_then_twin_constraint_twice() {
         )
         .expect("second prove call should succeed");
 
-    // Shape sanity — every Pesat run returns l1 mus/taus, every
-    // TwinConstraint run returns a log_l-vec gamma plus the new
-    // (zeta_0, beta_tau) pair.
+    // Shape sanity across all three phases.
     assert_eq!(red_a.pesat.mus.len(), l1);
     assert_eq!(red_a.pesat.taus.len(), l1);
     assert_eq!(red_a.tc.gamma.len(), log_l);
     assert_eq!(red_a.tc.zeta_0.len(), log_n);
+    // Ood: s answers, samples_flat is s * log_n long.
+    assert_eq!(red_a.ood.answers.len(), s);
+    assert_eq!(red_a.ood.samples_flat.len(), s * log_n);
+
+    // Inter-phase glue produced sensible split halves.
+    assert_eq!(red_a.new_x.len(), r1cs.n - r1cs.k);
+    assert_eq!(red_a.new_w.len(), r1cs.k);
 
     assert_eq!(red_b.pesat.mus.len(), l1);
-    assert_eq!(red_b.pesat.taus.len(), l1);
-    assert_eq!(red_b.tc.gamma.len(), log_l);
+    assert_eq!(red_b.ood.answers.len(), s);
 
-    // The two calls used independent randomness (different preimages),
-    // so their reductions should produce different mu vectors —
-    // confirms the pipeline isn't accidentally caching state across calls.
+    // Independent randomness across calls => reductions differ.
     assert_ne!(red_a.pesat.mus, red_b.pesat.mus);
+    assert_ne!(red_a.eta, red_b.eta);
 }
