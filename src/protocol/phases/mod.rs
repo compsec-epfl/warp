@@ -27,10 +27,12 @@
 #![allow(clippy::type_complexity)]
 
 pub mod batching;
+pub mod bridge;
 pub mod ood;
 pub mod oracle_handle;
 pub mod pesat;
 pub mod proximity;
+pub mod sample_queries;
 pub mod twin_constraint;
 
 use spongefish::{ProverState, VerifierState};

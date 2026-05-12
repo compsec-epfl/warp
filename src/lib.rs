@@ -12,7 +12,6 @@ use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_std::log2;
 use config::WARPConfig;
 use effsc::hypercube::compute_hypercube_eq_evals;
-use protocol::query::QueryIndices;
 use protocol::transcript::{absorb_instances, parse_statement};
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -48,14 +47,30 @@ pub mod prelude {
 
 use crate::crypto::merkle::warp_scheme;
 use error::{DeciderError, ProverError, VerifierError};
-use protocol::composition::WarpPipeline;
 use protocol::phases::{
-    batching::{BatchingProverInputs, BatchingStatement, BatchingVerifierInputs},
-    ood::{OodProverInputs, OodStatement},
+    batching::{
+        Batching, BatchingProverInputs, BatchingReducedStatement, BatchingReducedWitness,
+        BatchingStatement, BatchingVerifierInputs,
+    },
+    bridge::{
+        Bridge, BridgeProverInputs, BridgeReducedStatement, BridgeReducedWitness, BridgeStatement,
+        BridgeVerifierInputs, BridgeWitness,
+    },
+    ood::{Ood, OodProverInputs, OodReducedStatement, OodStatement},
     oracle_handle::MerkleIndexedOracle,
-    pesat::{PesatStatement, PesatWitness},
-    proximity::{ProximityProverInputs, ProximityStatement, ProximityVerifierInputs},
-    twin_constraint::{TwinConstraintProverInputs, TwinConstraintStatement, TwinConstraintWitness},
+    pesat::{
+        Pesat, PesatReducedStatement, PesatReducedWitness, PesatStatement, PesatVerifierOutputs,
+        PesatWitness,
+    },
+    proximity::{
+        Proximity, ProximityProofString, ProximityProverInputs, ProximityStatement,
+        ProximityVerifierInputs,
+    },
+    sample_queries::{SampleQueries, SampleQueriesReducedStatement, SampleQueriesStatement},
+    twin_constraint::{
+        TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
+        TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
+    },
     IOR,
 };
 
@@ -177,37 +192,52 @@ where
         } = acc_witness;
         let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
 
-        // The pipeline holds the five phase instances built once with
-        // their setup borrows (code, hasher, r1cs, bundled_pesat). The
-        // orchestrator below drives them through the WARP protocol —
-        // the phase calls and inter-phase glue stay visible here as a
-        // protocol map. (`pipeline.prove(...)` is also available as a
-        // single-call entry point used by tests/composition_demo.rs.)
-        let pipeline = WarpPipeline::new(
-            &self.params.code,
-            &self.params.hasher,
-            self.params.p.constraints(),
-            &self.params.p,
-            n,
-        );
+        // Phase structs (held by value, borrow setup data for &self lifetime).
+        let pesat_phase = Pesat::<F, C, H> {
+            code: &self.params.code,
+            hasher: &self.params.hasher,
+            _phantom: PhantomData,
+        };
+        let tc_phase = TwinConstraint::<F, H> {
+            r1cs: self.params.p.constraints(),
+            _phantom: PhantomData,
+        };
+        let bridge_phase = Bridge::<F, P, H>::new();
+        let ood_phase = Ood::<F>::new();
+        let sample_queries_phase = SampleQueries::<F>::new();
+        let batching_phase = Batching::<F>::new();
+        let proximity_phase = Proximity::<F, H> {
+            hasher: &self.params.hasher,
+            _phantom: PhantomData,
+        };
 
         // ── Phase 2: PESAT — encode witnesses, commit, derive τ ──────
-        let (pesat_red, _pesat_proof, pesat_red_wit) = pipeline.pesat.prove(
-            prover_state,
-            &PesatStatement { l1, log_m },
-            &PesatWitness {
-                witnesses: &witnesses,
-            },
-            &(),
-        )?;
+        let (PesatReducedStatement { mus, taus }, _, PesatReducedWitness { codewords, td_0 }) =
+            pesat_phase.prove(
+                prover_state,
+                &PesatStatement { l1, log_m },
+                &PesatWitness {
+                    witnesses: &witnesses,
+                },
+                &(),
+            )?;
 
-        // ── Phase 3a: twin-constraint sumcheck ──────────────────────
-        let (tc_red, _tc_proof, tc_red_wit) = pipeline.twin_constraint.prove(
+        // ── Phase 3a: TwinConstraint — fused-fold sumcheck ───────────
+        let (
+            TwinConstraintReducedStatement {
+                gamma: _,
+                zeta_0,
+                beta_tau,
+                deferred: _,
+            },
+            _,
+            TwinConstraintReducedWitness { f, z },
+        ) = tc_phase.prove(
             prover_state,
             &TwinConstraintStatement {
                 acc_instance,
-                l1_mus: pesat_red.mus.clone(),
-                l1_taus: pesat_red.taus.clone(),
+                l1_mus: mus.clone(),
+                l1_taus: taus,
                 log_l,
                 log_m,
                 log_n,
@@ -218,71 +248,89 @@ where
                 witnesses: &witnesses,
             },
             &TwinConstraintProverInputs {
-                fresh_codewords: &pesat_red_wit.codewords,
+                fresh_codewords: &codewords,
                 acc_codewords: &acc_fs,
             },
         )?;
 
-        // ── Phase 3b: bundled η, ν₀, new commitment, absorb ──────────
-        let beta_eq_evals = compute_hypercube_eq_evals(log_m, &tc_red.beta_tau);
-        let eta = self
-            .params
-            .p
-            .evaluate_bundled(&beta_eq_evals, &tc_red_wit.z)
-            .map_err(|_| ProverError::SpongeFish)?;
-        let nu_0 = tc_red_wit.f.query_at_point(&tc_red.zeta_0);
+        // ── Phase 3b: Bridge — publish (td_new, η, ν₀); split z ──────
+        let (
+            BridgeReducedStatement {
+                eta,
+                nu_0,
+                td_new_root: _,
+            },
+            _,
+            BridgeReducedWitness {
+                td_new,
+                new_x,
+                new_w,
+            },
+        ) = bridge_phase.prove(
+            prover_state,
+            &BridgeStatement {
+                zeta_0: zeta_0.clone(),
+                beta_tau: beta_tau.clone(),
+                log_m,
+                n_minus_k: N - k,
+            },
+            &BridgeWitness { z: &z, f: &f },
+            &BridgeProverInputs {
+                bundled_pesat: &self.params.p,
+                hasher: &self.params.hasher,
+                code_len: n,
+                _f: PhantomData,
+            },
+        )?;
 
-        let (new_x, new_w) = tc_red_wit.z.split_at(N - k);
-        let new_x = new_x.to_vec();
-        let new_w = new_w.to_vec();
-        let new_beta = (vec![tc_red.beta_tau.clone()], vec![new_x]);
-
-        let td_new = {
-            let _s = tracing::info_span!("warp.commit_new_oracle").entered();
-            count_ops!(MerkleTreeBuilds);
-            let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), n);
-            scheme.commit(&[tc_red_wit.f.evals().to_vec()])
-        };
-        prover_state.prover_message(td_new.root());
-        prover_state.prover_message(&eta);
-        prover_state.prover_message(&nu_0);
-
-        // ── Phase 3c: OOD ──────────────────────────────────────────
-        let (ood_red, _, _) = pipeline.ood.prove(
+        // ── Phase 3c: OOD — out-of-domain queries ────────────────────
+        let (OodReducedStatement { samples_flat, answers }, _, _) = ood_phase.prove(
             prover_state,
             &OodStatement {
                 s: self.params.config.s,
                 log_n,
             },
             &(),
-            &OodProverInputs {
-                oracle: &tc_red_wit.f,
-            },
+            &OodProverInputs { oracle: &f },
         )?;
 
-        // ── Phase 3c → 3d glue: sample shift queries ───────────────
-        let queries = QueryIndices::<F>::sample(prover_state, log_n, self.params.config.t);
-
-        // ── Phase 3d: batching sumcheck (DAG fan-in: tc.zeta_0 +
-        // ood.samples_flat + queries.evaluation_points) ─────────────
-        let (batching_red, _, batching_red_wit) = pipeline.batching.prove(
+        // ── Phase 3c → 3d: SampleQueries — sample t shift positions ──
+        let (SampleQueriesReducedStatement { queries }, _, _) = sample_queries_phase.prove(
             prover_state,
-            &BatchingStatement::from_phase_outputs(
-                tc_red.zeta_0.clone(),
-                &ood_red.samples_flat,
-                &queries.evaluation_points,
-                self.params.config.s,
-                self.params.config.t,
+            &SampleQueriesStatement {
                 log_n,
-            ),
-            &(),
-            &BatchingProverInputs {
-                oracle: &tc_red_wit.f,
+                t: self.params.config.t,
             },
+            &(),
+            &(),
         )?;
 
-        // ── Phase 3e: proximity (shift-query openings) ─────────────
-        let (_, prox, _) = pipeline.proximity.prove(
+        // ── Phase 3d: Batching — DAG fan-in over (ζ₀, OOD, queries) ──
+        let (BatchingReducedStatement { alpha }, _, BatchingReducedWitness { mu }) = batching_phase
+            .prove(
+                prover_state,
+                &BatchingStatement::from_phase_outputs(
+                    zeta_0.clone(),
+                    &samples_flat,
+                    &queries.evaluation_points,
+                    self.params.config.s,
+                    self.params.config.t,
+                    log_n,
+                ),
+                &(),
+                &BatchingProverInputs { oracle: &f },
+            )?;
+
+        // ── Phase 3e: Proximity — shift-query openings ───────────────
+        let (
+            _,
+            ProximityProofString {
+                auth_0,
+                auth_j,
+                shift_query_answers,
+            },
+            _,
+        ) = proximity_phase.prove(
             prover_state,
             &ProximityStatement {
                 queries: queries.clone(),
@@ -292,21 +340,21 @@ where
             },
             &(),
             &ProximityProverInputs {
-                td_0: &pesat_red_wit.td_0,
+                td_0: &td_0,
                 acc_td: &acc_tds,
             },
         )?;
 
-        // ── Assemble new accumulator state and proof ───────────────
+        // ── Assemble new accumulator state and proof ─────────────────
         let mut nus = Vec::with_capacity(1 + self.params.config.s);
         nus.push(nu_0);
-        nus.extend(ood_red.answers);
+        nus.extend(answers);
 
         let new_acc_instance = AccumulatorInstance {
             rt: vec![td_new.root().clone()],
-            alpha: vec![batching_red.alpha],
-            mu: vec![batching_red_wit.mu],
-            beta: new_beta,
+            alpha: vec![alpha],
+            mu: vec![mu],
+            beta: (vec![beta_tau], vec![new_x]),
             eta: vec![eta],
         };
         let new_acc_witness = AccumulatorWitness {
@@ -314,13 +362,13 @@ where
             w: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: pesat_red_wit.td_0.root().clone(),
-            mu_i: pesat_red.mus,
+            rt_0: td_0.root().clone(),
+            mu_i: mus,
             nu_0,
             nu_i: nus,
-            auth_0: prox.auth_0,
-            auth_j: prox.auth_j,
-            shift_query_answers: prox.shift_query_answers,
+            auth_0,
+            auth_j,
+            shift_query_answers,
         };
 
         Ok(((new_acc_instance, new_acc_witness), proof))
@@ -363,33 +411,48 @@ where
         // statement — Proximity needs them for the per-acc Merkle handles.
         let l2_roots = parsed_acc.rt.clone();
 
-        // Pipeline holds the five phase instances. The orchestrator drives
-        // them through the WARP verifier protocol below; phase calls and
-        // inter-phase glue stay visible here.
-        let pipeline = WarpPipeline::new(
-            &self.params.code,
-            &self.params.hasher,
-            self.params.p.constraints(),
-            &self.params.p,
-            n,
-        );
+        // Phase structs (held by value, borrow setup data for &self lifetime).
+        let pesat_phase = Pesat::<F, C, H> {
+            code: &self.params.code,
+            hasher: &self.params.hasher,
+            _phantom: PhantomData,
+        };
+        let tc_phase = TwinConstraint::<F, H> {
+            r1cs: self.params.p.constraints(),
+            _phantom: PhantomData,
+        };
+        let bridge_phase = Bridge::<F, P, H>::new();
+        let ood_phase = Ood::<F>::new();
+        let sample_queries_phase = SampleQueries::<F>::new();
+        let batching_phase = Batching::<F>::new();
+        let proximity_phase = Proximity::<F, H> {
+            hasher: &self.params.hasher,
+            _phantom: PhantomData,
+        };
 
         // ── Phase 2: PESAT::verify ──────────────────────────────────
-        let (pesat_red, pesat_v_out) = pipeline.pesat.verify(
-            verifier_state,
-            &PesatStatement { l1, log_m },
-            &(),
-        )?;
-        let l1_mus = pesat_red.mus;
-        let l1_taus = pesat_red.taus;
-        let rt_0 = pesat_v_out.rt_0;
+        let (
+            PesatReducedStatement {
+                mus: l1_mus,
+                taus: l1_taus,
+            },
+            PesatVerifierOutputs { rt_0 },
+        ) = pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, &())?;
 
         // ── Phase 3a: TwinConstraint::verify ────────────────────────
-        let (tc_red, _) = pipeline.twin_constraint.verify(
+        let (
+            TwinConstraintReducedStatement {
+                gamma,
+                zeta_0,
+                beta_tau,
+                deferred,
+            },
+            _,
+        ) = tc_phase.verify(
             verifier_state,
             &TwinConstraintStatement {
                 acc_instance: parsed_acc,
-                l1_mus,
+                l1_mus: l1_mus.clone(),
                 l1_taus: l1_taus.clone(),
                 log_l,
                 log_m,
@@ -398,14 +461,30 @@ where
             &(),
         )?;
 
-        // ── Phase 3b: read td_digest, η, ν₀; discharge deferred check
-        let _td_digest: H::Digest = verifier_state.prover_message()?;
-        let eta: F = verifier_state.prover_message()?;
-        let nu_0: F = verifier_state.prover_message()?;
-        tc_red.deferred.discharge(&tc_red.gamma, nu_0, eta)?;
+        // ── Phase 3b: Bridge::verify — read (td, η, ν₀), discharge TC's deferred check ─
+        let (
+            BridgeReducedStatement {
+                eta: _,
+                nu_0,
+                td_new_root: _,
+            },
+            _,
+        ) = bridge_phase.verify(
+            verifier_state,
+            &BridgeStatement {
+                zeta_0: zeta_0.clone(),
+                beta_tau,
+                log_m,
+                n_minus_k: N - k,
+            },
+            &BridgeVerifierInputs {
+                deferred: &deferred,
+                gamma: &gamma,
+            },
+        )?;
 
         // ── Phase 3c: OOD::verify ───────────────────────────────────
-        let (ood_red, _) = pipeline.ood.verify(
+        let (OodReducedStatement { samples_flat, answers }, _) = ood_phase.verify(
             verifier_state,
             &OodStatement {
                 s: self.params.config.s,
@@ -414,15 +493,17 @@ where
             &(),
         )?;
 
-        // ── Phase 3c → 3d glue: sample shift queries, arity checks,
-        // build IndexedOracle handles for fresh + accumulated commits
-        let n_shift_query_bytes = (self.params.config.t * log_n).div_ceil(8);
-        let bytes_shift_queries: Vec<u8> = (0..n_shift_query_bytes)
-            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
-            .collect();
-        let queries: QueryIndices<F> =
-            QueryIndices::from_squeezed_bytes(&bytes_shift_queries, log_n, self.params.config.t);
+        // ── Phase 3c → 3d: SampleQueries::verify ────────────────────
+        let (SampleQueriesReducedStatement { queries }, _) = sample_queries_phase.verify(
+            verifier_state,
+            &SampleQueriesStatement {
+                log_n,
+                t: self.params.config.t,
+            },
+            &(),
+        )?;
 
+        // ── Whole-proof arity checks (orchestrator-owned) ────────────
         (proof.shift_query_answers.len() == self.params.config.t)
             .then_some(())
             .ok_or(VerifierError::NumShiftQueries)?;
@@ -430,6 +511,7 @@ where
             .then_some(())
             .ok_or(VerifierError::NumL2Instances)?;
 
+        // ── Build IndexedOracle handles for Proximity ───────────────
         let mut indexed: Vec<(usize, usize)> = queries
             .leaf_positions
             .iter()
@@ -471,7 +553,7 @@ where
             .collect();
 
         // ── Phase 3e: Proximity::verify ─────────────────────────────
-        pipeline.proximity.verify(
+        proximity_phase.verify(
             verifier_state,
             &ProximityStatement {
                 queries: queries.clone(),
@@ -487,10 +569,10 @@ where
         )?;
 
         // ── Recompute ν vector from shift answers ──────────────────
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &tc_red.gamma);
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
         let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         nus.push(nu_0);
-        nus.extend(ood_red.answers);
+        nus.extend(answers);
         for v_jk in proof.shift_query_answers.iter() {
             let nu_st = v_jk
                 .iter()
@@ -500,11 +582,11 @@ where
         }
 
         // ── Phase 3d: Batching::verify ─────────────────────────────
-        let (batching_red, _) = pipeline.batching.verify(
+        let (BatchingReducedStatement { alpha }, _) = batching_phase.verify(
             verifier_state,
             &BatchingStatement::from_phase_outputs(
-                tc_red.zeta_0.clone(),
-                &ood_red.samples_flat,
+                zeta_0.clone(),
+                &samples_flat,
                 &queries.evaluation_points,
                 self.params.config.s,
                 self.params.config.t,
@@ -517,7 +599,7 @@ where
         )?;
 
         // ── Post-pipeline accumulator consistency ──────────────────
-        (acc_alpha_first == batching_red.alpha)
+        (acc_alpha_first == alpha)
             .then_some(())
             .ok_or(VerifierError::CodeEvaluationPoint)?;
 
