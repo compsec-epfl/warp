@@ -23,22 +23,30 @@ where
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.rt.serialize_with_mode(&mut writer, compress)?;
-        self.alpha.serialize_with_mode(&mut writer, compress)?;
-        self.mu.serialize_with_mode(&mut writer, compress)?;
-        self.beta.0.serialize_with_mode(&mut writer, compress)?;
-        self.beta.1.serialize_with_mode(&mut writer, compress)?;
-        self.eta.serialize_with_mode(&mut writer, compress)?;
+        self.rt_merkle_roots
+            .serialize_with_mode(&mut writer, compress)?;
+        self.alpha_fold_vectors
+            .serialize_with_mode(&mut writer, compress)?;
+        self.mu_claimed_evals
+            .serialize_with_mode(&mut writer, compress)?;
+        self.beta_twin_pairs
+            .0
+            .serialize_with_mode(&mut writer, compress)?;
+        self.beta_twin_pairs
+            .1
+            .serialize_with_mode(&mut writer, compress)?;
+        self.eta_predicate_evals
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.rt.serialized_size(compress)
-            + self.alpha.serialized_size(compress)
-            + self.mu.serialized_size(compress)
-            + self.beta.0.serialized_size(compress)
-            + self.beta.1.serialized_size(compress)
-            + self.eta.serialized_size(compress)
+        self.rt_merkle_roots.serialized_size(compress)
+            + self.alpha_fold_vectors.serialized_size(compress)
+            + self.mu_claimed_evals.serialized_size(compress)
+            + self.beta_twin_pairs.0.serialized_size(compress)
+            + self.beta_twin_pairs.1.serialized_size(compress)
+            + self.eta_predicate_evals.serialized_size(compress)
     }
 }
 
@@ -65,10 +73,14 @@ where
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.rt_0.serialize_with_mode(&mut writer, compress)?;
-        self.mu_i.serialize_with_mode(&mut writer, compress)?;
-        self.nu_0.serialize_with_mode(&mut writer, compress)?;
-        self.nu_i.serialize_with_mode(&mut writer, compress)?;
+        self.rt_0_fresh_merkle_root
+            .serialize_with_mode(&mut writer, compress)?;
+        self.mu_i_first_codeword_coords
+            .serialize_with_mode(&mut writer, compress)?;
+        self.nu_0_oracle_eval
+            .serialize_with_mode(&mut writer, compress)?;
+        self.nu_i_oracle_evals
+            .serialize_with_mode(&mut writer, compress)?;
         self.auth_0.serialize_with_mode(&mut writer, compress)?;
         self.auth_j.serialize_with_mode(&mut writer, compress)?;
         self.shift_query_answers
@@ -77,10 +89,10 @@ where
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.rt_0.serialized_size(compress)
-            + self.mu_i.serialized_size(compress)
-            + self.nu_0.serialized_size(compress)
-            + self.nu_i.serialized_size(compress)
+        self.rt_0_fresh_merkle_root.serialized_size(compress)
+            + self.mu_i_first_codeword_coords.serialized_size(compress)
+            + self.nu_0_oracle_eval.serialized_size(compress)
+            + self.nu_i_oracle_evals.serialized_size(compress)
             + self.auth_0.serialized_size(compress)
             + self.auth_j.serialized_size(compress)
             + self.shift_query_answers.serialized_size(compress)
@@ -108,5 +120,5 @@ where
     F: Field + CanonicalSerialize,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    acc_witness.w.serialized_size(compress)
+    acc_witness.w_witnesses.serialized_size(compress)
 }

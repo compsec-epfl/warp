@@ -25,7 +25,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    BundledPESAT, Relation, ToPolySystem,
+    Arithmetize, PolyPredicate, Relation,
 };
 use warp::utils::poseidon;
 use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
@@ -61,12 +61,15 @@ fn json_layer_emits_phase_records() {
     let hash_chain_size = 10;
     let mut rng = thread_rng();
     let poseidon_config = poseidon::initialize_poseidon_config::<BLS12_381>();
-    let r1cs = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+    let r1cs = HashChainRelation::<BLS12_381, CRH<_>, CRHGadget<_>>::arithmetize(&(
         poseidon_config.clone(),
         hash_chain_size,
     ))
     .unwrap();
-    let code_config = ReedSolomonConfig::<BLS12_381>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<BLS12_381>::default(
+        r1cs.k_num_witness_vars,
+        r1cs.k_num_witness_vars.next_power_of_two(),
+    );
     let code = ReedSolomon::new(code_config.clone());
 
     let (instances, witnesses): (Vec<_>, Vec<_>) = (0..l1)
@@ -89,7 +92,7 @@ fn json_layer_emits_phase_records() {
         })
         .unzip();
 
-    let warp_config = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
+    let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
         warp_config,
         code,
@@ -104,9 +107,9 @@ fn json_layer_emits_phase_records() {
         .prove(
             WARPProverKey {
                 index: r1cs.clone(),
-                m: r1cs.m,
-                n: r1cs.n,
-                k: r1cs.k,
+                m_num_constraints: r1cs.m_num_constraints,
+                n_num_variables: r1cs.n_num_variables,
+                k_num_witness_vars: r1cs.k_num_witness_vars,
             },
             &mut prover_state,
             witnesses,

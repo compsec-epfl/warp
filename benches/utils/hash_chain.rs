@@ -9,7 +9,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Relation, ToPolySystem,
+    Arithmetize, Relation,
 };
 
 // utilities for the hashchain benchmark
@@ -17,7 +17,7 @@ pub fn get_hashchain_r1cs<F: PrimeField + Absorb>(
     poseidon_config: &PoseidonConfig<F>,
     hashchain_size: usize,
 ) -> R1CS<F> {
-    HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+    HashChainRelation::<F, CRH<_>, CRHGadget<_>>::arithmetize(&(
         poseidon_config.clone(),
         hashchain_size,
     ))

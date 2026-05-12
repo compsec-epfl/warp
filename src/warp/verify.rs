@@ -20,7 +20,7 @@ use crate::protocol::iors::{
 };
 use crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle;
 use crate::protocol::transcript::parse_statement;
-use crate::relations::{r1cs::R1CSConstraints, BundledPESAT};
+use crate::relations::PolyPredicate;
 use crate::utils::{concat_slices, scale_and_sum};
 use crate::verify_ior;
 use crate::warp::accumulator::AccumulatorInstance;
@@ -31,7 +31,7 @@ use crate::warp::scheme::WARP;
 impl<F, P, C, H> WARP<F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>,
+    P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
@@ -43,25 +43,28 @@ where
         acc_instance: AccumulatorInstance<F, H>,
         proof: WARPProof<F, H>,
     ) -> Result<(), VerifierError> {
-        let (l1, l) = (self.params.config.l1, self.params.config.l);
-        let l2 = l - l1;
+        let log_l = log2(self.params.config.l_total_fold_factor()) as usize;
+        let log_m = log2(vk.m_num_constraints) as usize;
+        let n_code_len = self.params.code.code_len();
+        let log_n = log2(n_code_len) as usize;
+        let n_minus_k = vk.n_num_variables - vk.k_num_witness_vars;
 
-        #[allow(non_snake_case)]
-        let (M, N, k) = (vk.m, vk.n, vk.k);
-        let (log_m, log_l) = (log2(M) as usize, log2(l) as usize);
-        let n = self.params.code.code_len();
-        let log_n = log2(n) as usize;
+        let (l1_xs, parsed_acc) = parse_statement::<F, H>(
+            verifier_state,
+            self.params.config.l1_first_fold_factor,
+            self.params.config.l2_second_fold_factor,
+            n_minus_k,
+            log_n,
+            log_m,
+        )?;
 
-        let (l1_xs, parsed_acc) =
-            parse_statement::<F, H>(verifier_state, l1, l2, N - k, log_n, log_m)?;
-
-        let acc_alpha_first = acc_instance.alpha[0].clone();
-        let acc_beta_0_first = acc_instance.beta.0[0].clone();
-        let acc_beta_1_first = acc_instance.beta.1[0].clone();
-        let acc_mu_first = acc_instance.mu[0];
-        let l2_taus = parsed_acc.beta.0.clone();
-        let l2_xs = parsed_acc.beta.1.clone();
-        let l2_roots = parsed_acc.rt.clone();
+        let acc_alpha_first = acc_instance.alpha_fold_vectors[0].clone();
+        let acc_beta_0_first = acc_instance.beta_twin_pairs.0[0].clone();
+        let acc_beta_1_first = acc_instance.beta_twin_pairs.1[0].clone();
+        let acc_mu_first = acc_instance.mu_claimed_evals[0];
+        let l2_taus = parsed_acc.beta_twin_pairs.0.clone();
+        let l2_xs = parsed_acc.beta_twin_pairs.1.clone();
+        let l2_roots = parsed_acc.rt_merkle_roots.clone();
 
         let pesat_ior = Pesat::<F, C, H> {
             code: &self.params.code,
@@ -69,7 +72,7 @@ where
             _phantom: PhantomData,
         };
         let twin_constraint_ior = TwinConstraint::<F, H> {
-            r1cs: self.params.p.constraints(),
+            r1cs: self.params.predicate.constraints(),
             _phantom: PhantomData,
         };
         let bridge_ior = Bridge::<F, P, H>::default();
@@ -84,21 +87,23 @@ where
         let IorVerifyResult {
             reduced:
                 PesatReducedStatement {
-                    mus: l1_mus,
-                    taus: l1_taus,
+                    mus_codeword_first_coords,
+                    taus_zero_check_challenges,
                 },
-            outputs: PesatVerifierOutputs { rt_0 },
+            outputs: PesatVerifierOutputs {
+                rt_0_fresh_merkle_root,
+            },
         } = verify_ior!(
             pesat_ior,
             verifier_state,
-            statement: PesatStatement { l1, log_m },
+            statement: PesatStatement { l1_first_fold_factor: self.params.config.l1_first_fold_factor, log_m },
             inputs: (),
         )?;
 
         let IorVerifyResult {
             reduced:
                 TwinConstraintReducedStatement {
-                    gamma,
+                    gamma_sumcheck_challenges,
                     zeta_0,
                     beta_tau,
                     deferred,
@@ -109,8 +114,8 @@ where
             verifier_state,
             statement: TwinConstraintStatement {
                 acc_instance: parsed_acc,
-                l1_mus: l1_mus.clone(),
-                l1_taus: l1_taus.clone(),
+                l1_mus_codeword_first_coords: mus_codeword_first_coords.clone(),
+                l1_taus_zero_check_challenges: taus_zero_check_challenges.clone(),
                 log_l,
                 log_m,
                 log_n,
@@ -121,8 +126,8 @@ where
         let IorVerifyResult {
             reduced:
                 BridgeReducedStatement {
-                    eta: _,
-                    nu_0,
+                    eta_predicate_eval: _,
+                    nu_0_oracle_eval,
                     td_new_root: _,
                 },
             outputs: _,
@@ -133,11 +138,11 @@ where
                 zeta_0: zeta_0.clone(),
                 beta_tau,
                 log_m,
-                n_minus_k: N - k,
+                n_minus_k,
             },
             inputs: BridgeVerifierInputs {
                 deferred: &deferred,
-                gamma: &gamma,
+                gamma_twin_constraint_challenges: &gamma_sumcheck_challenges,
             },
         )?;
 
@@ -151,7 +156,7 @@ where
         } = verify_ior!(
             ood_ior,
             verifier_state,
-            statement: OodStatement { s: self.params.config.s, log_n },
+            statement: OodStatement { s_num_ood_samples: self.params.config.s_num_ood_samples, log_n },
             inputs: (),
         )?;
 
@@ -161,14 +166,14 @@ where
         } = verify_ior!(
             sample_queries_ior,
             verifier_state,
-            statement: SampleQueriesStatement { log_n, t: self.params.config.t },
+            statement: SampleQueriesStatement { log_n, t_num_queries: self.params.config.t_num_queries },
             inputs: (),
         )?;
 
-        (proof.shift_query_answers.len() == self.params.config.t)
+        (proof.shift_query_answers.len() == self.params.config.t_num_queries)
             .then_some(())
             .ok_or(VerifierError::NumShiftQueries)?;
-        (proof.auth_j.len() == l2)
+        (proof.auth_j.len() == self.params.config.l2_second_fold_factor)
             .then_some(())
             .ok_or(VerifierError::NumL2Instances)?;
 
@@ -186,40 +191,43 @@ where
 
         let fresh_values: Vec<Vec<F>> = row_indices
             .iter()
-            .map(|&r| proof.shift_query_answers[r][l2..].to_vec())
+            .map(|&r| {
+                proof.shift_query_answers[r][self.params.config.l2_second_fold_factor..].to_vec()
+            })
             .collect();
         let fresh_handle = MerkleIndexedOracle::new(
-            warp_scheme::<H, F>(self.params.hasher.clone(), n),
-            &rt_0,
+            warp_scheme::<H, F>(self.params.hasher.clone(), n_code_len),
+            &rt_0_fresh_merkle_root,
             &proof.auth_0,
             sorted_unique.clone(),
             fresh_values,
         );
 
-        let acc_handles: Vec<MerkleIndexedOracle<F, H>> = (0..l2)
-            .map(|j| {
-                let acc_values: Vec<Vec<F>> = row_indices
-                    .iter()
-                    .map(|&r| vec![proof.shift_query_answers[r][j]])
-                    .collect();
-                MerkleIndexedOracle::new(
-                    warp_scheme::<H, F>(self.params.hasher.clone(), n),
-                    &l2_roots[j],
-                    &proof.auth_j[j],
-                    sorted_unique.clone(),
-                    acc_values,
-                )
-            })
-            .collect();
+        let acc_handles: Vec<MerkleIndexedOracle<F, H>> =
+            (0..self.params.config.l2_second_fold_factor)
+                .map(|j| {
+                    let acc_values: Vec<Vec<F>> = row_indices
+                        .iter()
+                        .map(|&r| vec![proof.shift_query_answers[r][j]])
+                        .collect();
+                    MerkleIndexedOracle::new(
+                        warp_scheme::<H, F>(self.params.hasher.clone(), n_code_len),
+                        &l2_roots[j],
+                        &proof.auth_j[j],
+                        sorted_unique.clone(),
+                        acc_values,
+                    )
+                })
+                .collect();
 
         verify_ior!(
             proximity_ior,
             verifier_state,
             statement: ProximityStatement {
                 queries: queries.clone(),
-                l2,
-                t: self.params.config.t,
-                n,
+                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
+                t_num_queries: self.params.config.t_num_queries,
+                n_code_len,
             },
             inputs: ProximityVerifierInputs {
                 fresh: &fresh_handle,
@@ -228,20 +236,25 @@ where
             },
         )?;
 
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
-        let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
-        nus.push(nu_0);
-        nus.extend(answers);
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck_challenges);
+        let mut nu_i_oracle_evals = Vec::with_capacity(
+            1 + self.params.config.s_num_ood_samples + self.params.config.t_num_queries,
+        );
+        nu_i_oracle_evals.push(nu_0_oracle_eval);
+        nu_i_oracle_evals.extend(answers);
         for v_jk in proof.shift_query_answers.iter() {
             let nu_st = v_jk
                 .iter()
                 .zip(&gamma_eq_evals)
                 .fold(F::zero(), |acc, (v, eq)| acc + *eq * *v);
-            nus.push(nu_st);
+            nu_i_oracle_evals.push(nu_st);
         }
 
         let IorVerifyResult {
-            reduced: BatchingReducedStatement { alpha },
+            reduced:
+                BatchingReducedStatement {
+                    alpha_sumcheck_challenges,
+                },
             outputs: _,
         } = verify_ior!(
             batching_ior,
@@ -250,23 +263,23 @@ where
                 zeta_0.clone(),
                 &samples_flat,
                 &queries.evaluation_points,
-                self.params.config.s,
-                self.params.config.t,
+                self.params.config.s_num_ood_samples,
+                self.params.config.t_num_queries,
                 log_n,
             ),
             inputs: BatchingVerifierInputs {
-                nus,
+                nus_claimed_evals: nu_i_oracle_evals,
                 acc_mu: acc_mu_first,
             },
         )?;
 
-        (acc_alpha_first == alpha)
+        (acc_alpha_first == alpha_sumcheck_challenges)
             .then_some(())
             .ok_or(VerifierError::CodeEvaluationPoint)?;
 
         let betas = l2_taus
             .into_iter()
-            .chain(l1_taus)
+            .chain(taus_zero_check_challenges)
             .zip(l2_xs.into_iter().chain(l1_xs))
             .map(|(tau_i, x)| concat_slices(&tau_i, &x))
             .collect::<Vec<Vec<F>>>();

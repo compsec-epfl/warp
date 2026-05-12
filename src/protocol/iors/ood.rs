@@ -10,7 +10,7 @@ use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::evaluation::Oracle;
 
 pub struct OodStatement {
-    pub s: usize,
+    pub s_num_ood_samples: usize,
     pub log_n: usize,
 }
 
@@ -73,7 +73,7 @@ where
         }
     }
 
-    #[tracing::instrument(name = "ood", skip_all, fields(s = statement.s, log_n = statement.log_n))]
+    #[tracing::instrument(name = "ood", skip_all, fields(s = statement.s_num_ood_samples, log_n = statement.log_n))]
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
@@ -84,8 +84,9 @@ where
     where
         Self: 'b,
     {
-        let samples_flat = prover_state.verifier_messages_vec::<F>(statement.s * statement.log_n);
-        count_ops!(OodPointQueries, statement.s as u64);
+        let samples_flat =
+            prover_state.verifier_messages_vec::<F>(statement.s_num_ood_samples * statement.log_n);
+        count_ops!(OodPointQueries, statement.s_num_ood_samples as u64);
         let answers = samples_flat
             .chunks(statement.log_n)
             .map(|zeta| inputs.oracle.query_at_point(zeta))
@@ -104,7 +105,7 @@ where
     #[tracing::instrument(
         name = "ood.verify",
         skip_all,
-        fields(s = statement.s, log_n = statement.log_n)
+        fields(s = statement.s_num_ood_samples, log_n = statement.log_n)
     )]
     fn verify_inner<'b, 'c>(
         &self,
@@ -115,10 +116,10 @@ where
     where
         Self: 'c,
     {
-        let samples_flat: Vec<F> = (0..statement.s * statement.log_n)
+        let samples_flat: Vec<F> = (0..statement.s_num_ood_samples * statement.log_n)
             .map(|_| verifier_state.verifier_message::<F>())
             .collect();
-        let answers: Vec<F> = verifier_state.prover_messages_vec(statement.s)?;
+        let answers: Vec<F> = verifier_state.prover_messages_vec(statement.s_num_ood_samples)?;
         Ok((
             OodReductionInputs {
                 samples_flat,

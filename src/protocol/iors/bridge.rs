@@ -12,7 +12,7 @@ use crate::error::{ProverError, VerifierError};
 use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::iors::twin_constraint::DeferredOracleCheck;
 use crate::protocol::oracles::evaluation::Oracle;
-use crate::relations::BundledPESAT;
+use crate::relations::PolyPredicate;
 
 pub struct BridgeStatement<F: Field> {
     pub zeta_0: Vec<F>,
@@ -22,17 +22,17 @@ pub struct BridgeStatement<F: Field> {
 }
 
 pub struct BridgeWitness<'a, F: Field> {
-    pub z: &'a [F],
-    pub f: &'a Oracle<F>,
+    pub z_witness_assignment: &'a [F],
+    pub f_oracle: &'a Oracle<F>,
 }
 
 pub struct BridgeProverInputs<'a, F, P, H>
 where
     F: Field,
-    P: BundledPESAT<F>,
+    P: PolyPredicate<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    pub bundled_pesat: &'a P,
+    pub predicate: &'a P,
     pub hasher: &'a H,
     pub code_len: usize,
     pub _f: PhantomData<F>,
@@ -40,18 +40,18 @@ where
 
 pub struct BridgeVerifierInputs<'a, F: Field> {
     pub deferred: &'a DeferredOracleCheck<F>,
-    pub gamma: &'a [F],
+    pub gamma_twin_constraint_challenges: &'a [F],
 }
 
 pub struct BridgeReductionInputs<F: Field, H: MerkleHasher> {
-    pub eta: F,
-    pub nu_0: F,
+    pub eta_predicate_eval: F,
+    pub nu_0_oracle_eval: F,
     pub td_new_root: H::Digest,
 }
 
 pub struct BridgeReducedStatement<F: Field, H: MerkleHasher> {
-    pub eta: F,
-    pub nu_0: F,
+    pub eta_predicate_eval: F,
+    pub nu_0_oracle_eval: F,
     pub td_new_root: H::Digest,
 }
 
@@ -76,7 +76,7 @@ impl<F, P, H> Default for Bridge<F, P, H> {
 impl<F, P, H> IOR for Bridge<F, P, H>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    P: BundledPESAT<F>,
+    P: PolyPredicate<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone,
 {
@@ -113,8 +113,8 @@ where
         Self: 'a,
     {
         BridgeReducedStatement {
-            eta: inputs.eta,
-            nu_0: inputs.nu_0,
+            eta_predicate_eval: inputs.eta_predicate_eval,
+            nu_0_oracle_eval: inputs.nu_0_oracle_eval,
             td_new_root: inputs.td_new_root.clone(),
         }
     }
@@ -137,15 +137,15 @@ where
         // η = ⟨ eq(β_τ), p(z) ⟩
         let beta_eq_evals = compute_hypercube_eq_evals(statement.log_m, &statement.beta_tau);
         let eta = inputs
-            .bundled_pesat
-            .evaluate_bundled(&beta_eq_evals, witness.z)
+            .predicate
+            .evaluate_bundled(&beta_eq_evals, witness.z_witness_assignment)
             .map_err(|_| ProverError::SpongeFish)?;
 
         // ν₀ = f̂(ζ₀)
-        let nu_0 = witness.f.query_at_point(&statement.zeta_0);
+        let nu_0 = witness.f_oracle.query_at_point(&statement.zeta_0);
 
         // (new_x, new_w) = z[..N-k], z[N-k..]
-        let (new_x_slice, new_w_slice) = witness.z.split_at(statement.n_minus_k);
+        let (new_x_slice, new_w_slice) = witness.z_witness_assignment.split_at(statement.n_minus_k);
         let new_x = new_x_slice.to_vec();
         let new_w = new_w_slice.to_vec();
 
@@ -154,7 +154,7 @@ where
             let _s = tracing::info_span!("bridge.commit_new_oracle").entered();
             count_ops!(MerkleTreeBuilds);
             let scheme = warp_scheme::<H, F>(inputs.hasher.clone(), inputs.code_len);
-            scheme.commit(&[witness.f.evals().to_vec()])
+            scheme.commit(&[witness.f_oracle.evals().to_vec()])
         };
         let td_new_root = td_new.root().clone();
 
@@ -165,8 +165,8 @@ where
 
         Ok((
             BridgeReductionInputs {
-                eta,
-                nu_0,
+                eta_predicate_eval: eta,
+                nu_0_oracle_eval: nu_0,
                 td_new_root,
             },
             (),
@@ -194,12 +194,14 @@ where
         let nu_0: F = verifier_state.prover_message()?;
 
         // Discharge TC's deferred check.
-        inputs.deferred.discharge(inputs.gamma, nu_0, eta)?;
+        inputs
+            .deferred
+            .discharge(inputs.gamma_twin_constraint_challenges, nu_0, eta)?;
 
         Ok((
             BridgeReductionInputs {
-                eta,
-                nu_0,
+                eta_predicate_eval: eta,
+                nu_0_oracle_eval: nu_0,
                 td_new_root,
             },
             (),

@@ -13,7 +13,7 @@ use warp::WARP;
 
 mod utils;
 use utils::poseidon;
-use warp::relations::BundledPESAT;
+use warp::relations::PolyPredicate;
 use warp::utils::fields::Goldilocks;
 
 const HASHCHAIN_SIZE: usize = 800;
@@ -24,13 +24,16 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
     let poseidon_config = poseidon::initialize_poseidon_config::<F>();
     let r1cs = get_hashchain_r1cs(&poseidon_config, HASHCHAIN_SIZE);
 
-    let code_config = ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<F>::default(
+        r1cs.k_num_witness_vars,
+        r1cs.k_num_witness_vars.next_power_of_two(),
+    );
     let code = ReedSolomon::new(code_config.clone());
     let s = 2;
     let t = 125;
 
     for l in [32, 64, 128, 256, 512] {
-        let warp_config = WARPConfig::new(l, l, s, t, r1cs.config(), code.code_len());
+        let warp_config = WARPConfig::new(l, 0, s, t, r1cs.config(), code.code_len());
 
         let hash_chain_warp = WARP::<_, _, _, Blake3FieldHasher<F>>::new(
             warp_config.clone(),
@@ -58,9 +61,9 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
                             .prove(
                                 WARPProverKey {
                                     index: r1cs.clone(),
-                                    m: r1cs.m,
-                                    n: r1cs.n,
-                                    k: r1cs.k,
+                                    m_num_constraints: r1cs.m_num_constraints,
+                                    n_num_variables: r1cs.n_num_variables,
+                                    k_num_witness_vars: r1cs.k_num_witness_vars,
                                 },
                                 &mut prover_state,
                                 instances_witnesses.1.clone(),

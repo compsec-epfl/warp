@@ -4,7 +4,6 @@ pub mod r1cs;
 pub use description::SerializableConstraintMatrices;
 
 use ark_ff::Field;
-use r1cs::R1CS;
 
 use crate::error::WARPError;
 
@@ -13,7 +12,7 @@ pub trait Relation<F: Field> {
     type Witness;
     type Config;
     fn constraints(&self) -> usize;
-    fn description(config: &Self::Config) -> Vec<u8>;
+    fn describe_from_config(config: &Self::Config) -> Vec<u8>;
     fn instance(&self) -> Self::Instance;
     fn new(instance: Self::Instance, witness: Self::Witness, config: Self::Config) -> Self;
     fn public_config(&self) -> Vec<u8>;
@@ -23,16 +22,16 @@ pub trait Relation<F: Field> {
     fn witness(&self) -> Self::Witness;
 }
 
-pub trait BundledPESAT<F: Field> {
+pub trait PolyPredicate<F: Field> {
     type Config;
-    type Constraints;
     fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError>;
     fn config(&self) -> Self::Config;
     fn description(&self) -> Vec<u8>;
-    fn constraints(&self) -> &Self::Constraints;
+    fn constraints(&self) -> &r1cs::R1CSConstraints<F>;
 }
 
-pub trait ToPolySystem<F: Field>: Relation<F> {
-    // generate an r1cs polynomial system ((A, B, C), M, N, k) for a relation
-    fn into_r1cs(config: &Self::Config) -> Result<R1CS<F>, WARPError>;
+pub trait Arithmetize<F: Field> {
+    type Config;
+    type Predicate;
+    fn arithmetize(config: &Self::Config) -> Result<Self::Predicate, WARPError>;
 }

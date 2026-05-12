@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use crate::error::WARPError;
 use crate::relations::SerializableConstraintMatrices;
 
-use super::BundledPESAT;
+use super::PolyPredicate;
 
 pub type R1CSConstraints<F> = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
 
@@ -16,10 +16,10 @@ pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
     // point is encoded via the n least significant bits of a usize
-    pub p: R1CSConstraints<F>,
-    pub m: usize,
-    pub n: usize,
-    pub k: usize,
+    pub constraints_vec: R1CSConstraints<F>,
+    pub m_num_constraints: usize,
+    pub n_num_variables: usize,
+    pub k_num_witness_vars: usize,
     pub log_m: usize,
     pub log_n: usize,
 }
@@ -63,10 +63,10 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         }
 
         Ok(R1CS {
-            p,
-            m,
-            n,
-            k,
+            constraints_vec: p,
+            m_num_constraints: m,
+            n_num_variables: n,
+            k_num_witness_vars: k,
             log_m,
             log_n,
         })
@@ -87,7 +87,10 @@ impl<F: Field> R1CS<F> {
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
     pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WARPError> {
-        let (a_i, b_i, c_i) = self.p.get(i).ok_or(WARPError::R1CSNonExistingLC)?;
+        let (a_i, b_i, c_i) = self
+            .constraints_vec
+            .get(i)
+            .ok_or(WARPError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
@@ -95,18 +98,17 @@ impl<F: Field> R1CS<F> {
     }
 }
 
-impl<F: Field> BundledPESAT<F> for R1CS<F> {
+impl<F: Field> PolyPredicate<F> for R1CS<F> {
     type Config = (usize, usize, usize);
-    type Constraints = R1CSConstraints<F>;
 
     fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
-        if zero_evader_evals.len() < self.m {
+        if zero_evader_evals.len() < self.m_num_constraints {
             return Err(WARPError::ZeroEvaderSize(
                 zero_evader_evals.len(),
-                self.m - 1,
+                self.m_num_constraints - 1,
             ));
         }
-        (0..self.m)
+        (0..self.m_num_constraints)
             .into_par_iter()
             .map(|i| -> Result<F, WARPError> {
                 let p_i = self.eval_p_i(z, i)?;
@@ -116,7 +118,11 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
     }
 
     fn config(&self) -> Self::Config {
-        (self.m, self.n, self.k)
+        (
+            self.m_num_constraints,
+            self.n_num_variables,
+            self.k_num_witness_vars,
+        )
     }
 
     fn description(&self) -> Vec<u8> {
@@ -126,13 +132,25 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
         // `WARP::index` would only commit to dimensions — a soundness hole
         // in any downstream protocol that trusts `index()` to bind the
         // relation.
-        let a: Vec<Vec<(F, usize)>> = self.p.iter().map(|(a, _, _)| a.clone()).collect();
-        let b: Vec<Vec<(F, usize)>> = self.p.iter().map(|(_, b, _)| b.clone()).collect();
-        let c: Vec<Vec<(F, usize)>> = self.p.iter().map(|(_, _, c)| c.clone()).collect();
+        let a: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(a, _, _)| a.clone())
+            .collect();
+        let b: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(_, b, _)| b.clone())
+            .collect();
+        let c: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(_, _, c)| c.clone())
+            .collect();
         let serializable = SerializableConstraintMatrices {
-            num_instance_variables: self.n - self.k,
-            num_witness_variables: self.k,
-            num_constraints: self.m,
+            num_instance_variables: self.n_num_variables - self.k_num_witness_vars,
+            num_witness_variables: self.k_num_witness_vars,
+            num_constraints: self.m_num_constraints,
             a: SerializableConstraintMatrices::serialize_nested_field(a),
             b: SerializableConstraintMatrices::serialize_nested_field(b),
             c: SerializableConstraintMatrices::serialize_nested_field(c),
@@ -142,7 +160,7 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
             .into_bytes()
     }
 
-    fn constraints(&self) -> &Self::Constraints {
-        &self.p
+    fn constraints(&self) -> &R1CSConstraints<F> {
+        &self.constraints_vec
     }
 }

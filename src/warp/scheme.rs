@@ -7,28 +7,28 @@ use spongefish::{
 use std::marker::PhantomData;
 
 use crate::config::WARPConfig;
-use crate::relations::BundledPESAT;
+use crate::relations::PolyPredicate;
 use crate::warp::keys::{WARPProverKey, WARPVerifierKey};
 use crate::warp::params::WARPParams;
 
-pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
+pub struct WARP<F: Field, P: PolyPredicate<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
     pub params: WARPParams<F, P, C, H>,
 }
 
 impl<F, P, C, H> WARP<F, P, C, H>
 where
     F: Field,
-    P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>,
+    P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    pub fn new(config: WARPConfig<F, P>, code: C, p: P, hasher: H) -> WARP<F, P, C, H> {
+    pub fn new(config: WARPConfig<F, P>, code: C, predicate: P, hasher: H) -> WARP<F, P, C, H> {
         Self {
             params: WARPParams {
-                _f: PhantomData,
+                _phantom_f: PhantomData,
                 config,
                 code,
-                p,
+                predicate,
                 hasher,
             },
         }
@@ -38,7 +38,7 @@ where
 impl<F, P, C, H> WARP<F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    P: Clone + BundledPESAT<F, Config = (usize, usize, usize)>,
+    P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
@@ -52,8 +52,17 @@ where
         prover_state.prover_message(&F::from(n as u32));
         prover_state.prover_message(&F::from(k as u32));
         Ok((
-            WARPProverKey { index, m, n, k },
-            WARPVerifierKey { m, n, k },
+            WARPProverKey {
+                index,
+                m_num_constraints: m,
+                n_num_variables: n,
+                k_num_witness_vars: k,
+            },
+            WARPVerifierKey {
+                m_num_constraints: m,
+                n_num_variables: n,
+                k_num_witness_vars: k,
+            },
         ))
     }
 }

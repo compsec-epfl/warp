@@ -2,15 +2,15 @@
 #[derive(Clone)]
 pub struct WARPProverKey<P> {
     pub index: P,
-    pub m: usize,
-    pub n: usize,
-    pub k: usize,
+    pub m_num_constraints: usize,
+    pub n_num_variables: usize,
+    pub k_num_witness_vars: usize,
 }
 
 /// Verifier key — dimensions only `(M, N, k)`.
 #[derive(Clone, Copy)]
 pub struct WARPVerifierKey {
-    pub m: usize,
-    pub n: usize,
-    pub k: usize,
+    pub m_num_constraints: usize,
+    pub n_num_variables: usize,
+    pub k_num_witness_vars: usize,
 }

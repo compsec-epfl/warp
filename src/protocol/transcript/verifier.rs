@@ -66,11 +66,11 @@ where
         let eta: Vec<F> = verifier_state.prover_messages_vec(l2)?;
 
         Ok(Self {
-            rt,
-            alpha,
-            mu,
-            beta: (taus, xs),
-            eta,
+            rt_merkle_roots: rt,
+            alpha_fold_vectors: alpha,
+            mu_claimed_evals: mu,
+            beta_twin_pairs: (taus, xs),
+            eta_predicate_evals: eta,
         })
     }
 }

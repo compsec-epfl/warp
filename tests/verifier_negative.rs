@@ -37,7 +37,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    BundledPESAT, Relation, ToPolySystem,
+    Arithmetize, PolyPredicate, Relation,
 };
 use warp::utils::poseidon;
 use warp::warp::{
@@ -83,12 +83,15 @@ fn make_fixture() -> Fixture {
     let hash_chain_size = 10;
     let mut rng = thread_rng();
     let poseidon_config = poseidon::initialize_poseidon_config::<F>();
-    let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+    let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::arithmetize(&(
         poseidon_config.clone(),
         hash_chain_size,
     ))
     .unwrap();
-    let code_config = ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<F>::default(
+        r1cs.k_num_witness_vars,
+        r1cs.k_num_witness_vars.next_power_of_two(),
+    );
     let code = ReedSolomon::new(code_config);
 
     let (instances, witnesses): (Vec<_>, Vec<_>) = (0..l1)
@@ -113,7 +116,7 @@ fn make_fixture() -> Fixture {
 
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
-    let warp_cfg1 = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
+    let warp_cfg1 = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let w1 = WARP::<F, R1CS<F>, _, H>::new(
         warp_cfg1,
         code.clone(),
@@ -131,9 +134,9 @@ fn make_fixture() -> Fixture {
             .prove(
                 WARPProverKey {
                     index: r1cs.clone(),
-                    m: r1cs.m,
-                    n: r1cs.n,
-                    k: r1cs.k,
+                    m_num_constraints: r1cs.m_num_constraints,
+                    n_num_variables: r1cs.n_num_variables,
+                    k_num_witness_vars: r1cs.k_num_witness_vars,
                 },
                 &mut ps,
                 witnesses.clone(),
@@ -147,7 +150,7 @@ fn make_fixture() -> Fixture {
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
-    let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(8, l1, s, t, r1cs.config(), code.code_len());
+    let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
     let warp =
         WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
@@ -157,9 +160,9 @@ fn make_fixture() -> Fixture {
         .prove(
             WARPProverKey {
                 index: r1cs.clone(),
-                m: r1cs.m,
-                n: r1cs.n,
-                k: r1cs.k,
+                m_num_constraints: r1cs.m_num_constraints,
+                n_num_variables: r1cs.n_num_variables,
+                k_num_witness_vars: r1cs.k_num_witness_vars,
             },
             &mut ps,
             witnesses,
@@ -172,9 +175,9 @@ fn make_fixture() -> Fixture {
     Fixture {
         warp,
         vk: WARPVerifierKey {
-            m: r1cs.m,
-            n: r1cs.n,
-            k: r1cs.k,
+            m_num_constraints: r1cs.m_num_constraints,
+            n_num_variables: r1cs.n_num_variables,
+            k_num_witness_vars: r1cs.k_num_witness_vars,
         },
         acc_x,
         proof,
@@ -204,7 +207,7 @@ fn happy_path_verifies() {
 fn tampered_alpha_raises_code_evaluation_point() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.alpha[0][0] += F::from(1u64);
+    acc_x.alpha_fold_vectors[0][0] += F::from(1u64);
     assert_err(fix.verify(acc_x, fix.proof.clone()), "CodeEvaluationPoint");
 }
 
@@ -212,7 +215,7 @@ fn tampered_alpha_raises_code_evaluation_point() {
 fn tampered_beta_tau_raises_circuit_evaluation_point() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.beta.0[0][0] += F::from(1u64);
+    acc_x.beta_twin_pairs.0[0][0] += F::from(1u64);
     assert_err(
         fix.verify(acc_x, fix.proof.clone()),
         "CircuitEvaluationPoint",
@@ -223,7 +226,7 @@ fn tampered_beta_tau_raises_circuit_evaluation_point() {
 fn tampered_beta_x_raises_circuit_evaluation_point() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.beta.1[0][0] += F::from(1u64);
+    acc_x.beta_twin_pairs.1[0][0] += F::from(1u64);
     assert_err(
         fix.verify(acc_x, fix.proof.clone()),
         "CircuitEvaluationPoint",
@@ -261,7 +264,7 @@ fn truncated_auth_j_raises_num_l2_instances() {
 fn tampered_mu_raises_target() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.mu[0] += F::from(1u64);
+    acc_x.mu_claimed_evals[0] += F::from(1u64);
     assert_err(fix.verify(acc_x, fix.proof.clone()), "Target");
 }
 
@@ -275,12 +278,15 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
     let hash_chain_size = 4;
     let mut rng = thread_rng();
     let poseidon_config = poseidon::initialize_poseidon_config::<F>();
-    let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+    let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::arithmetize(&(
         poseidon_config.clone(),
         hash_chain_size,
     ))
     .unwrap();
-    let code_config = ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two());
+    let code_config = ReedSolomonConfig::<F>::default(
+        r1cs.k_num_witness_vars,
+        r1cs.k_num_witness_vars.next_power_of_two(),
+    );
     let code = ReedSolomon::new(code_config);
 
     let (instances, witnesses): (Vec<_>, Vec<_>) = (0..l1)
@@ -303,7 +309,7 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
         })
         .unzip();
 
-    let warp_cfg = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
+    let warp_cfg = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let warp =
         WARP::<F, R1CS<F>, _, H>::new(warp_cfg, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
@@ -315,9 +321,9 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
     let result = warp.prove(
         WARPProverKey {
             index: r1cs.clone(),
-            m: r1cs.m,
-            n: r1cs.n,
-            k: r1cs.k,
+            m_num_constraints: r1cs.m_num_constraints,
+            n_num_variables: r1cs.n_num_variables,
+            k_num_witness_vars: r1cs.k_num_witness_vars,
         },
         &mut ps,
         witnesses_short,

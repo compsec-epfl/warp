@@ -6,31 +6,31 @@ use crate::crypto::merkle::WarpCommitted;
 /// Public part of an accumulated claim: `(rt, α, μ, (τ, x), η)` in the paper.
 #[derive(Clone)]
 pub struct AccumulatorInstance<F: Field, H: MerkleHasher> {
-    pub rt: Vec<H::Digest>,
-    pub alpha: Vec<Vec<F>>,
-    pub mu: Vec<F>,
-    pub beta: (Vec<Vec<F>>, Vec<Vec<F>>),
-    pub eta: Vec<F>,
+    pub rt_merkle_roots: Vec<H::Digest>,
+    pub alpha_fold_vectors: Vec<Vec<F>>,
+    pub mu_claimed_evals: Vec<F>,
+    pub beta_twin_pairs: (Vec<Vec<F>>, Vec<Vec<F>>),
+    pub eta_predicate_evals: Vec<F>,
 }
 
 impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
     pub fn empty() -> Self {
         Self {
-            rt: vec![],
-            alpha: vec![],
-            mu: vec![],
-            beta: (vec![], vec![]),
-            eta: vec![],
+            rt_merkle_roots: vec![],
+            alpha_fold_vectors: vec![],
+            mu_claimed_evals: vec![],
+            beta_twin_pairs: (vec![], vec![]),
+            eta_predicate_evals: vec![],
         }
     }
 
     pub fn extend(mut self, other: Self) -> Self {
-        self.rt.extend(other.rt);
-        self.alpha.extend(other.alpha);
-        self.mu.extend(other.mu);
-        self.beta.0.extend(other.beta.0);
-        self.beta.1.extend(other.beta.1);
-        self.eta.extend(other.eta);
+        self.rt_merkle_roots.extend(other.rt_merkle_roots);
+        self.alpha_fold_vectors.extend(other.alpha_fold_vectors);
+        self.mu_claimed_evals.extend(other.mu_claimed_evals);
+        self.beta_twin_pairs.0.extend(other.beta_twin_pairs.0);
+        self.beta_twin_pairs.1.extend(other.beta_twin_pairs.1);
+        self.eta_predicate_evals.extend(other.eta_predicate_evals);
         self
     }
 }
@@ -41,8 +41,8 @@ where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    pub td: Vec<WarpCommitted<H, F>>,
-    pub w: Vec<Vec<F>>,
+    pub td_committed_codewords: Vec<WarpCommitted<H, F>>,
+    pub w_witnesses: Vec<Vec<F>>,
 }
 
 impl<F, H> Clone for AccumulatorWitness<F, H>
@@ -53,8 +53,8 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            td: self.td.clone(),
-            w: self.w.clone(),
+            td_committed_codewords: self.td_committed_codewords.clone(),
+            w_witnesses: self.w_witnesses.clone(),
         }
     }
 }
@@ -66,14 +66,15 @@ where
 {
     pub fn empty() -> Self {
         Self {
-            td: vec![],
-            w: vec![],
+            td_committed_codewords: vec![],
+            w_witnesses: vec![],
         }
     }
 
     pub fn extend(mut self, other: Self) -> Self {
-        self.td.extend(other.td);
-        self.w.extend(other.w);
+        self.td_committed_codewords
+            .extend(other.td_committed_codewords);
+        self.w_witnesses.extend(other.w_witnesses);
         self
     }
 }

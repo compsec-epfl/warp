@@ -27,7 +27,7 @@ use crate::protocol::iors::{
 };
 use crate::protocol::transcript::absorb_instances;
 use crate::prove_ior;
-use crate::relations::{r1cs::R1CSConstraints, BundledPESAT};
+use crate::relations::PolyPredicate;
 use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness};
 use crate::warp::keys::WARPProverKey;
 use crate::warp::proof::{ProveResult, WARPProof};
@@ -36,21 +36,19 @@ use crate::warp::scheme::WARP;
 impl<F, P, C, H> WARP<F, P, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    P: Clone + BundledPESAT<F, Constraints = R1CSConstraints<F>, Config = (usize, usize, usize)>,
+    P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
-    #[tracing::instrument(name = "warp.prove", skip_all)]
-    pub fn prove(
+    fn validate_prover_inputs(
         &self,
-        pk: WARPProverKey<P>,
-        prover_state: &mut ProverState,
-        witnesses: Vec<Vec<F>>,
-        instances: Vec<Vec<F>>,
-        acc_instance: AccumulatorInstance<F, H>,
-        acc_witness: AccumulatorWitness<F, H>,
-    ) -> ProveResult<F, H> {
+        pk: &WARPProverKey<P>,
+        instances: &[Vec<F>],
+        witnesses: &[Vec<F>],
+        acc_instance: &AccumulatorInstance<F, H>,
+        acc_witness: &AccumulatorWitness<F, H>,
+    ) -> Result<(), ProverError> {
         if instances.len() < 2 {
             return Err(ProverError::InsufficientInstances {
                 got: instances.len(),
@@ -62,39 +60,54 @@ where
                 witnesses: witnesses.len(),
             });
         }
-        if acc_witness.td.len() != acc_instance.rt.len() {
+        if acc_witness.td_committed_codewords.len() != acc_instance.rt_merkle_roots.len() {
             return Err(ProverError::AccumulatorShapeMismatch {
-                instances: acc_instance.rt.len(),
-                roots: acc_witness.td.len(),
+                instances: acc_instance.rt_merkle_roots.len(),
+                roots: acc_witness.td_committed_codewords.len(),
             });
         }
-
-        let (l1, l) = (self.params.config.l1, self.params.config.l);
-        let l2 = l - l1;
+        let l = self.params.config.l_total_fold_factor();
         if !l.is_power_of_two() {
             return Err(ProverError::ConfigParameterInvalid {
-                reason: format!("config.l = {l} is not a power of two"),
+                reason: format!(
+                    "l1_first_fold_factor + l2_second_fold_factor = {l} is not a power of two"
+                ),
             });
         }
-
-        #[allow(non_snake_case)]
-        let (M, N, k) = (pk.m, pk.n, pk.k);
-        let (log_m, log_l) = (log2(M) as usize, log2(l) as usize);
-        let n = self.params.code.code_len();
-        let log_n = log2(n) as usize;
-
-        if instances[0].len() != N - k {
+        let expected_instance_len = pk.n_num_variables - pk.k_num_witness_vars;
+        if instances[0].len() != expected_instance_len {
             return Err(ProverError::InstanceLengthMismatch {
-                expected: N - k,
+                expected: expected_instance_len,
                 got: instances[0].len(),
             });
         }
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "warp.prove", skip_all)]
+    pub fn prove(
+        &self,
+        pk: WARPProverKey<P>,
+        prover_state: &mut ProverState,
+        witnesses: Vec<Vec<F>>,
+        instances: Vec<Vec<F>>,
+        acc_instance: AccumulatorInstance<F, H>,
+        acc_witness: AccumulatorWitness<F, H>,
+    ) -> ProveResult<F, H> {
+        self.validate_prover_inputs(&pk, &instances, &witnesses, &acc_instance, &acc_witness)?;
+
+        let log_l = log2(self.params.config.l_total_fold_factor()) as usize;
+        let log_m = log2(pk.m_num_constraints) as usize;
+        let n_code_len = self.params.code.code_len();
+        let log_n = log2(n_code_len) as usize;
+        let n_minus_k = pk.n_num_variables - pk.k_num_witness_vars;
+
         absorb_instances(prover_state, &instances);
         acc_instance.absorb_into(prover_state);
 
         let AccumulatorWitness {
-            td: acc_tds,
-            w: acc_ws,
+            td_committed_codewords: acc_tds,
+            w_witnesses: acc_ws,
         } = acc_witness;
         let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
 
@@ -104,7 +117,7 @@ where
             _phantom: PhantomData,
         };
         let twin_constraint_ior = TwinConstraint::<F, H> {
-            r1cs: self.params.p.constraints(),
+            r1cs: self.params.predicate.constraints(),
             _phantom: PhantomData,
         };
         let bridge_ior = Bridge::<F, P, H>::default();
@@ -117,13 +130,24 @@ where
         };
 
         let IorProveResult {
-            reduced: PesatReducedStatement { mus, taus },
+            reduced:
+                PesatReducedStatement {
+                    mus_codeword_first_coords,
+                    taus_zero_check_challenges,
+                },
             proof: _,
-            witness: PesatReducedWitness { codewords, td_0 },
+            witness:
+                PesatReducedWitness {
+                    codewords,
+                    td_0_committed_codeword,
+                },
         } = prove_ior!(
             pesat_ior,
             prover_state,
-            statement: PesatStatement { l1, log_m },
+            statement: PesatStatement {
+                l1_first_fold_factor: self.params.config.l1_first_fold_factor,
+                log_m,
+            },
             witness: PesatWitness { witnesses: &witnesses },
             inputs: (),
         )?;
@@ -131,20 +155,24 @@ where
         let IorProveResult {
             reduced:
                 TwinConstraintReducedStatement {
-                    gamma: _,
+                    gamma_sumcheck_challenges: _,
                     zeta_0,
                     beta_tau,
                     deferred: _,
                 },
             proof: _,
-            witness: TwinConstraintReducedWitness { f, z },
+            witness:
+                TwinConstraintReducedWitness {
+                    f_oracle,
+                    z_witness_assignment,
+                },
         } = prove_ior!(
             twin_constraint_ior,
             prover_state,
             statement: TwinConstraintStatement {
                 acc_instance,
-                l1_mus: mus.clone(),
-                l1_taus: taus,
+                l1_mus_codeword_first_coords: mus_codeword_first_coords.clone(),
+                l1_taus_zero_check_challenges: taus_zero_check_challenges,
                 log_l,
                 log_m,
                 log_n,
@@ -163,8 +191,8 @@ where
         let IorProveResult {
             reduced:
                 BridgeReducedStatement {
-                    eta,
-                    nu_0,
+                    eta_predicate_eval,
+                    nu_0_oracle_eval,
                     td_new_root: _,
                 },
             proof: _,
@@ -181,13 +209,16 @@ where
                 zeta_0: zeta_0.clone(),
                 beta_tau: beta_tau.clone(),
                 log_m,
-                n_minus_k: N - k,
+                n_minus_k,
             },
-            witness: BridgeWitness { z: &z, f: &f },
+            witness: BridgeWitness {
+                z_witness_assignment: &z_witness_assignment,
+                f_oracle: &f_oracle,
+            },
             inputs: BridgeProverInputs {
-                bundled_pesat: &self.params.p,
+                predicate: &self.params.predicate,
                 hasher: &self.params.hasher,
-                code_len: n,
+                code_len: n_code_len,
                 _f: PhantomData,
             },
         )?;
@@ -203,9 +234,9 @@ where
         } = prove_ior!(
             ood_ior,
             prover_state,
-            statement: OodStatement { s: self.params.config.s, log_n },
+            statement: OodStatement { s_num_ood_samples: self.params.config.s_num_ood_samples, log_n },
             witness: (),
-            inputs: OodProverInputs { oracle: &f },
+            inputs: OodProverInputs { oracle: &f_oracle },
         )?;
 
         let IorProveResult {
@@ -215,15 +246,18 @@ where
         } = prove_ior!(
             sample_queries_ior,
             prover_state,
-            statement: SampleQueriesStatement { log_n, t: self.params.config.t },
+            statement: SampleQueriesStatement { log_n, t_num_queries: self.params.config.t_num_queries },
             witness: (),
             inputs: (),
         )?;
 
         let IorProveResult {
-            reduced: BatchingReducedStatement { alpha },
+            reduced:
+                BatchingReducedStatement {
+                    alpha_sumcheck_challenges,
+                },
             proof: _,
-            witness: BatchingReducedWitness { mu },
+            witness: BatchingReducedWitness { mu_claimed_eval },
         } = prove_ior!(
             batching_ior,
             prover_state,
@@ -231,12 +265,12 @@ where
                 zeta_0.clone(),
                 &samples_flat,
                 &queries.evaluation_points,
-                self.params.config.s,
-                self.params.config.t,
+                self.params.config.s_num_ood_samples,
+                self.params.config.t_num_queries,
                 log_n,
             ),
             witness: (),
-            inputs: BatchingProverInputs { oracle: &f },
+            inputs: BatchingProverInputs { oracle: &f_oracle },
         )?;
 
         let IorProveResult {
@@ -253,37 +287,37 @@ where
             prover_state,
             statement: ProximityStatement {
                 queries: queries.clone(),
-                l2,
-                t: self.params.config.t,
-                n,
+                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
+                t_num_queries: self.params.config.t_num_queries,
+                n_code_len,
             },
             witness: (),
             inputs: ProximityProverInputs {
-                td_0: &td_0,
-                acc_td: &acc_tds,
+                td_0_committed_codeword: &td_0_committed_codeword,
+                acc_td_committed_codewords: &acc_tds,
             },
         )?;
 
-        let mut nus = Vec::with_capacity(1 + self.params.config.s);
-        nus.push(nu_0);
-        nus.extend(answers);
+        let mut nu_i_oracle_evals = Vec::with_capacity(1 + self.params.config.s_num_ood_samples);
+        nu_i_oracle_evals.push(nu_0_oracle_eval);
+        nu_i_oracle_evals.extend(answers);
 
         let new_acc_instance = AccumulatorInstance {
-            rt: vec![td_new.root().clone()],
-            alpha: vec![alpha],
-            mu: vec![mu],
-            beta: (vec![beta_tau], vec![new_x]),
-            eta: vec![eta],
+            rt_merkle_roots: vec![td_new.root().clone()],
+            alpha_fold_vectors: vec![alpha_sumcheck_challenges],
+            mu_claimed_evals: vec![mu_claimed_eval],
+            beta_twin_pairs: (vec![beta_tau], vec![new_x]),
+            eta_predicate_evals: vec![eta_predicate_eval],
         };
         let new_acc_witness = AccumulatorWitness {
-            td: vec![td_new],
-            w: vec![new_w],
+            td_committed_codewords: vec![td_new],
+            w_witnesses: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0: td_0.root().clone(),
-            mu_i: mus,
-            nu_0,
-            nu_i: nus,
+            rt_0_fresh_merkle_root: td_0_committed_codeword.root().clone(),
+            mu_i_first_codeword_coords: mus_codeword_first_coords,
+            nu_0_oracle_eval,
+            nu_i_oracle_evals,
             auth_0,
             auth_j,
             shift_query_answers,

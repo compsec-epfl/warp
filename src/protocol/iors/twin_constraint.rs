@@ -155,8 +155,8 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
 
 pub struct TwinConstraintStatement<F: Field, H: MerkleHasher> {
     pub acc_instance: AccumulatorInstance<F, H>,
-    pub l1_mus: Vec<F>,
-    pub l1_taus: Vec<Vec<F>>,
+    pub l1_mus_codeword_first_coords: Vec<F>,
+    pub l1_taus_zero_check_challenges: Vec<Vec<F>>,
     pub log_l: usize,
     pub log_m: usize,
     pub log_n: usize,
@@ -176,14 +176,15 @@ pub struct TwinConstraintProverInputs<'a, F: Field> {
 /// Deferred oracle check: `final_claim ≟ eq(τ,γ)·(ν₀ + ω·η)`. Cannot fire
 /// inside `verify` because ν₀, η arrive on the transcript only after Bridge.
 pub struct DeferredOracleCheck<F: Field> {
-    pub omega: F,
-    pub tau: Vec<F>,
+    pub omega_zero_check_randomness: F,
+    pub tau_zero_check_challenges: Vec<F>,
     pub claim: F,
 }
 
 impl<F: Field> DeferredOracleCheck<F> {
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
-        let expected = eq_poly_non_binary(&self.tau, gamma) * (nu_0 + self.omega * eta);
+        let expected = eq_poly_non_binary(&self.tau_zero_check_challenges, gamma)
+            * (nu_0 + self.omega_zero_check_randomness * eta);
         (expected == self.claim)
             .then_some(())
             .ok_or(VerifierError::Target)
@@ -191,22 +192,22 @@ impl<F: Field> DeferredOracleCheck<F> {
 }
 
 pub struct TwinConstraintReducedStatement<F: Field> {
-    pub gamma: Vec<F>,
+    pub gamma_sumcheck_challenges: Vec<F>,
     pub zeta_0: Vec<F>,
     pub beta_tau: Vec<F>,
     pub deferred: DeferredOracleCheck<F>,
 }
 
 pub struct TwinConstraintReductionInputs<F: Field> {
-    pub omega: F,
-    pub tau: Vec<F>,
-    pub gamma: Vec<F>,
+    pub omega_zero_check_randomness: F,
+    pub tau_zero_check_challenges: Vec<F>,
+    pub gamma_sumcheck_challenges: Vec<F>,
     pub final_claim: F,
 }
 
 pub struct TwinConstraintReducedWitness<F: Field> {
-    pub f: Oracle<F>,
-    pub z: Vec<F>,
+    pub f_oracle: Oracle<F>,
+    pub z_witness_assignment: Vec<F>,
 }
 
 pub struct TwinConstraint<'a, F, H>
@@ -260,12 +261,12 @@ where
     {
         let log_l = statement.log_l;
         let log_n = statement.log_n;
-        let l1 = statement.l1_mus.len();
+        let l1 = statement.l1_mus_codeword_first_coords.len();
 
-        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &inputs.gamma);
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &inputs.gamma_sumcheck_challenges);
 
         let alpha_vecs = concat_slices(
-            &statement.acc_instance.alpha,
+            &statement.acc_instance.alpha_fold_vectors,
             &vec![vec![F::zero(); log_n]; l1],
         );
         let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
@@ -274,21 +275,21 @@ where
         // (length l1). The τ component of the new β = Σ γ_eq(i) · β_i.
         let beta_taus: Vec<Vec<F>> = statement
             .acc_instance
-            .beta
+            .beta_twin_pairs
             .0
             .iter()
             .cloned()
-            .chain(statement.l1_taus.iter().cloned())
+            .chain(statement.l1_taus_zero_check_challenges.iter().cloned())
             .collect();
         let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
 
         TwinConstraintReducedStatement {
-            gamma: inputs.gamma.clone(),
+            gamma_sumcheck_challenges: inputs.gamma_sumcheck_challenges.clone(),
             zeta_0,
             beta_tau,
             deferred: DeferredOracleCheck {
-                omega: inputs.omega,
-                tau: inputs.tau.clone(),
+                omega_zero_check_randomness: inputs.omega_zero_check_randomness,
+                tau_zero_check_challenges: inputs.tau_zero_check_challenges.clone(),
                 claim: inputs.final_claim,
             },
         }
@@ -326,13 +327,13 @@ where
             .collect::<Vec<F>>();
 
         let alpha_vecs = concat_slices(
-            &statement.acc_instance.alpha,
+            &statement.acc_instance.alpha_fold_vectors,
             &vec![vec![F::zero(); log_n]; l1],
         );
 
         let z_vecs: Vec<Vec<F>> = statement
             .acc_instance
-            .beta
+            .beta_twin_pairs
             .1
             .iter()
             .zip(witness.acc_witness_w)
@@ -343,11 +344,11 @@ where
         // β tables: accumulated β-τs first, then PESAT τs.
         let beta_vecs: Vec<Vec<F>> = statement
             .acc_instance
-            .beta
+            .beta_twin_pairs
             .0
             .iter()
             .cloned()
-            .chain(statement.l1_taus.iter().cloned())
+            .chain(statement.l1_taus_zero_check_challenges.iter().cloned())
             .collect();
 
         let tablewise = vec![
@@ -385,15 +386,15 @@ where
 
         Ok((
             TwinConstraintReductionInputs {
-                omega,
-                tau,
-                gamma: proof.challenges,
+                omega_zero_check_randomness: omega,
+                tau_zero_check_challenges: tau,
+                gamma_sumcheck_challenges: proof.challenges,
                 final_claim: proof.final_value,
             },
             (),
             TwinConstraintReducedWitness {
-                f: Oracle::from_evals(f),
-                z,
+                f_oracle: Oracle::from_evals(f),
+                z_witness_assignment: z,
             },
         ))
     }
@@ -416,7 +417,7 @@ where
     {
         let log_l = statement.log_l;
         let log_n = statement.log_n;
-        let l1 = statement.l1_mus.len();
+        let l1 = statement.l1_mus_codeword_first_coords.len();
 
         // Squeeze ω, τ matching the prover.
         let omega: F = verifier_state.verifier_message();
@@ -426,16 +427,19 @@ where
 
         // Compute σ₁ = Σ_i τ_eq(i) · (μ_i + ω · η_i).
         let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
-        let etas_l2_first = concat_slices(&statement.acc_instance.eta, &vec![F::zero(); l1]);
+        let etas_l2_first = concat_slices(
+            &statement.acc_instance.eta_predicate_evals,
+            &vec![F::zero(); l1],
+        );
         let sigma_1 = tau_eq_evals
             .into_iter()
             .zip(
                 statement
                     .acc_instance
-                    .mu
+                    .mu_claimed_evals
                     .iter()
                     .copied()
-                    .chain(statement.l1_mus.iter().copied())
+                    .chain(statement.l1_mus_codeword_first_coords.iter().copied())
                     .zip(etas_l2_first),
             )
             .fold(F::zero(), |acc, (eq_tau, (mu, eta))| {
@@ -455,9 +459,9 @@ where
 
         Ok((
             TwinConstraintReductionInputs {
-                omega,
-                tau,
-                gamma,
+                omega_zero_check_randomness: omega,
+                tau_zero_check_challenges: tau,
+                gamma_sumcheck_challenges: gamma,
                 final_claim,
             },
             (),

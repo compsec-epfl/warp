@@ -24,33 +24,33 @@ where
     H::Digest: Encoding<[u8]>,
 {
     pub fn absorb_into(&self, prover_state: &mut ProverState) {
-        for digest in &self.rt {
+        for digest in &self.rt_merkle_roots {
             prover_state.prover_message(digest);
         }
 
-        for alpha in &self.alpha {
+        for alpha in &self.alpha_fold_vectors {
             for f in alpha {
                 prover_state.prover_message(f);
             }
         }
 
-        for f in &self.mu {
+        for f in &self.mu_claimed_evals {
             prover_state.prover_message(f);
         }
 
-        for tau in &self.beta.0 {
+        for tau in &self.beta_twin_pairs.0 {
             for f in tau {
                 prover_state.prover_message(f);
             }
         }
 
-        for x in &self.beta.1 {
+        for x in &self.beta_twin_pairs.1 {
             for f in x {
                 prover_state.prover_message(f);
             }
         }
 
-        for f in &self.eta {
+        for f in &self.eta_predicate_evals {
             prover_state.prover_message(f);
         }
     }

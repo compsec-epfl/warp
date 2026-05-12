@@ -22,19 +22,19 @@ use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 /// Sparse-eval optimization (CBBZ23 / HyperPlonk): shift-query zetas at
 /// indices `1+s..r` are 0/1 vectors picking a single hypercube point.
 fn accumulate_sparse_evaluations<F: Field>(
-    zetas: &[Vec<F>],
-    eq_evals: &[F],
-    s: usize,
-    r: usize,
+    zetas_evaluation_points: &[Vec<F>],
+    xi_eq_evals: &[F],
+    s_num_ood_samples: usize,
+    r_total_points: usize,
 ) -> HashMap<usize, F> {
     let mut result: HashMap<usize, F> = HashMap::new();
-    for i in 1 + s..r {
-        let index = zetas[i]
+    for i in 1 + s_num_ood_samples..r_total_points {
+        let index = zetas_evaluation_points[i]
             .iter()
             .enumerate()
             .filter_map(|(j, bit)| bit.is_one().then_some(1 << j))
             .sum::<usize>();
-        *result.entry(index).or_insert_with(F::zero) += eq_evals[i];
+        *result.entry(index).or_insert_with(F::zero) += xi_eq_evals[i];
     }
     result
 }
@@ -61,8 +61,8 @@ fn batched_constraint_poly<F: Field>(
 pub struct BatchingStatement<F: Field> {
     /// `1 + s + t` evaluation points: `[ζ_0, ood_chunk_0…, query_k…]`.
     pub zetas_prefix: Vec<Vec<F>>,
-    pub s: usize,
-    pub t: usize,
+    pub s_num_ood_samples: usize,
+    pub t_num_queries: usize,
     pub log_n: usize,
     pub _phantom: std::marker::PhantomData<F>,
 }
@@ -74,11 +74,11 @@ impl<F: Field> BatchingStatement<F> {
         zeta_0: Vec<F>,
         ood_samples_flat: &[F],
         query_eval_points: &[Vec<F>],
-        s: usize,
-        t: usize,
+        s_num_ood_samples: usize,
+        t_num_queries: usize,
         log_n: usize,
     ) -> Self {
-        let mut zetas: Vec<Vec<F>> = Vec::with_capacity(1 + s + t);
+        let mut zetas: Vec<Vec<F>> = Vec::with_capacity(1 + s_num_ood_samples + t_num_queries);
         zetas.push(zeta_0);
         for chunk in ood_samples_flat.chunks(log_n) {
             zetas.push(chunk.to_vec());
@@ -88,8 +88,8 @@ impl<F: Field> BatchingStatement<F> {
         }
         Self {
             zetas_prefix: zetas,
-            s,
-            t,
+            s_num_ood_samples,
+            t_num_queries,
             log_n,
             _phantom: std::marker::PhantomData,
         }
@@ -101,20 +101,20 @@ pub struct BatchingProverInputs<'a, F: Field> {
 }
 
 pub struct BatchingVerifierInputs<F: Field> {
-    pub nus: Vec<F>,
+    pub nus_claimed_evals: Vec<F>,
     pub acc_mu: F,
 }
 
 pub struct BatchingReductionInputs<F: Field> {
-    pub alpha: Vec<F>,
+    pub alpha_sumcheck_challenges: Vec<F>,
 }
 
 pub struct BatchingReducedStatement<F: Field> {
-    pub alpha: Vec<F>,
+    pub alpha_sumcheck_challenges: Vec<F>,
 }
 
 pub struct BatchingReducedWitness<F: Field> {
-    pub mu: F,
+    pub mu_claimed_eval: F,
 }
 
 #[derive(Default)]
@@ -157,14 +157,14 @@ where
         Self: 'b,
     {
         BatchingReducedStatement {
-            alpha: inputs.alpha.clone(),
+            alpha_sumcheck_challenges: inputs.alpha_sumcheck_challenges.clone(),
         }
     }
 
     #[tracing::instrument(
         name = "batching",
         skip_all,
-        fields(s = statement.s, t = statement.t, log_n = statement.log_n)
+        fields(s = statement.s_num_ood_samples, t = statement.t_num_queries, log_n = statement.log_n)
     )]
     fn prove_inner<'b>(
         &self,
@@ -177,7 +177,7 @@ where
         Self: 'b,
     {
         let n = inputs.oracle.len();
-        let r = 1 + statement.s + statement.t;
+        let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);
 
@@ -186,7 +186,7 @@ where
         let (xi_eq_evals, ood_evals_vec) = {
             let _s = tracing::info_span!("batching.eq_evals").entered();
             let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<_>>();
-            let ood_evals_vec = (0..1 + statement.s)
+            let ood_evals_vec = (0..1 + statement.s_num_ood_samples)
                 .map(|i| {
                     (0..n)
                         .map(|a| eq_poly(&statement.zetas_prefix[i], a) * xi_eq_evals[i])
@@ -198,7 +198,12 @@ where
 
         let id_non_0_eval_sums = {
             let _s = tracing::info_span!("batching.accumulate_sparse").entered();
-            accumulate_sparse_evaluations(&statement.zetas_prefix, &xi_eq_evals, statement.s, r)
+            accumulate_sparse_evaluations(
+                &statement.zetas_prefix,
+                &xi_eq_evals,
+                statement.s_num_ood_samples,
+                r,
+            )
         };
 
         // Run the inner-product sumcheck. MSB half-split → reverse once.
@@ -220,17 +225,19 @@ where
 
         Ok((
             BatchingReductionInputs {
-                alpha: alpha.clone(),
+                alpha_sumcheck_challenges: alpha.clone(),
             },
             (),
-            BatchingReducedWitness { mu },
+            BatchingReducedWitness {
+                mu_claimed_eval: mu,
+            },
         ))
     }
 
     #[tracing::instrument(
         name = "batching.verify",
         skip_all,
-        fields(s = statement.s, t = statement.t, log_n = statement.log_n)
+        fields(s = statement.s_num_ood_samples, t = statement.t_num_queries, log_n = statement.log_n)
     )]
     fn verify_inner<'b, 'c>(
         &self,
@@ -241,10 +248,10 @@ where
     where
         Self: 'c,
     {
-        let r = 1 + statement.s + statement.t;
+        let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);
-        debug_assert_eq!(inputs.nus.len(), r);
+        debug_assert_eq!(inputs.nus_claimed_evals.len(), r);
 
         // Squeeze ξ matching the prover.
         let xis: Vec<F> = (0..log_r)
@@ -255,7 +262,7 @@ where
         // σ₂ = Σ ξ_eq · ν.
         let sigma_2 = xi_eq_evals
             .iter()
-            .zip(&inputs.nus)
+            .zip(&inputs.nus_claimed_evals)
             .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
 
         // Run sumcheck_verify and check the final-claim oracle check.
@@ -278,6 +285,11 @@ where
             .then_some(())
             .ok_or(VerifierError::Target)?;
 
-        Ok((BatchingReductionInputs { alpha: alpha_lsb }, ()))
+        Ok((
+            BatchingReductionInputs {
+                alpha_sumcheck_challenges: alpha_lsb,
+            },
+            (),
+        ))
     }
 }

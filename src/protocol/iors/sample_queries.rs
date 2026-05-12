@@ -18,7 +18,7 @@ use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct SampleQueriesStatement {
     pub log_n: usize,
-    pub t: usize,
+    pub t_num_queries: usize,
 }
 
 pub struct SampleQueriesReductionInputs<F: Field> {
@@ -73,7 +73,7 @@ where
         }
     }
 
-    #[tracing::instrument(name = "sample_queries", skip_all, fields(t = statement.t, log_n = statement.log_n))]
+    #[tracing::instrument(name = "sample_queries", skip_all, fields(t = statement.t_num_queries, log_n = statement.log_n))]
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
@@ -84,7 +84,8 @@ where
     where
         Self: 'b,
     {
-        let queries = QueryIndices::<F>::sample(prover_state, statement.log_n, statement.t);
+        let queries =
+            QueryIndices::<F>::sample(prover_state, statement.log_n, statement.t_num_queries);
         Ok((SampleQueriesReductionInputs { queries }, (), ()))
     }
 
@@ -98,11 +99,12 @@ where
     where
         Self: 'c,
     {
-        let n_bytes = (statement.t * statement.log_n).div_ceil(8);
+        let n_bytes = (statement.t_num_queries * statement.log_n).div_ceil(8);
         let bytes: Vec<u8> = (0..n_bytes)
             .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
             .collect();
-        let queries = QueryIndices::from_squeezed_bytes(&bytes, statement.log_n, statement.t);
+        let queries =
+            QueryIndices::from_squeezed_bytes(&bytes, statement.log_n, statement.t_num_queries);
         Ok((SampleQueriesReductionInputs { queries }, ()))
     }
 }

@@ -29,7 +29,7 @@ pub enum ProverError {
     InsufficientInstances { got: usize },
     #[error("instances.len() ({instances}) != witnesses.len() ({witnesses})")]
     InstanceWitnessLengthMismatch { instances: usize, witnesses: usize },
-    #[error("acc_witness.td.len() ({roots}) != acc_instance.rt.len() ({instances})")]
+    #[error("acc_witness.td_committed_codewords.len() ({roots}) != acc_instance.rt_merkle_roots.len() ({instances})")]
     AccumulatorShapeMismatch { instances: usize, roots: usize },
     #[error("config parameter invalid: {reason}")]
     ConfigParameterInvalid { reason: String },

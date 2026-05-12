@@ -56,7 +56,7 @@ where
         self.constraint_system.num_constraints()
     }
 
-    fn description(config: &Self::Config) -> Vec<u8> {
+    fn describe_from_config(config: &Self::Config) -> Vec<u8> {
         let (hash_config, hash_chain_size) = (config.0.clone(), config.1);
         let zero_witness = HashChainWitness::<F, H> {
             preimage: vec![F::zero()],
@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn description() {
+    fn describe_from_config() {
         let hash_chain_size = 1;
         let zero_witness = HashChainWitness::<BLS12_381, TestCRHScheme> {
             preimage: vec![BLS12_381::zero()],
@@ -229,7 +229,7 @@ mod tests {
         );
         assert!(relation.verify());
         let description: Vec<u8> =
-            HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::description(&(
+            HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::describe_from_config(&(
                 initialize_poseidon_config(),
                 hash_chain_size,
             ));

@@ -19,11 +19,11 @@ use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
     pub queries: QueryIndices<F>,
-    pub l2: usize,
-    pub t: usize,
+    pub l2_second_fold_factor: usize,
+    pub t_num_queries: usize,
     /// Codeword length (`code.code_len()`), needed by both prover and
     /// verifier to construct the `WarpScheme` used for open/check.
-    pub n: usize,
+    pub n_code_len: usize,
 }
 
 pub struct ProximityProverInputs<'a, F, H>
@@ -31,8 +31,8 @@ where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    pub td_0: &'a WarpCommitted<H, F>,
-    pub acc_td: &'a [WarpCommitted<H, F>],
+    pub td_0_committed_codeword: &'a WarpCommitted<H, F>,
+    pub acc_td_committed_codewords: &'a [WarpCommitted<H, F>],
 }
 
 /// Verifier-side inputs. The IOR sees [`IndexedOracle`] handles, not
@@ -122,7 +122,7 @@ where
         skip_all,
         fields(
             n_queries = statement.queries.leaf_positions.len(),
-            n_accumulators = inputs.acc_td.len(),
+            n_accumulators = inputs.acc_td_committed_codewords.len(),
         )
     )]
     fn prove_inner<'b>(
@@ -147,22 +147,22 @@ where
         sorted_unique.sort_unstable();
         sorted_unique.dedup();
 
-        let scheme = warp_scheme(self.hasher.clone(), statement.n);
+        let scheme = warp_scheme(self.hasher.clone(), statement.n_code_len);
 
         let auth_0 = {
             let _s = tracing::info_span!("proximity.auth_0").entered();
             count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
-            scheme.open(inputs.td_0, &sorted_unique)
+            scheme.open(inputs.td_0_committed_codeword, &sorted_unique)
         };
 
         let auth_j: Vec<WarpProof<H>> = {
             let _s = tracing::info_span!("proximity.auth_j").entered();
             count_ops!(
                 MerklePathsGenerated,
-                (inputs.acc_td.len() * sorted_unique.len()) as u64
+                (inputs.acc_td_committed_codewords.len() * sorted_unique.len()) as u64
             );
             inputs
-                .acc_td
+                .acc_td_committed_codewords
                 .iter()
                 .map(|td| scheme.open(td, &sorted_unique))
                 .collect()
@@ -173,21 +173,21 @@ where
         let shift_query_answers = {
             let _s = tracing::info_span!("proximity.shift_queries").entered();
             let total_codewords = inputs
-                .acc_td
+                .acc_td_committed_codewords
                 .iter()
                 .map(|td| td.num_codewords())
                 .sum::<usize>()
-                + inputs.td_0.num_codewords();
+                + inputs.td_0_committed_codeword.num_codewords();
             let mut answers = vec![vec![F::default(); total_codewords]; leaf_positions.len()];
             for (qi, idx) in leaf_positions.iter().enumerate() {
                 let mut col = 0usize;
-                for td in inputs.acc_td.iter() {
+                for td in inputs.acc_td_committed_codewords.iter() {
                     for cw in td.codewords() {
                         answers[qi][col] = cw[*idx];
                         col += 1;
                     }
                 }
-                for cw in inputs.td_0.codewords() {
+                for cw in inputs.td_0_committed_codeword.codewords() {
                     answers[qi][col] = cw[*idx];
                     col += 1;
                 }
@@ -209,7 +209,7 @@ where
     #[tracing::instrument(
         name = "proximity.verify",
         skip_all,
-        fields(t = statement.t, l2 = statement.l2)
+        fields(t = statement.t_num_queries, l2 = statement.l2_second_fold_factor)
     )]
     fn verify_inner<'b, 'c>(
         &self,
@@ -223,7 +223,7 @@ where
         H: 'c,
     {
         // Arity check: number of accumulator openings must match l2.
-        (inputs.acc.len() == statement.l2)
+        (inputs.acc.len() == statement.l2_second_fold_factor)
             .then_some(())
             .ok_or(VerifierError::NumL2Instances)?;
 

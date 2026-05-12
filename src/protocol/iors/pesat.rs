@@ -16,7 +16,7 @@ use crate::error::VerifierError;
 use crate::protocol::ior::{ProverTriple, IOR};
 
 pub struct PesatStatement {
-    pub l1: usize,
+    pub l1_first_fold_factor: usize,
     pub log_m: usize,
 }
 
@@ -25,13 +25,13 @@ pub struct PesatWitness<'a, F: Field> {
 }
 
 pub struct PesatReductionInputs<F: Field> {
-    pub mus: Vec<F>,
-    pub taus: Vec<Vec<F>>,
+    pub mus_codeword_first_coords: Vec<F>,
+    pub taus_zero_check_challenges: Vec<Vec<F>>,
 }
 
 pub struct PesatReducedStatement<F: Field> {
-    pub mus: Vec<F>,
-    pub taus: Vec<Vec<F>>,
+    pub mus_codeword_first_coords: Vec<F>,
+    pub taus_zero_check_challenges: Vec<Vec<F>>,
 }
 
 pub struct PesatReducedWitness<F, H>
@@ -40,11 +40,11 @@ where
     H: MerkleHasher<Symbol = Vec<F>>,
 {
     pub codewords: Vec<Vec<F>>,
-    pub td_0: WarpCommitted<H, F>,
+    pub td_0_committed_codeword: WarpCommitted<H, F>,
 }
 
 pub struct PesatVerifierOutputs<H: MerkleHasher> {
-    pub rt_0: H::Digest,
+    pub rt_0_fresh_merkle_root: H::Digest,
 }
 
 /// PESAT IOR configuration.
@@ -98,15 +98,15 @@ where
         Self: 'b,
     {
         PesatReducedStatement {
-            mus: inputs.mus.clone(),
-            taus: inputs.taus.clone(),
+            mus_codeword_first_coords: inputs.mus_codeword_first_coords.clone(),
+            taus_zero_check_challenges: inputs.taus_zero_check_challenges.clone(),
         }
     }
 
     #[tracing::instrument(
         name = "pesat",
         skip_all,
-        fields(l1 = statement.l1, log_m = statement.log_m, n_witnesses = witness.witnesses.len())
+        fields(l1 = statement.l1_first_fold_factor, log_m = statement.log_m, n_witnesses = witness.witnesses.len())
     )]
     fn prove_inner<'b>(
         &self,
@@ -139,25 +139,28 @@ where
             prover_state.prover_message(td_0.root());
             prover_state.prover_messages(&mus);
 
-            (0..statement.l1)
+            (0..statement.l1_first_fold_factor)
                 .map(|_| prover_state.verifier_messages_vec::<F>(statement.log_m))
                 .collect::<Vec<_>>()
         };
 
         Ok((
             PesatReductionInputs {
-                mus: mus.clone(),
-                taus,
+                mus_codeword_first_coords: mus.clone(),
+                taus_zero_check_challenges: taus,
             },
             (),
-            PesatReducedWitness { codewords, td_0 },
+            PesatReducedWitness {
+                codewords,
+                td_0_committed_codeword: td_0,
+            },
         ))
     }
 
     #[tracing::instrument(
         name = "pesat.verify",
         skip_all,
-        fields(l1 = statement.l1, log_m = statement.log_m)
+        fields(l1 = statement.l1_first_fold_factor, log_m = statement.log_m)
     )]
     fn verify_inner<'b, 'c>(
         &self,
@@ -170,8 +173,8 @@ where
         H: 'c,
     {
         let rt_0: H::Digest = verifier_state.prover_message()?;
-        let mus: Vec<F> = verifier_state.prover_messages_vec(statement.l1)?;
-        let taus: Vec<Vec<F>> = (0..statement.l1)
+        let mus: Vec<F> = verifier_state.prover_messages_vec(statement.l1_first_fold_factor)?;
+        let taus: Vec<Vec<F>> = (0..statement.l1_first_fold_factor)
             .map(|_| {
                 (0..statement.log_m)
                     .map(|_| verifier_state.verifier_message::<F>())
@@ -180,8 +183,13 @@ where
             .collect();
 
         Ok((
-            PesatReductionInputs { mus, taus },
-            PesatVerifierOutputs { rt_0 },
+            PesatReductionInputs {
+                mus_codeword_first_coords: mus,
+                taus_zero_check_challenges: taus,
+            },
+            PesatVerifierOutputs {
+                rt_0_fresh_merkle_root: rt_0,
+            },
         ))
     }
 }
