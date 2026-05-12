@@ -8,7 +8,6 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WARPConfig;
-use warp::accumulation::AccumulationScheme;
 use warp::warp::WARPProverKey;
 use warp::WARP;
 

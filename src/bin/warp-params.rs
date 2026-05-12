@@ -1,17 +1,5 @@
-//! `warp-params` — CLI for exploring parameter selection.
-//!
+//! `warp-params` — CLI for soundness-driven parameter selection.
 //! Paired spec: `docs/paper-mods/mod4_parameter_selection.tex`.
-//!
-//! Usage:
-//!
-//! ```text
-//! warp-params select  --lambda 128 --rate 0.5 --field-bits 254 --regime conjectured
-//! warp-params validate --s 8 --t 128 --lambda 128 --rate 0.5 --field-bits 254 --regime conjectured
-//! warp-params table                           # dump PRESETS as a TSV
-//! ```
-//!
-//! This is intentionally dependency-free (no clap). Keeps the crate slim
-//! and the exit semantics simple.
 
 use std::process::ExitCode;
 

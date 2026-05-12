@@ -27,7 +27,6 @@ use warp::relations::{
     },
     BundledPESAT, Relation, ToPolySystem,
 };
-use warp::accumulation::AccumulationScheme;
 use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
 use warp::utils::poseidon;
 use warp::WARP;

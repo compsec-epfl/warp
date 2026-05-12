@@ -3,12 +3,11 @@ use spongefish::ProverState;
 
 #[derive(Clone)]
 pub struct QueryIndices<F: Field> {
-    pub leaf_positions: Vec<usize>,     // for merkle tree lookups
-    pub evaluation_points: Vec<Vec<F>>, // for eq polynomial evals
+    pub leaf_positions: Vec<usize>,
+    pub evaluation_points: Vec<Vec<F>>,
 }
 
 impl<F: Field> QueryIndices<F> {
-    // take the prover state and sample for queries
     pub fn sample(
         prover_state: &mut ProverState,
         log_codeword_len: usize,
@@ -23,11 +22,9 @@ impl<F: Field> QueryIndices<F> {
         Self::from_squeezed_bytes(&squeezed_bytes, log_codeword_len, num_queries)
     }
 
-    // format the queries from squeezed bytes
     pub fn from_squeezed_bytes(squeezed_bytes: &[u8], log_n: usize, count: usize) -> Self {
         let evaluation_points =
             Self::evaluation_points_from_squeezed_bytes(squeezed_bytes, log_n, count);
-        // Compute all leaf positions in one batch
         let leaf_positions = Self::leaf_positions_from_evaluation_points(&evaluation_points);
         Self {
             leaf_positions,
@@ -35,7 +32,6 @@ impl<F: Field> QueryIndices<F> {
         }
     }
 
-    // Get Vec of len=num_queries, where each elements is vec of F in {0,1} len=log_codeword_len
     fn evaluation_points_from_squeezed_bytes(
         squeezed_bytes: &[u8],
         log_codeword_len: usize,

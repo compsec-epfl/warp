@@ -1,19 +1,5 @@
-//! Oracle abstraction for Warp's IORs.
-//!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex`.
-//!
-//! An [`Oracle`] carries both views Warp's IORs need of a committed
-//! codeword: the raw evaluation table `f: [n] → F` (BCS-native,
-//! index-queryable) and the implied multilinear extension
-//! `\hat f: F^{log n} → F` (point-queryable). The multilinear extension is
-//! materialised lazily on first point query and cached.
-//!
-//! The Merkle commitment of the codeword is **not** held here. In PESAT a
-//! single Merkle tree covers many interleaved codewords (see
-//! `src/crypto/merkle/mod.rs::build_codeword_leaves`), so the tree is
-//! tracked by the enclosing data structure (`AccumulatorWitness`, the
-//! PESAT reduced witness) rather than 1:1 with the oracle. See the
-//! Implementation note in `mod1_oracle.tex` §2.
+//! Codeword oracle: index-queryable evaluation table plus its
+//! lazily-materialised multilinear extension.
 
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
@@ -30,7 +16,6 @@ pub struct Oracle<F: Field> {
 }
 
 impl<F: Field> Oracle<F> {
-    /// Wrap an existing evaluation table.
     pub fn from_evals(evals: Vec<F>) -> Self {
         Self {
             evals,
@@ -38,17 +23,14 @@ impl<F: Field> Oracle<F> {
         }
     }
 
-    /// Borrow the evaluation table `f`.
     pub fn evals(&self) -> &[F] {
         &self.evals
     }
 
-    /// Consume the oracle and return the underlying evaluation table.
     pub fn into_evals(self) -> Vec<F> {
         self.evals
     }
 
-    /// Length `n` of the evaluation table.
     pub fn len(&self) -> usize {
         self.evals.len()
     }
@@ -57,14 +39,12 @@ impl<F: Field> Oracle<F> {
         self.evals.is_empty()
     }
 
-    /// Index query: `f[i]`.
     pub fn query_at_leaf(&self, idx: usize) -> F {
         count_ops!(OracleLeafQueries);
         self.evals[idx]
     }
 
-    /// Point query on the multilinear extension: `\hat f(ζ)` for
-    /// `ζ ∈ F^{log n}`. Materialises the MLE on first call and caches it.
+    /// `\hat f(ζ)`. Materialises the MLE on first call, caches afterward.
     pub fn query_at_point(&self, point: &[F]) -> F {
         count_ops!(OraclePointQueries);
         let mle = self.mle.get_or_init(|| {

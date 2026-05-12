@@ -20,7 +20,7 @@ where
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
-    pub(crate) fn decide_impl(
+    pub fn decide(
         &self,
         acc_witness: AccumulatorWitness<F, H>,
         acc_instance: AccumulatorInstance<F, H>,

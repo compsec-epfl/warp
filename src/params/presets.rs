@@ -1,14 +1,8 @@
-//! Pre-computed parameter tuples for common `(λ, code_rate)` points.
-//!
-//! Each entry is derived by [`super::select`] at the named regime and
-//! stored here as a `const` lookup so tests and CLIs don't need to re-run
-//! the derivation on every invocation. If you change the bounds in
-//! `mod4_parameter_selection.tex`, regenerate this table via
-//! `cargo run --bin warp-params -- table`.
+//! Pre-computed `(λ, rate, regime) → (s, t)` rows. Regenerate via
+//! `cargo run --bin warp-params -- table` after changing the bounds.
 
 use super::types::{Params, Regime, SecurityLevel};
 
-/// One row of [`PRESETS`].
 pub struct Preset {
     pub lambda: SecurityLevel,
     pub code_rate_num: u32,
@@ -23,14 +17,7 @@ impl Preset {
     }
 }
 
-/// Common `(λ, rate, regime) → (s, t)` selections. See module docstring
-/// on regeneration.
-///
-/// All entries use the minimum `s = 8` (see
-/// `mod4_parameter_selection.tex` §2); `t` is the smallest integer that
-/// meets the target under the named regime.
 pub const PRESETS: &[Preset] = &[
-    // λ=80 @ rate 1/2
     Preset {
         lambda: SecurityLevel::STANDARD_80,
         code_rate_num: 1,
@@ -45,7 +32,6 @@ pub const PRESETS: &[Preset] = &[
         regime: Regime::Conjectured,
         params: Params { s: 8, t: 80 },
     },
-    // λ=80 @ rate 1/8 (three bits per query under provable)
     Preset {
         lambda: SecurityLevel::STANDARD_80,
         code_rate_num: 1,
@@ -60,7 +46,6 @@ pub const PRESETS: &[Preset] = &[
         regime: Regime::Conjectured,
         params: Params { s: 8, t: 27 },
     },
-    // λ=128 @ rate 1/2
     Preset {
         lambda: SecurityLevel::STANDARD_128,
         code_rate_num: 1,
@@ -75,7 +60,6 @@ pub const PRESETS: &[Preset] = &[
         regime: Regime::Conjectured,
         params: Params { s: 8, t: 128 },
     },
-    // λ=128 @ rate 1/8
     Preset {
         lambda: SecurityLevel::STANDARD_128,
         code_rate_num: 1,
@@ -92,10 +76,7 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
-/// Look up a preset by `(λ, num/den, regime)`. Exact-rational match —
-/// callers that parsed the rate as a fraction preserve the exact form
-/// and get a hit. Returns `None` if no exact row matches; use
-/// [`super::select`] for arbitrary inputs.
+/// Exact-rational match. `None` if the row isn't tabulated.
 pub fn lookup(
     lambda: SecurityLevel,
     num: u32,

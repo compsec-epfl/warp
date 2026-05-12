@@ -10,7 +10,7 @@ Ongoing research.
 ## Quick start
 
 ```rust
-use warp::prelude::*;
+use warp::{WARPConfig, AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARP};
 use warp::utils::poseidon;
 use warp::relations::{r1cs::{R1CS, hashchain::HashChainRelation}, BundledPESAT, ToPolySystem};
 use ark_codes::{reed_solomon::{ReedSolomon, config::ReedSolomonConfig}, traits::LinearCode};
@@ -77,7 +77,6 @@ Exit codes: 0 ok, 1 derivation failed / target not met, 2 bad args.
 - `src/protocol/iors/` — concrete IORs (`pesat`, `twin_constraint`, `bridge`, `ood`, `sample_queries`, `batching`, `proximity`)
 - `src/protocol/oracles/` — oracle vocabulary used by IORs
 - `src/protocol/transcript/` — transcript absorb / parse helpers
-- `src/accumulation.rs` — the `AccumulationScheme` trait
 - `src/relations/` — `R1CS`, `BundledPESAT`, `HashChainRelation`
 - `src/params/` — soundness-driven `(s, t)` selection backing `warp-params`
 - `src/bin/warp-params.rs` — CLI front-end for `src/params/`
@@ -86,12 +85,9 @@ Exit codes: 0 ok, 1 derivation failed / target not met, 2 bad args.
 - `tests/integration_warp.rs` — end-to-end on BLS12-381 and Goldilocks
 - `tests/verifier_negative.rs` — single-tamper rejection tests
 
-## Running tests / benches / profile
+## Running tests / benches
 
 ```sh
 cargo test --release
 cargo bench
-
-# Per-IOR wall-time breakdown of a prove run.
-cargo run --release --features profile --example profile_iors
 ```

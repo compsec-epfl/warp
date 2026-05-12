@@ -5,19 +5,6 @@
 //! producing one multi-opening proof per commitment and a flat table of
 //! the codeword values at those positions.
 //!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(queries, l2, t, n)`. `n` is the codeword length;
-//!   the verifier needs it to construct the `WarpScheme` used for `check`.
-//! - `Witness`          — `()`
-//! - `ProverInputs`     — fresh `WarpCommitted` + l2 accumulated `WarpCommitted`s
-//! - `VerifierInputs`   — fresh root + l2 acc roots + opening proofs + answers
-//! - `ReductionInputs`  — `()` (no reduction)
-//! - `ReducedStatement` — `()` (Proximity is a check, not a reduction)
-//! - `ProofString`      — opening proofs + shift_query_answers
-//! - `ReducedWitness`   — `()`
-//! - `VerifierOutputs`  — `()`
-
 use ark_ff::Field;
 use ark_mt::MerkleHasher;
 use spongefish::{ProverState, VerifierState};

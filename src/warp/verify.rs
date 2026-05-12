@@ -38,7 +38,7 @@ where
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
-    pub(crate) fn verify_impl<'a>(
+    pub fn verify<'a>(
         &self,
         vk: WARPVerifierKey,
         verifier_state: &mut VerifierState<'a>,
@@ -74,16 +74,15 @@ where
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_ior = Bridge::<F, P, H>::new();
-        let ood_ior = Ood::<F>::new();
-        let sample_queries_ior = SampleQueries::<F>::new();
-        let batching_ior = Batching::<F>::new();
+        let bridge_ior = Bridge::<F, P, H>::default();
+        let ood_ior = Ood::<F>::default();
+        let sample_queries_ior = SampleQueries::<F>::default();
+        let batching_ior = Batching::<F>::default();
         let proximity_ior = Proximity::<F, H> {
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
 
-        // ── IOR 1: PESAT ─────────────────────────────────────────────
         let IorVerifyResult {
             reduced: PesatReducedStatement {
                 mus: l1_mus,
@@ -97,7 +96,6 @@ where
             inputs: (),
         )?;
 
-        // ── IOR 2: TwinConstraint ────────────────────────────────────
         let IorVerifyResult {
             reduced: TwinConstraintReducedStatement {
                 gamma,
@@ -120,7 +118,6 @@ where
             inputs: (),
         )?;
 
-        // ── IOR 3: Bridge ────────────────────────────────────────────
         let IorVerifyResult {
             reduced: BridgeReducedStatement {
                 eta: _,
@@ -143,7 +140,6 @@ where
             },
         )?;
 
-        // ── IOR 4: OOD ───────────────────────────────────────────────
         let IorVerifyResult {
             reduced: OodReducedStatement { samples_flat, answers },
             outputs: _,
@@ -154,7 +150,6 @@ where
             inputs: (),
         )?;
 
-        // ── IOR 5: SampleQueries ─────────────────────────────────────
         let IorVerifyResult {
             reduced: SampleQueriesReducedStatement { queries },
             outputs: _,
@@ -212,7 +207,6 @@ where
             })
             .collect();
 
-        // ── IOR 7: Proximity ─────────────────────────────────────────
         verify_ior!(
             proximity_ior,
             verifier_state,
@@ -241,7 +235,6 @@ where
             nus.push(nu_st);
         }
 
-        // ── IOR 6: Batching ──────────────────────────────────────────
         let IorVerifyResult {
             reduced: BatchingReducedStatement { alpha },
             outputs: _,

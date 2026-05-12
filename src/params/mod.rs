@@ -1,17 +1,5 @@
-//! Soundness-driven parameter selection for WARP.
-//!
+//! Soundness-driven `(s, t)` selection for WARP.
 //! Paired spec: `docs/paper-mods/mod4_parameter_selection.tex`.
-//!
-//! Given a security target, a field, a Reed–Solomon code rate, and a
-//! choice of list-decoding regime, [`select`] returns the smallest
-//! `(s, t)` tuple that achieves the target. [`validate`] is the inverse
-//! and reports the soundness of an already-chosen tuple.
-//!
-//! The workload parameters `l` and `l1` are **not** chosen here — they
-//! are caller-driven by the batch size the application actually needs.
-//!
-//! Derivation limits are called out in the companion `.tex`; the
-//! formulas capture the dominant proximity-query term only.
 
 pub mod presets;
 pub mod select;

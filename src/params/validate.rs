@@ -1,20 +1,8 @@
-//! Soundness validation — the inverse of [`super::select`].
-//!
-//! Given a `Params`, report how many bits of security it gives under the
-//! chosen regime, and whether each component check passes.
-
 use super::select::FIELD_EPSILON;
 use super::types::{ParamError, Params, Regime, SecurityLevel, SoundnessBound};
 
 const S_MIN: usize = 8;
 
-/// Compute the soundness bound that `params` achieves on a rate-`code_rate`
-/// Reed–Solomon code over a field of `field_bits`, under `regime`.
-///
-/// Returns `Err(ParamError::InvalidRate)` if the rate is outside `(0, 1)`.
-/// `FieldTooSmall` is not returned here — field admissibility is surfaced
-/// on the returned [`SoundnessBound`] so callers can reason about partial
-/// failures.
 pub fn validate(
     params: &Params,
     field_bits: u32,

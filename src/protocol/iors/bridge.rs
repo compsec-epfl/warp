@@ -1,41 +1,5 @@
-//! TC → OOD bridge IOR.
-//!
-//! After TwinConstraint reduces to `(γ, ζ₀, β_τ)` on the verifier side
-//! and `(γ, ζ₀, β_τ, deferred, f, z)` on the prover side, three new
-//! values get published into the transcript:
-//!
-//! - `η = ⟨ eq(β_τ), p(z) ⟩` — bundled-PESAT evaluation
-//! - `ν₀ = f̂(ζ₀)` — reduced-oracle evaluation at the new code point
-//! - `td_new` — Merkle commit to `f`'s codeword (becomes the next
-//!   accumulator's root)
-//!
-//! The prover also splits `z` into `(new_x, new_w) = z[..N-k], z[N-k..]`
-//! for the next accumulator's `(β.1, witness.w)` slots.
-//!
-//! The verifier reads `(td_digest, η, ν₀)` from the transcript and
-//! discharges TwinConstraint's deferred oracle check:
-//!
-//! ```text
-//!   eq(τ, γ) · (ν₀ + ω · η)  ≟  final_claim
-//! ```
-//!
-//! Modeled as an IOR for uniformity with the rest of the choreography,
-//! even though it has no verifier challenges — Bridge is "0-round,
-//! prover sends three values, verifier checks deferred." Same shape as
-//! the IOR trait, just with degenerate fields where they don't apply.
-//!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(ζ₀, β_τ, log_m, n_minus_k)`
-//! - `Witness`          — `(z, f)` — prover's TC-side reduced state, borrowed
-//! - `ProverInputs`     — `(bundled_pesat, hasher, code_len)` — config refs
-//! - `VerifierInputs`   — `(deferred, γ)` — what's needed to discharge TC
-//! - `ReductionInputs`  — `(η, ν₀, td_new_root)` — transcript-published values
-//! - `ReducedStatement` — same as `ReductionInputs` (the publish is the reduction)
-//! - `ProofString`      — `()` (everything goes through transcript writes / reads)
-//! - `ReducedWitness`   — `(td_new, new_x, new_w)` — fed into the new accumulator
-//! - `VerifierOutputs`  — `()`
-
+//! TC → OOD bridge IOR. Publishes `(td_new, η, ν₀)` and discharges
+//! TwinConstraint's deferred oracle check `eq(τ,γ)·(ν₀ + ω·η) ≟ final_claim`.
 use ark_ff::Field;
 use ark_mt::MerkleHasher;
 use effsc::hypercube::compute_hypercube_eq_evals;
@@ -101,43 +65,15 @@ where
     pub new_w: Vec<F>,
 }
 
-/// TC → OOD bridge IOR configuration. Stateless; the lifetime
-/// parameter exists only to anchor `ProverInputs<'a>` / `Witness<'a>`
-/// for the IOR trait impl.
-pub struct Bridge<'a, F, P, H>
-where
-    F: Field,
-    P: BundledPESAT<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    pub _phantom: PhantomData<(&'a F, &'a P, &'a H)>,
-}
+pub struct Bridge<F, P, H>(PhantomData<F>, PhantomData<P>, PhantomData<H>);
 
-impl<'a, F, P, H> Bridge<'a, F, P, H>
-where
-    F: Field,
-    P: BundledPESAT<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    pub fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, F, P, H> Default for Bridge<'a, F, P, H>
-where
-    F: Field,
-    P: BundledPESAT<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
+impl<F, P, H> Default for Bridge<F, P, H> {
     fn default() -> Self {
-        Self::new()
+        Self(PhantomData, PhantomData, PhantomData)
     }
 }
 
-impl<'cfg, F, P, H> IOR for Bridge<'cfg, F, P, H>
+impl<F, P, H> IOR for Bridge<F, P, H>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: BundledPESAT<F>,

@@ -4,18 +4,6 @@
 //! Merkle tree (one root over all l1 codewords), absorbs commitment +
 //! code evaluations, and derives the τ zero-check challenges.
 //!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(l1, log_m)`
-//! - `Witness`          — `&[Vec<F>]` (fresh witnesses to encode)
-//! - `ProverInputs`     — `()`
-//! - `VerifierInputs`   — `()`
-//! - `ReductionInputs`  — `(mus, taus)` — both sides derive from transcript
-//! - `ReducedStatement` — `(mus, taus)` — code-eval claims + zero-check randomness
-//! - `ProofString`      — `()`
-//! - `ReducedWitness`   — full codewords + multi-vector commit
-//! - `VerifierOutputs`  — Merkle root only
-
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
 use ark_mt::MerkleHasher;
@@ -131,17 +119,14 @@ where
         'a: 'b,
         H: 'b,
     {
-        // a. encode witnesses
         let codewords = {
             let _s = tracing::info_span!("pesat.encode").entered();
             count_ops!(EncodeCalls, witness.witnesses.len() as u64);
             encode_codewords(self.code, witness.witnesses)
         };
 
-        // b. evaluation claims
         let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
 
-        // c. commit to interleaved codewords (multi-vector commitment)
         let td_0 = {
             let _s = tracing::info_span!("pesat.merkle_commit").entered();
             count_ops!(MerkleTreeBuilds);
@@ -149,7 +134,6 @@ where
             scheme.commit(&codewords)
         };
 
-        // d. absorb commitment + claims; e/f. derive τ challenges.
         let taus = {
             let _s = tracing::info_span!("pesat.absorb_and_derive").entered();
             prover_state.prover_message(td_0.root());
@@ -185,13 +169,8 @@ where
         'a: 'c,
         H: 'c,
     {
-        // commitment digest
         let rt_0: H::Digest = verifier_state.prover_message()?;
-
-        // mus (l1 evaluation claims)
         let mus: Vec<F> = verifier_state.prover_messages_vec(statement.l1)?;
-
-        // taus (l1 zero-check challenge vectors)
         let taus: Vec<Vec<F>> = (0..statement.l1)
             .map(|_| {
                 (0..statement.log_m)

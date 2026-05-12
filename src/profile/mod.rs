@@ -1,19 +1,6 @@
-//! Profile instrumentation.
-//!
-//! The library always emits `tracing` spans at IOR boundaries; this
-//! module installs a subscriber that renders those spans. Rendering is
-//! off by default — the `profile` cargo feature is required to bring in
-//! `tracing-subscriber` and `libc` (for `clock_gettime` / `getrusage`).
-//!
-//! Two sinks are provided:
-//! * [`init()`] / [`init_fmt()`] — human-readable text on stderr.
-//! * [`init_json(writer)`] — newline-delimited JSON records to any
-//!   `io::Write` sink (stderr, a file, a pipe). Schema:
-//!   `warp.profile.v1`. See [`layer`] for the field list.
-//!
-//! Each installs a global subscriber the first time it is called; later
-//! calls are no-ops. Without the feature, every init function returns
-//! `false` and records nothing.
+//! Opt-in profile instrumentation. The `profile` feature pulls in
+//! `tracing-subscriber` and `libc` and lets `init_fmt`/`init_json` render
+//! the always-emitted spans. Without the feature, init functions no-op.
 
 pub mod counters;
 pub mod rss;
@@ -22,8 +9,6 @@ pub mod timing;
 #[cfg(feature = "profile")]
 pub mod layer;
 
-/// Install a human-readable stderr subscriber (mimics the old
-/// `[PROFILE]` lines). No-op without the `profile` feature.
 #[cfg(feature = "profile")]
 pub fn init() -> bool {
     init_fmt()
@@ -34,8 +19,6 @@ pub fn init() -> bool {
     false
 }
 
-/// Human-readable fmt subscriber on stderr. Reads `RUST_LOG` to pick a
-/// filter; defaults to `warp=info`.
 #[cfg(feature = "profile")]
 pub fn init_fmt() -> bool {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -58,8 +41,6 @@ pub fn init_fmt() -> bool {
     false
 }
 
-/// Install the JSON subscriber. One `warp.profile.v1` record per closed
-/// span is written to `writer`. Reads `RUST_LOG` like [`init_fmt`].
 #[cfg(feature = "profile")]
 pub fn init_json<W>(writer: W) -> bool
 where

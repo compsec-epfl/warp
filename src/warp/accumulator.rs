@@ -24,14 +24,6 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.rt.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rt.is_empty()
-    }
-
     pub fn extend(mut self, other: Self) -> Self {
         self.rt.extend(other.rt);
         self.alpha.extend(other.alpha);
@@ -44,7 +36,6 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
 }
 
 /// Private part of an accumulated claim: `(td, w)` in the paper.
-/// Codewords live inside `td[i].codewords()`.
 pub struct AccumulatorWitness<F, H>
 where
     F: Field,
@@ -78,14 +69,6 @@ where
             td: vec![],
             w: vec![],
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.td.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.td.is_empty()
     }
 
     pub fn extend(mut self, other: Self) -> Self {

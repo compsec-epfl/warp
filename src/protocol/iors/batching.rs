@@ -1,29 +1,6 @@
-//! Batching sumcheck IOR.
-//!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex` (oracle composition).
-//! Reduces the batched claim
-//!
-//! ```text
-//!   Σ_i ξ(i) · \hat f(ζ_i) = σ₂
-//! ```
-//!
-//! to a single evaluation claim `μ = \hat f(α)` via the inner-product
-//! sumcheck, with the CBBZ23 / HyperPlonk sparse-evaluation optimization
-//! (`accumulate_sparse_evaluations`) folded in.
-//!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(zetas_prefix, s, t, log_n)` — shared.
-//! - `Witness`          — `()`
-//! - `ProverInputs`     — `&Oracle<F>` (the committed oracle, full data)
-//! - `VerifierInputs`   — `(nus, acc_mu)` — used to compute `σ₂` and the
-//!   final-claim oracle check.
-//! - `ReductionInputs`  — `alpha` (the LSB sumcheck challenges); both sides
-//!   compute and feed it through `reduce_statement`.
-//! - `ReducedStatement` — `alpha` — the new code-eval point (LSB-indexed)
-//! - `ProofString`      — `()`
-//! - `ReducedWitness`   — `mu` — the prover's reported `\hat f(α)`
-//! - `VerifierOutputs`  — `()`
+//! Batching sumcheck IOR. Reduces `Σ_i ξ(i)·f̂(ζ_i) = σ₂` to a single
+//! claim `μ = f̂(α)` via inner-product sumcheck with the CBBZ23 / HyperPlonk
+//! sparse-evaluation optimization.
 
 use ark_ff::{Field, PrimeField};
 use ark_std::log2;
@@ -42,9 +19,8 @@ use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
-/// [CBBZ23] / HyperPlonk sparse-evaluation optimization: for shift-query
-/// zetas (indices `1+s..r`), each ζ is a 0/1 vector representing a single
-/// hypercube point.
+/// Sparse-eval optimization (CBBZ23 / HyperPlonk): shift-query zetas at
+/// indices `1+s..r` are 0/1 vectors picking a single hypercube point.
 fn accumulate_sparse_evaluations<F: Field>(
     zetas: &[Vec<F>],
     eq_evals: &[F],
@@ -63,8 +39,6 @@ fn accumulate_sparse_evaluations<F: Field>(
     result
 }
 
-/// Sum `dense_polys` column-wise and add the sparse contributions into the
-/// resulting vector.
 fn batched_constraint_poly<F: Field>(
     dense_polys: &[Vec<F>],
     sparse_polys: &HashMap<usize, F>,
@@ -84,10 +58,8 @@ fn batched_constraint_poly<F: Field>(
     result
 }
 
-// ─── IOR signature types ──────────────────────────────────────────────────
-
 pub struct BatchingStatement<F: Field> {
-    /// `1 + s + t` evaluation points: `[ζ_0, ood_j…, query_k…]`.
+    /// `1 + s + t` evaluation points: `[ζ_0, ood_chunk_0…, query_k…]`.
     pub zetas_prefix: Vec<Vec<F>>,
     pub s: usize,
     pub t: usize,
@@ -96,11 +68,8 @@ pub struct BatchingStatement<F: Field> {
 }
 
 impl<F: Field> BatchingStatement<F> {
-    /// Single source of truth for the `zetas_prefix` shape — both the
-    /// prover and verifier orchestrators construct their `BatchingStatement`
-    /// through this. Drift between sides becomes structurally impossible.
-    ///
-    /// Layout: `[ζ_0, ood_chunk_0, …, ood_chunk_{s-1}, query_0, …, query_{t-1}]`.
+    /// Single source of truth for `zetas_prefix` — both prover and verifier
+    /// build the statement through this so layout drift is impossible.
     pub fn from_ior_outputs(
         zeta_0: Vec<F>,
         ood_samples_flat: &[F],
@@ -132,47 +101,26 @@ pub struct BatchingProverInputs<'a, F: Field> {
 }
 
 pub struct BatchingVerifierInputs<F: Field> {
-    /// `1 + s + t` ν values; used to compute `σ₂ = Σ ξ_eq · ν`.
     pub nus: Vec<F>,
-    /// Multiplier on the final-claim oracle check.
     pub acc_mu: F,
 }
 
 pub struct BatchingReductionInputs<F: Field> {
-    /// LSB-indexed sumcheck challenge vector.
     pub alpha: Vec<F>,
 }
 
 pub struct BatchingReducedStatement<F: Field> {
-    /// New code-eval point (LSB-indexed).
     pub alpha: Vec<F>,
 }
 
 pub struct BatchingReducedWitness<F: Field> {
-    /// `\hat f(α)` — prover's report.
     pub mu: F,
 }
 
-/// Batching IOR configuration.
-pub struct Batching<'a, F: Field> {
-    pub _phantom: PhantomData<&'a F>,
-}
+#[derive(Default)]
+pub struct Batching<F: Field>(PhantomData<F>);
 
-impl<'a, F: Field> Batching<'a, F> {
-    pub fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, F: Field> Default for Batching<'a, F> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a, F> IOR for Batching<'a, F>
+impl<F> IOR for Batching<F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
@@ -227,7 +175,6 @@ where
     ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'b,
-        'a: 'b,
     {
         let n = inputs.oracle.len();
         let r = 1 + statement.s + statement.t;
@@ -293,7 +240,6 @@ where
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
         Self: 'c,
-        'a: 'c,
     {
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;

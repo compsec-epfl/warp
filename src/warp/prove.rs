@@ -42,7 +42,7 @@ where
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
     #[tracing::instrument(name = "warp.prove", skip_all)]
-    pub(crate) fn prove_impl(
+    pub fn prove(
         &self,
         pk: WARPProverKey<P>,
         prover_state: &mut ProverState,
@@ -107,16 +107,15 @@ where
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_ior = Bridge::<F, P, H>::new();
-        let ood_ior = Ood::<F>::new();
-        let sample_queries_ior = SampleQueries::<F>::new();
-        let batching_ior = Batching::<F>::new();
+        let bridge_ior = Bridge::<F, P, H>::default();
+        let ood_ior = Ood::<F>::default();
+        let sample_queries_ior = SampleQueries::<F>::default();
+        let batching_ior = Batching::<F>::default();
         let proximity_ior = Proximity::<F, H> {
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
 
-        // ── IOR 1: PESAT ─────────────────────────────────────────────
         let IorProveResult {
             reduced: PesatReducedStatement { mus, taus },
             proof: _,
@@ -129,7 +128,6 @@ where
             inputs: (),
         )?;
 
-        // ── IOR 2: TwinConstraint ────────────────────────────────────
         let IorProveResult {
             reduced: TwinConstraintReducedStatement {
                 gamma: _,
@@ -161,7 +159,6 @@ where
             },
         )?;
 
-        // ── IOR 3: Bridge ────────────────────────────────────────────
         let IorProveResult {
             reduced: BridgeReducedStatement {
                 eta,
@@ -188,7 +185,6 @@ where
             },
         )?;
 
-        // ── IOR 4: OOD ───────────────────────────────────────────────
         let IorProveResult {
             reduced: OodReducedStatement { samples_flat, answers },
             proof: _,
@@ -201,7 +197,6 @@ where
             inputs: OodProverInputs { oracle: &f },
         )?;
 
-        // ── IOR 5: SampleQueries ─────────────────────────────────────
         let IorProveResult {
             reduced: SampleQueriesReducedStatement { queries },
             proof: _,
@@ -214,7 +209,6 @@ where
             inputs: (),
         )?;
 
-        // ── IOR 6: Batching ──────────────────────────────────────────
         let IorProveResult {
             reduced: BatchingReducedStatement { alpha },
             proof: _,
@@ -234,7 +228,6 @@ where
             inputs: BatchingProverInputs { oracle: &f },
         )?;
 
-        // ── IOR 7: Proximity ─────────────────────────────────────────
         let IorProveResult {
             reduced: _,
             proof: ProximityProofString {

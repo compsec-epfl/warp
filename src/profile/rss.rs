@@ -1,20 +1,11 @@
-//! Peak resident-set-size accounting via `getrusage(RUSAGE_SELF)`.
-//!
-//! Linux reports `ru_maxrss` in kilobytes; macOS reports it in bytes. We
-//! normalise to bytes. The kernel tracks the peak RSS for the process (not
-//! the current thread), so this value is monotonic — useful only via
-//! deltas across intervals.
-//!
-//! Returns `None` if the syscall fails.
-//!
-//! Without the `profile` feature this module compiles to stubs that always
-//! return `None`.
+//! Process peak RSS via `getrusage(RUSAGE_SELF)`. `ru_maxrss` is bytes on
+//! macOS, kilobytes on Linux; we return bytes. Monotonic — use deltas.
 
 #[cfg(feature = "profile")]
 pub fn peak_rss_bytes() -> Option<u64> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        // SAFETY: rusage is a POD; the kernel writes the full struct on success.
+        // SAFETY: rusage is POD; kernel writes on success.
         let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut ru) };
         if rc != 0 {
@@ -23,11 +14,11 @@ pub fn peak_rss_bytes() -> Option<u64> {
         let maxrss = ru.ru_maxrss as u64;
         #[cfg(target_os = "macos")]
         {
-            Some(maxrss) // bytes
+            Some(maxrss)
         }
         #[cfg(target_os = "linux")]
         {
-            Some(maxrss.saturating_mul(1024)) // kilobytes -> bytes
+            Some(maxrss.saturating_mul(1024))
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]

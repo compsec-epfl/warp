@@ -1,23 +1,4 @@
 //! Out-of-domain sampling IOR.
-//!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex`. This IOR is a thin
-//! composition of point queries on the committed oracle — see
-//! [`Oracle::query_at_point`](crate::protocol::oracles::evaluation::Oracle::query_at_point).
-//! The verifier derives the same random points from the transcript.
-//!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(s, log_n)`
-//! - `Witness`          — `()`
-//! - `ProverInputs`     — `&Oracle<F>` (the committed oracle, full data)
-//! - `VerifierInputs`   — `()` (the oracle check is deferred to the batching
-//!   sumcheck's final claim)
-//! - `ReductionInputs`  — `(samples_flat, answers)` — both sides arrive here
-//!   from the same transcript reads and feed into `reduce_statement`.
-//! - `ReducedStatement` — `(samples_flat, answers)` — query points + their answers
-//! - `ProofString`      — `()`
-//! - `ReducedWitness`   — `()`
-//! - `VerifierOutputs`  — `()`
 
 use ark_ff::{Field, PrimeField};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -43,33 +24,14 @@ pub struct OodReductionInputs<F: Field> {
 }
 
 pub struct OodReducedStatement<F: Field> {
-    /// Flat challenge vector of length `s · log_n`.
     pub samples_flat: Vec<F>,
-    /// Answers `\hat f(ζ_j)` for each of the `s` chunked challenges.
     pub answers: Vec<F>,
 }
 
-/// OOD IOR configuration. Stateless; the lifetime parameter exists only
-/// to anchor `ProverInputs<'a>` for the trait impl.
-pub struct Ood<'a, F: Field> {
-    pub _phantom: PhantomData<&'a F>,
-}
+#[derive(Default)]
+pub struct Ood<F: Field>(PhantomData<F>);
 
-impl<'a, F: Field> Ood<'a, F> {
-    pub fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, F: Field> Default for Ood<'a, F> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a, F> IOR for Ood<'a, F>
+impl<F> IOR for Ood<F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {

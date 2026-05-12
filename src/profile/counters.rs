@@ -1,20 +1,9 @@
-//! Thread-local op counters.
-//!
-//! Call-site counters for operations we can cheaply observe at the
-//! boundaries of our crate (Merkle tree builds, path generations, MLE
-//! materialisations, sumcheck rounds). Field-level ops (muls/adds) are
-//! **not** counted here — they would require newtyping `F` or forking
-//! arkworks. That's deferred; Plan O's goal is asymptotic validation, not
-//! per-op accounting.
-//!
-//! All counters compile to no-ops without the `profile` feature: the
-//! [`count_ops!`] macro expands to `()`.
+//! Thread-local op counters for crate-boundary events (Merkle ops, MLE
+//! materialisations, sumcheck rounds). No-op without the `profile` feature.
 
 #[cfg(feature = "profile")]
 use std::cell::Cell;
 
-/// Counter slots. Adding a new one: extend the enum, extend [`Counters`],
-/// extend the [`count_ops!`] match, extend [`snapshot`] and [`delta`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Counter {
     EncodeCalls,
@@ -111,7 +100,6 @@ impl Counters {
     }
 }
 
-/// Bump a counter on the current thread.
 #[cfg(feature = "profile")]
 #[inline]
 pub fn bump(c: Counter, n: u64) {
@@ -125,7 +113,6 @@ pub fn bump(c: Counter, n: u64) {
 #[inline]
 pub fn bump(_c: Counter, _n: u64) {}
 
-/// Snapshot every counter on the current thread.
 #[cfg(feature = "profile")]
 pub fn snapshot() -> Snapshot {
     let mut values = [0u64; Counter::ALL.len()];
@@ -142,8 +129,6 @@ pub fn snapshot() -> Snapshot {
     Snapshot {}
 }
 
-/// A point-in-time reading of all counters. Subtract two snapshots with
-/// [`Snapshot::delta`] to get the change over an interval.
 #[cfg(feature = "profile")]
 #[derive(Clone, Copy, Debug)]
 pub struct Snapshot {
@@ -217,15 +202,6 @@ impl Delta {
     }
 }
 
-/// Increment a named counter by 1 (or by a caller-supplied amount).
-///
-/// Under `profile` feature: compiles to a thread-local Cell bump.
-/// Without `profile`: compiles to `()`.
-///
-/// ```ignore
-/// count_ops!(MerkleTreeBuilds);          // +1
-/// count_ops!(OraclePointQueries, 3);     // +3
-/// ```
 #[macro_export]
 macro_rules! count_ops {
     ($counter:ident) => {

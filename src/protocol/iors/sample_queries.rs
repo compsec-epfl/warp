@@ -8,18 +8,6 @@
 //! randomness, no prover messages, no oracles. Modeled as an IOR for
 //! uniformity with the rest of the choreography.
 //!
-//! IOR signature
-//! -------------
-//! - `Statement`        — `(log_n, t)`
-//! - `Witness`          — `()`
-//! - `ProverInputs`     — `()`
-//! - `VerifierInputs`   — `()`
-//! - `ReductionInputs`  — the sampled [`QueryIndices`]
-//! - `ReducedStatement` — same — both sides receive the queries
-//! - `ProofString`      — `()`
-//! - `ReducedWitness`   — `()` (no asymmetric data: both sides hold the same queries)
-//! - `VerifierOutputs`  — `()`
-
 use ark_ff::Field;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
@@ -41,26 +29,10 @@ pub struct SampleQueriesReducedStatement<F: Field> {
     pub queries: QueryIndices<F>,
 }
 
-/// Shift-query sampling IOR configuration. Stateless.
-pub struct SampleQueries<'a, F: Field> {
-    pub _phantom: PhantomData<&'a F>,
-}
+#[derive(Default)]
+pub struct SampleQueries<F: Field>(PhantomData<F>);
 
-impl<'a, F: Field> SampleQueries<'a, F> {
-    pub fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, F: Field> Default for SampleQueries<'a, F> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a, F> IOR for SampleQueries<'a, F>
+impl<F> IOR for SampleQueries<F>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {

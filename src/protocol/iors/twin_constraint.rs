@@ -1,35 +1,6 @@
-//! Twin-constraint sumcheck IOR.
-//!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex` (oracle composition).
-//! The forthcoming `docs/paper-mods/mod2_structured_sumcheck.tex` will
-//! promote this IOR's fused-fold prover to a first-class paper primitive.
-//!
-//! Reduces the claim
-//!
-//! ```text
-//!   Σ_i τ(i) · (f(i) + ω · p(i)) = σ₁
-//! ```
-//!
-//! to evaluations at a random point γ via protogalaxy folding, where
-//!   - `f(X) = fold(α, oracle_evals)` — folded codeword check
-//!   - `p(X) = fold(β, Az·Bz − Cz)` — folded R1CS constraint check
-//!   - `t(X)` = linear interpolation of τ — equality polynomial
-//!
-//! Each round's round polynomial has the form `h(X) = (f(X) + ω·p(X))·t(X)`.
-//!
-//! IOR signature
-//! -------------
-//! - `Statement`        — accumulator instance + `l1_mus` + dimensions
-//! - `Witness`          — fresh witnesses + accumulator witness halves + R1CS
-//! - `ProverInputs`     — full codewords (from PESAT) + accumulated codewords
-//! - `VerifierInputs`   — `()` — the deferred oracle check (final\_claim ≟ eq(τ,γ)·(ν₀+ω·η))
-//!   runs in the orchestrator after ν₀ and η arrive on the transcript
-//! - `ReductionInputs`  — `(ω, τ, γ, final_claim)` — both sides feed these into
-//!   `reduce_statement`, which computes ζ₀ / β_τ via `scale_and_sum` (single source of truth).
-//! - `ReducedStatement` — sumcheck challenges γ + unchecked final_claim + ω, τ + new α (ζ₀) + new β_τ
-//! - `ProofString`      — `()`
-//! - `ReducedWitness`   — the new reduced oracle `f` + the reduced witness vector `z`
-//! - `VerifierOutputs`  — `()` (the new commitment is read from the transcript by the orchestrator)
+//! Twin-constraint sumcheck IOR. Reduces `Σ_i τ(i) · (f(i) + ω·p(i)) = σ₁`
+//! to evaluations at γ via protogalaxy folding.
+//! Paired spec: `docs/paper-mods/mod1_oracle.tex`.
 
 use ark_ff::{Field, PrimeField};
 use ark_mt::MerkleHasher;
@@ -182,8 +153,6 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
     }
 }
 
-// ─── IOR signature types ──────────────────────────────────────────────────
-
 pub struct TwinConstraintStatement<F: Field, H: MerkleHasher> {
     pub acc_instance: AccumulatorInstance<F, H>,
     pub l1_mus: Vec<F>,
@@ -200,39 +169,19 @@ pub struct TwinConstraintWitness<'a, F: Field> {
 }
 
 pub struct TwinConstraintProverInputs<'a, F: Field> {
-    /// Fresh codewords emitted by PESAT.
     pub fresh_codewords: &'a [Vec<F>],
-    /// Accumulated codewords (from the accumulator witness).
     pub acc_codewords: &'a [Vec<F>],
 }
 
-/// A typed "you owe me a check" handle.
-///
-/// The TwinConstraint sumcheck reduces σ₁ to a sumcheck final value, but the
-/// actual oracle check `final_claim ≟ eq(τ, γ) · (ν₀ + ω·η)` cannot be
-/// completed inside `TwinConstraint::verify` because ν₀ and η arrive on the
-/// transcript *after* the sumcheck rounds. Rather than splitting
-/// TwinConstraint into two IORs (which cascades into other IORs having
-/// similar shapes), we expose the obligation as a typed value.
-///
-/// Discharge by calling [`Self::discharge`] with the missing inputs once the
-/// orchestrator has read them from the transcript.
+/// Deferred oracle check: `final_claim ≟ eq(τ,γ)·(ν₀ + ω·η)`. Cannot fire
+/// inside `verify` because ν₀, η arrive on the transcript only after Bridge.
 pub struct DeferredOracleCheck<F: Field> {
-    /// Zero-check randomness ω squeezed at TwinConstraint entry.
     pub omega: F,
-    /// Zero-check challenge τ squeezed at TwinConstraint entry.
     pub tau: Vec<F>,
-    /// Sumcheck final value — what the orchestrator must verify against
-    /// `eq(τ, γ) · (ν₀ + ω·η)`.
     pub claim: F,
 }
 
 impl<F: Field> DeferredOracleCheck<F> {
-    /// Discharge the deferred check.
-    ///
-    /// Returns `Ok(())` iff `eq(τ, γ) · (ν₀ + ω·η) == claim`. `γ` arrives via
-    /// the parent `TwinConstraintReducedStatement`; `ν₀, η` come from the
-    /// transcript segment immediately following the TwinConstraint sumcheck.
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
         let expected = eq_poly_non_binary(&self.tau, gamma) * (nu_0 + self.omega * eta);
         (expected == self.claim).then_some(()).ok_or(VerifierError::Target)
@@ -240,40 +189,24 @@ impl<F: Field> DeferredOracleCheck<F> {
 }
 
 pub struct TwinConstraintReducedStatement<F: Field> {
-    /// Sumcheck challenge vector (LSB-indexed).
     pub gamma: Vec<F>,
-    /// New code-evaluation point (becomes the new accumulator's α).
     pub zeta_0: Vec<F>,
-    /// Reduced τ point (becomes the τ component of the new accumulator's β).
     pub beta_tau: Vec<F>,
-    /// Typed obligation: the sumcheck's final value awaits verification
-    /// against `(ν₀, η)` arriving on the transcript next. Call
-    /// [`DeferredOracleCheck::discharge`] from the orchestrator.
     pub deferred: DeferredOracleCheck<F>,
 }
 
-/// Inputs to [`TwinConstraint::reduce_statement`]. Both prover and
-/// verifier produce this struct from their respective machinery and feed
-/// it into the shared reduction. Drift between the two sides is
-/// structurally impossible because ζ₀ / β_τ are computed in exactly one
-/// place — `reduce_statement` — using `scale_and_sum`.
 pub struct TwinConstraintReductionInputs<F: Field> {
     pub omega: F,
     pub tau: Vec<F>,
-    /// Sumcheck challenge vector (LSB-indexed).
     pub gamma: Vec<F>,
-    /// Sumcheck final value (the unchecked claim).
     pub final_claim: F,
 }
 
 pub struct TwinConstraintReducedWitness<F: Field> {
-    /// New reduced codeword oracle.
     pub f: Oracle<F>,
-    /// Reduced witness vector `z = (x, w)` — consumed by η evaluation.
     pub z: Vec<F>,
 }
 
-/// TwinConstraint IOR configuration.
 pub struct TwinConstraint<'a, F, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,

@@ -1,26 +1,5 @@
-//! Tracing Layer that emits one JSON record per closed span.
-//!
-//! Span fields are captured via a [`FieldVisitor`] on `on_new_span`;
-//! counter / timing snapshots are stashed in span extensions on
-//! `on_enter` and differenced on `on_close`.
-//!
-//! Schema (version `warp.profile.v1`):
-//!
-//! ```json
-//! {
-//!   "schema": "warp.profile.v1",
-//!   "phase": "twin_constraint",
-//!   "wall_ns": 123456,
-//!   "cpu_ns": 98765,
-//!   "rss_delta_bytes": 1024,
-//!   "counters": { "twin_constraint_rounds": 10, ... },
-//!   "dimensions": { "log_l": 3, "log_m": 2, "log_n": 5 }
-//! }
-//! ```
-//!
-//! One record per line (newline-delimited JSON), written to the configured
-//! `io::Write` sink. The enclosing module gates this file behind the
-//! `profile` feature; no per-file `cfg` is needed here.
+//! Tracing Layer that emits one `warp.profile.v1` JSON record per closed
+//! span: `{phase, wall_ns, cpu_ns, rss_delta_bytes, counters, dimensions}`.
 
 use std::collections::BTreeMap;
 use std::io::Write;
