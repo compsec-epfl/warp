@@ -1,6 +1,6 @@
-//! Out-of-domain sampling phase.
+//! Out-of-domain sampling IOR.
 //!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex`. This phase is a thin
+//! Paired spec: `docs/paper-mods/mod1_oracle.tex`. This IOR is a thin
 //! composition of point queries on the committed oracle — see
 //! [`Oracle::query_at_point`](crate::protocol::oracle::Oracle::query_at_point).
 //! The verifier derives the same random points from the transcript.
@@ -49,7 +49,7 @@ pub struct OodReducedStatement<F: Field> {
     pub answers: Vec<F>,
 }
 
-/// OOD phase configuration. Stateless; the lifetime parameter exists only
+/// OOD IOR configuration. Stateless; the lifetime parameter exists only
 /// to anchor `ProverInputs<'a>` for the trait impl.
 pub struct Ood<'a, F: Field> {
     pub _phantom: PhantomData<&'a F>,

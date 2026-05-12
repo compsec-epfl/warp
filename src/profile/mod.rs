@@ -1,6 +1,6 @@
 //! Profile instrumentation.
 //!
-//! The library always emits `tracing` spans at phase boundaries; this
+//! The library always emits `tracing` spans at IOR boundaries; this
 //! module installs a subscriber that renders those spans. Rendering is
 //! off by default — the `profile` cargo feature is required to bring in
 //! `tracing-subscriber` and `libc` (for `clock_gettime` / `getrusage`).

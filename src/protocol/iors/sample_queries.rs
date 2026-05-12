@@ -1,4 +1,4 @@
-//! Shift-query sampling phase.
+//! Shift-query sampling IOR.
 //!
 //! Between OOD and Batching, the verifier draws `t · log_n` random
 //! bits and decodes them into `t` shift-query positions over
@@ -41,7 +41,7 @@ pub struct SampleQueriesReducedStatement<F: Field> {
     pub queries: QueryIndices<F>,
 }
 
-/// Shift-query sampling phase configuration. Stateless.
+/// Shift-query sampling IOR configuration. Stateless.
 pub struct SampleQueries<'a, F: Field> {
     pub _phantom: PhantomData<&'a F>,
 }

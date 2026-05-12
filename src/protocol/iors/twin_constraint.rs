@@ -1,8 +1,8 @@
-//! Twin-constraint sumcheck phase.
+//! Twin-constraint sumcheck IOR.
 //!
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex` (oracle composition).
 //! The forthcoming `docs/paper-mods/mod2_structured_sumcheck.tex` will
-//! promote this phase's fused-fold prover to a first-class paper primitive.
+//! promote this IOR's fused-fold prover to a first-class paper primitive.
 //!
 //! Reduces the claim
 //!
@@ -212,7 +212,7 @@ pub struct TwinConstraintProverInputs<'a, F: Field> {
 /// actual oracle check `final_claim ≟ eq(τ, γ) · (ν₀ + ω·η)` cannot be
 /// completed inside `TwinConstraint::verify` because ν₀ and η arrive on the
 /// transcript *after* the sumcheck rounds. Rather than splitting
-/// TwinConstraint into two IORs (which cascades into other phases having
+/// TwinConstraint into two IORs (which cascades into other IORs having
 /// similar shapes), we expose the obligation as a typed value.
 ///
 /// Discharge by calling [`Self::discharge`] with the missing inputs once the
@@ -273,7 +273,7 @@ pub struct TwinConstraintReducedWitness<F: Field> {
     pub z: Vec<F>,
 }
 
-/// TwinConstraint phase configuration.
+/// TwinConstraint IOR configuration.
 pub struct TwinConstraint<'a, F, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,

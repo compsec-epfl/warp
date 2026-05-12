@@ -1,18 +1,18 @@
-//! Oracle abstraction for Warp's IOR phases.
+//! Oracle abstraction for Warp's IORs.
 //!
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex`.
 //!
-//! An [`Oracle`] is a single object that carries both views Warp's phases
-//! need of a committed codeword: the raw evaluation table `f: [n] → F`
-//! (BCS-native, index-queryable) and the implied multilinear extension
+//! An [`Oracle`] carries both views Warp's IORs need of a committed
+//! codeword: the raw evaluation table `f: [n] → F` (BCS-native,
+//! index-queryable) and the implied multilinear extension
 //! `\hat f: F^{log n} → F` (point-queryable). The multilinear extension is
 //! materialised lazily on first point query and cached.
 //!
 //! The Merkle commitment of the codeword is **not** held here. In PESAT a
-//! single Merkle tree covers many interleaved codewords
-//! (`src/crypto/merkle/mod.rs::build_codeword_leaves`), so the tree is
-//! tracked by the enclosing data structure (`PesatOutput`,
-//! `AccumulatorWitness`) rather than 1:1 with the oracle. See the
+//! single Merkle tree covers many interleaved codewords (see
+//! `src/crypto/merkle/mod.rs::build_codeword_leaves`), so the tree is
+//! tracked by the enclosing data structure (`AccumulatorWitness`, the
+//! PESAT reduced witness) rather than 1:1 with the oracle. See the
 //! Implementation note in `mod1_oracle.tex` §2.
 
 use ark_ff::Field;

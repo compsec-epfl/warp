@@ -1,4 +1,4 @@
-//! TC → OOD bridge phase.
+//! TC → OOD bridge IOR.
 //!
 //! After TwinConstraint reduces to `(γ, ζ₀, β_τ)` on the verifier side
 //! and `(γ, ζ₀, β_τ, deferred, f, z)` on the prover side, three new
@@ -101,7 +101,7 @@ where
     pub new_w: Vec<F>,
 }
 
-/// TC → OOD bridge phase configuration. Stateless; the lifetime
+/// TC → OOD bridge IOR configuration. Stateless; the lifetime
 /// parameter exists only to anchor `ProverInputs<'a>` / `Witness<'a>`
 /// for the IOR trait impl.
 pub struct Bridge<'a, F, P, H>

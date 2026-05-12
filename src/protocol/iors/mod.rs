@@ -1,29 +1,6 @@
-//! Warp IOR phases as first-class modules.
-//!
-//! Paired spec: `docs/paper-mods/mod1_oracle.tex` (composition rule) and the
-//! forthcoming `docs/paper-mods/mod3_accumulator_state.tex`.
-//!
-//! Each submodule implements one Interactive Oracle Reduction from the Warp
-//! construction. The [`IOR`] trait below names the paper-level components
-//! and splits oracle types into prover-side / verifier-side halves so the
-//! trait can serve both roles against the same struct.
-//!
-//! Implementor pattern: a phase is a struct holding setup parameters
-//! (codes, hashers); implementors write [`IOR::prove_inner`],
-//! [`IOR::verify_inner`], and [`IOR::reduce_statement`]. The trait provides
-//! default `prove` / `verify` that mechanically chain
-//! `*_inner -> reduce_statement` so the prover and verifier *cannot* drift
-//! on how `ReducedStatement` is computed from transcript data.
-//!
-//! The top-level orchestrators in `src/lib.rs::WARP::prove` and `::verify`
-//! thread state between phases by chaining `IOR::prove` / `IOR::verify`
-//! calls — each phase's `ReducedStatement`, `ProofString`, and
-//! `ReducedWitness` feed the next phase's `Statement` / `ProverInputs` /
-//! the global proof object.
+//! Warp's Interactive Oracle Reductions. Paired spec:
+//! `docs/paper-mods/mod1_oracle.tex`.
 
-// `prove_inner` returns the 3-tuple `(ReductionInputs, ProofString,
-// ReducedWitness)`; clippy flags the resulting type as "complex" but
-// the structure is exactly what the IOR formalism asks for.
 #![allow(clippy::type_complexity)]
 
 pub mod batching;
@@ -39,74 +16,33 @@ use spongefish::{ProverState, VerifierState};
 
 use crate::error::{ProverError, VerifierError};
 
-/// Interactive Oracle Reduction.
-///
-/// Mirrors the IOR signature from `docs/paper-mods/mod1_oracle.tex` §4:
-///
-/// ```text
-///   (stmt, wit, oracles_in)  -->  (stmt', oracles_out)
-/// ```
-///
-/// **Convention.** `Witness` and `ProverInputs` are conventionally
-/// reference-holding wrappers (e.g. `PesatWitness<'a, F> { witnesses:
-/// &'a [Vec<F>] }`). The trait takes them by `&` so the caller never has
-/// to clone bulk data on the way in. None of WARP / WHIR / STIR / FRI /
-/// sumcheck-based protocols consume their witness at the IOR level.
-///
-/// **Drift prevention.** Implementors write [`prove_inner`],
-/// [`verify_inner`], and [`reduce_statement`]. The default `prove` /
-/// `verify` chain them automatically; the `ReducedStatement` is computed
-/// in exactly one place (`reduce_statement`), eliminating the bug class
-/// where prover and verifier compute the same reduction via parallel
-/// code paths that silently diverge.
+/// Interactive Oracle Reduction. `(stmt, wit, oracles_in) -> (stmt',
+/// oracles_out)`. Implementors write `prove_inner` / `verify_inner` /
+/// `reduce_statement`; the default `prove` / `verify` chain them so the
+/// reduced statement is computed in one place and prover/verifier
+/// cannot drift.
 pub trait IOR {
-    /// Human-readable identifier — the WARP paper's name for the IOR.
     const NAME: &'static str;
 
-    /// Pre-reduction claim. Visible to prover and verifier. GAT so the
-    /// statement may borrow from upstream-IOR outputs.
     type Statement<'a>
     where
         Self: 'a;
-    /// Prover-only data the prover reads.
     type Witness<'a>
     where
         Self: 'a;
-    /// Oracles flowing in from upstream IORs (prover view: full data).
     type ProverInputs<'a>
     where
         Self: 'a;
-    /// Oracles flowing in from upstream IORs (verifier view: commitments).
     type VerifierInputs<'a>
     where
         Self: 'a;
-    /// Explicit inputs that determine [`Self::ReducedStatement`]. Both
-    /// prover-side and verifier-side machinery produce this struct, then
-    /// hand it to [`Self::reduce_statement`] for the (single) statement
-    /// derivation.
     type ReductionInputs;
-    /// Post-reduction claim. Visible to prover and verifier. Computed
-    /// exclusively by [`Self::reduce_statement`].
     type ReducedStatement;
-    /// Out-of-band proof bytes the verifier always reads (auth paths,
-    /// shift-query answers, …). The orchestrator collects these into the
-    /// global proof object.
     type ProofString;
-    /// Reduced-witness handoff to the next IOR — full prover-side data
-    /// (oracles, witness vectors, committed trees). In terminal-round
-    /// protocols (e.g. WHIR's final fold) this can also be revealed to
-    /// the verifier; the trait does not assume it is private.
     type ReducedWitness;
-    /// Verifier-side outputs (commitments, parsed digests). Threaded into
-    /// downstream IORs' `VerifierInputs`.
     type VerifierOutputs;
 
-    /// THE single source of truth for `ReducedStatement`.
-    ///
-    /// Both prover and verifier call this with their respective
-    /// [`Self::ReductionInputs`] (assembled in `prove_inner` /
-    /// `verify_inner`). Drift between sides is structurally impossible
-    /// because both go through this function.
+    /// Single source of truth: both sides feed their `ReductionInputs` here.
     fn reduce_statement<'a>(
         &self,
         statement: &Self::Statement<'a>,
@@ -189,11 +125,8 @@ pub trait IOR {
 
 // ─── Choreography-syntax helpers ─────────────────────────────────────────
 //
-// These wrap the trait's tuple return into named-field structs so
-// `lib.rs` can destructure `reduced` / `proof` / `witness` by name. The
-// IOR trait itself stays formal (Statement / Witness / ProverInputs /
-// ReductionInputs / ReducedStatement / ProofString / ReducedWitness /
-// VerifierOutputs); these are pure call-site syntax sugar.
+// Call-site sugar: the macros wrap the trait's tuple return into the
+// named-field structs below so `lib.rs` can destructure by name.
 
 /// Generic destructuring carrier for `IOR::prove`. The macro
 /// [`prove_ior!`] returns this so callers can write

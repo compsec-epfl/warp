@@ -1,9 +1,8 @@
-//! PESAT Reduction phase.
+//! PESAT Reduction IOR.
 //!
-//! Implements Phase 2 of the Warp prover: encode fresh witnesses into
-//! codewords, commit via a multi-vector Merkle tree (one root over all
-//! l1 codewords), absorb commitment + code evaluations, and derive the
-//! τ zero-check challenges.
+//! Encodes fresh witnesses into codewords, commits via a multi-vector
+//! Merkle tree (one root over all l1 codewords), absorbs commitment +
+//! code evaluations, and derives the τ zero-check challenges.
 //!
 //! IOR signature
 //! -------------
@@ -60,7 +59,7 @@ pub struct PesatVerifierOutputs<H: MerkleHasher> {
     pub rt_0: H::Digest,
 }
 
-/// PESAT phase configuration.
+/// PESAT IOR configuration.
 pub struct Pesat<'a, F, C, H>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,

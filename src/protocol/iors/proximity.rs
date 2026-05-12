@@ -1,4 +1,4 @@
-//! Proximity / shift-query phase.
+//! Proximity / shift-query IOR.
 //!
 //! Index queries on the committed oracles. Opens both the fresh PESAT
 //! commitment and each accumulated commitment at the query positions,
@@ -50,9 +50,9 @@ where
 
 /// Verifier-side inputs for Proximity.
 ///
-/// The phase verifier no longer sees roots / opening proofs / answer
+/// The IOR verifier no longer sees roots / opening proofs / answer
 /// tables directly; it sees [`IndexedOracle`] handles and triggers
-/// their (lazy, memoized) BCS validation. Phases stay BCS-agnostic at
+/// their (lazy, memoized) BCS validation. IORs stay BCS-agnostic at
 /// the type level — the orchestrator picks the concrete handle type
 /// (today: [`oracle_handle::MerkleIndexedOracle`]).
 ///
@@ -84,7 +84,7 @@ where
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-/// Proximity phase configuration. Holds the hasher value used by both
+/// Proximity IOR configuration. Holds the hasher value used by both
 /// `open` (prover side) and `check` (verifier side).
 pub struct Proximity<'a, F, H>
 where
@@ -170,7 +170,7 @@ where
         // ark-mt's `open()` requires strictly-sorted, unique indices. Query
         // positions can repeat or arrive unsorted; deduplicate for the
         // merkle opening, but keep `shift_query_answers` in original query
-        // order so downstream phases (batching) can index by query.
+        // order so Batching can index by query.
         let mut sorted_unique = leaf_positions.clone();
         sorted_unique.sort_unstable();
         sorted_unique.dedup();
@@ -250,14 +250,12 @@ where
         'a: 'c,
         H: 'c,
     {
-        // Arity / shape checks (orchestrator-side concerns the phase still
-        // owns: number of accumulator openings must match l2; number of
-        // shift queries is implicitly checked by the handle constructors).
+        // Arity check: number of accumulator openings must match l2.
         (inputs.acc.len() == statement.l2).then_some(()).ok_or(VerifierError::NumL2Instances)?;
 
-        // Validate each oracle handle. The handle is a trait-object
-        // partial function: validate() runs the (lazy, memoized) BCS
-        // check internally — this phase code is BCS-agnostic.
+        // Validate each oracle handle. The handle is a partial function:
+        // validate() runs the (lazy, memoized) BCS check internally —
+        // this IOR stays BCS-agnostic.
         inputs
             .fresh
             .validate()

@@ -1,10 +1,9 @@
 //! Warp's vector-commitment layer, built on `ark-vc` / `ark-mt`.
 //!
-//! Replaces the previous `ark-crypto-primitives::merkle_tree`-based
-//! implementation. Warp commits to L1 codewords interleaved into one
-//! Merkle tree (PESAT phase) and to single folded codewords across the
-//! accumulator. Both shapes are handled by `MultiVectorMerkleCommitment`
-//! (the m=1 case is a degenerate single-codeword tree).
+//! Warp commits to L1 codewords interleaved into one Merkle tree (PESAT)
+//! and to single folded codewords across the accumulator. Both shapes
+//! are handled by `MultiVectorMerkleCommitment` (the m=1 case is a
+//! degenerate single-codeword tree).
 
 use ark_codes::traits::LinearCode;
 use ark_ff::Field;

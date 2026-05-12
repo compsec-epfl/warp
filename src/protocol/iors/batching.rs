@@ -1,4 +1,4 @@
-//! Batching sumcheck phase.
+//! Batching sumcheck IOR.
 //!
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex` (oracle composition).
 //! Reduces the batched claim
@@ -101,7 +101,7 @@ impl<F: Field> BatchingStatement<F> {
     /// through this. Drift between sides becomes structurally impossible.
     ///
     /// Layout: `[ζ_0, ood_chunk_0, …, ood_chunk_{s-1}, query_0, …, query_{t-1}]`.
-    pub fn from_phase_outputs(
+    pub fn from_ior_outputs(
         zeta_0: Vec<F>,
         ood_samples_flat: &[F],
         query_eval_points: &[Vec<F>],
@@ -153,7 +153,7 @@ pub struct BatchingReducedWitness<F: Field> {
     pub mu: F,
 }
 
-/// Batching phase configuration.
+/// Batching IOR configuration.
 pub struct Batching<'a, F: Field> {
     pub _phantom: PhantomData<&'a F>,
 }

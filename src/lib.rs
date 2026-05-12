@@ -39,8 +39,7 @@ pub mod prelude {
     pub use crate::error::{DeciderError, ProverError, VerifierError, WARPError};
     pub use crate::traits::AccumulationScheme;
     pub use crate::types::{
-        AccumulatorEntry, AccumulatorInstance, AccumulatorWitness, AccumulatorWitnessEntry,
-        WARPProof, WARPProverKey, WARPVerifierKey,
+        AccumulatorInstance, AccumulatorWitness, WARPProof, WARPProverKey, WARPVerifierKey,
     };
     pub use crate::WARP;
 }
@@ -183,16 +182,14 @@ where
         absorb_instances(prover_state, &instances);
         acc_instance.absorb_into(prover_state);
 
-        // Destructure acc_witness. Codewords live inside td[i].codewords();
-        // we extract the single codeword per accumulator entry into acc_fs
-        // for use by twin_constraint.
+        // Extract the single codeword per accumulator entry for twin_constraint.
         let AccumulatorWitness {
             td: acc_tds,
             w: acc_ws,
         } = acc_witness;
         let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
 
-        // IOR instances (stateless or borrowing &self.params for the &self lifetime).
+        // IOR instances.
         let pesat_ior = Pesat::<F, C, H> {
             code: &self.params.code,
             hasher: &self.params.hasher,
@@ -317,7 +314,7 @@ where
         } = prove_ior!(
             batching_ior,
             prover_state,
-            statement: BatchingStatement::from_phase_outputs(
+            statement: BatchingStatement::from_ior_outputs(
                 zeta_0.clone(),
                 &samples_flat,
                 &queries.evaluation_points,
@@ -400,15 +397,11 @@ where
         let log_n = log2(n) as usize;
 
         // Parse the transcript-side statement (l1 fresh instances + l2
-        // accumulated entries). Stays in the orchestrator: it crosses
-        // the pipeline/non-pipeline boundary by definition.
+        // accumulated entries).
         let (l1_xs, parsed_acc) =
             parse_statement::<F, H>(verifier_state, l1, l2, N - k, log_n, log_m)?;
 
-        // Cache prior-accumulator values needed by the post-pipeline
-        // (α, β) consistency checks. These cross-reference the prior
-        // single-entry `acc_instance` against the pipeline's reduced
-        // outputs, so they live outside the pipeline.
+        // Cache prior-accumulator values for the post-IOR (α, β) consistency checks.
         let acc_alpha_first = acc_instance.alpha[0].clone();
         let acc_beta_0_first = acc_instance.beta.0[0].clone();
         let acc_beta_1_first = acc_instance.beta.1[0].clone();
@@ -521,7 +514,7 @@ where
             inputs: (),
         )?;
 
-        // ── Whole-proof arity checks (orchestrator-owned) ────────────
+        // ── Whole-proof arity checks ─────────────────────────────────
         (proof.shift_query_answers.len() == self.params.config.t)
             .then_some(())
             .ok_or(VerifierError::NumShiftQueries)?;
@@ -587,7 +580,7 @@ where
             },
         )?;
 
-        // ── Recompute ν vector from shift answers (orchestrator-owned) ──
+        // ── Recompute ν vector from shift answers ───────────────────
         let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
         let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         nus.push(nu_0);
@@ -607,7 +600,7 @@ where
         } = verify_ior!(
             batching_ior,
             verifier_state,
-            statement: BatchingStatement::from_phase_outputs(
+            statement: BatchingStatement::from_ior_outputs(
                 zeta_0.clone(),
                 &samples_flat,
                 &queries.evaluation_points,
@@ -621,7 +614,7 @@ where
             },
         )?;
 
-        // ── Post-pipeline accumulator consistency ──────────────────
+        // ── Post-IOR accumulator consistency ───────────────────────
         (acc_alpha_first == alpha)
             .then_some(())
             .ok_or(VerifierError::CodeEvaluationPoint)?;
@@ -646,20 +639,16 @@ where
         acc_witness: AccumulatorWitness<F, H>,
         acc_instance: AccumulatorInstance<F, H>,
     ) -> Result<(), WARPError> {
-        // The accumulator witness's codeword is td[0].codewords()[0].
         let acc_codeword = &acc_witness.td[0].codewords()[0];
 
-        // Re-encode the witness; check codeword match.
         let computed_f = self.params.code.encode(&acc_witness.w[0]);
         (acc_codeword == &computed_f).then_some(()).ok_or(DeciderError::EncodedWitness)?;
 
-        // Re-commit and check root.
         let scheme = warp_scheme::<H, F>(self.params.hasher.clone(), self.params.code.code_len());
         let recomputed = scheme.commit(std::slice::from_ref(&computed_f));
         (acc_instance.rt[0] == *recomputed.root()).then_some(()).ok_or(DeciderError::MerkleRoot)?;
         (acc_witness.td[0].root() == recomputed.root()).then_some(()).ok_or(DeciderError::MerkleTrapDoor)?;
 
-        // MLE evaluation check.
         let f_hat = DenseMultilinearExtension::from_evaluations_slice(
             log2(self.params.code.code_len()) as usize,
             acc_codeword,
@@ -667,7 +656,6 @@ where
         (f_hat.evaluate(&acc_instance.alpha[0]) == acc_instance.mu[0])
             .then_some(()).ok_or(DeciderError::MLExtensionEvaluation)?;
 
-        // Bundled-evaluation check.
         let tau = &acc_instance.beta.0[0];
         let tau_zero_evader = compute_hypercube_eq_evals(tau.len(), tau);
         let mut z = acc_instance.beta.1[0].clone();

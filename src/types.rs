@@ -34,7 +34,7 @@ pub type ProveResult<F, H> = Result<
     ProverError,
 >;
 
-/// Protocol parameters for WARP — the shared configuration used by all IOR phases.
+/// Protocol parameters for WARP — the shared configuration used by all IORs.
 pub struct WARPParams<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
     pub(crate) _f: PhantomData<F>,
     pub config: WARPConfig<F, P>,
@@ -94,43 +94,6 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
         self
     }
 
-    /// Push a single typed entry. Pivots `AccumulatorEntry` (AoS) into the
-    /// internal parallel-Vec (SoA) layout.
-    pub fn push_entry(&mut self, entry: AccumulatorEntry<F, H>)
-    where
-        H::Digest: Clone,
-    {
-        self.rt.push(entry.rt);
-        self.alpha.push(entry.alpha);
-        self.mu.push(entry.mu);
-        self.beta.0.push(entry.tau);
-        self.beta.1.push(entry.x);
-        self.eta.push(entry.eta);
-    }
-
-    /// Construct from an explicit list of typed entries.
-    pub fn from_entries(entries: Vec<AccumulatorEntry<F, H>>) -> Self
-    where
-        H::Digest: Clone,
-    {
-        let mut acc = Self::empty();
-        for entry in entries {
-            acc.push_entry(entry);
-        }
-        acc
-    }
-}
-
-/// One accumulated claim, AoS view of `AccumulatorInstance`. Use this
-/// when constructing entries one at a time; pipe through
-/// [`AccumulatorInstance::push_entry`] / [`AccumulatorInstance::from_entries`].
-pub struct AccumulatorEntry<F: Field, H: MerkleHasher> {
-    pub rt: H::Digest,
-    pub alpha: Vec<F>,
-    pub mu: F,
-    pub tau: Vec<F>,
-    pub x: Vec<F>,
-    pub eta: F,
 }
 
 /// Accumulator witness — the private part of an accumulated claim.
@@ -188,30 +151,6 @@ where
         self.w.extend(other.w);
         self
     }
-
-    pub fn push_entry(&mut self, entry: AccumulatorWitnessEntry<F, H>) {
-        self.td.push(entry.td);
-        self.w.push(entry.w);
-    }
-
-    pub fn from_entries(entries: Vec<AccumulatorWitnessEntry<F, H>>) -> Self {
-        let mut acc = Self::empty();
-        for entry in entries {
-            acc.push_entry(entry);
-        }
-        acc
-    }
-}
-
-/// One witness entry for an accumulated claim — AoS counterpart of
-/// `AccumulatorWitness`.
-pub struct AccumulatorWitnessEntry<F, H>
-where
-    F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    pub td: crate::crypto::merkle::WarpCommitted<H, F>,
-    pub w: Vec<F>,
 }
 
 /// Proof produced by the WARP accumulation prover.
@@ -256,20 +195,3 @@ where
     }
 }
 
-/// Intermediate output of the PESAT reduction phase.
-///
-/// This data flows from Phase 2 (PESAT Reduction) into Phase 3 (Constrained Code Accumulation).
-pub struct PesatOutput<F, H>
-where
-    F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    /// Encoded codewords from fresh witnesses.
-    pub codewords: Vec<Vec<F>>,
-    /// Multi-vector commitment over the `l1` codewords.
-    pub td_0: WarpCommitted<H, F>,
-    /// Code evaluation claims: `f_i(0)` for each codeword.
-    pub mus: Vec<F>,
-    /// PESAT evaluation challenges (one per fresh instance).
-    pub taus: Vec<Vec<F>>,
-}

@@ -1,24 +1,22 @@
 //! Oracle access via handle traits.
 //!
-//! Phase verifiers should code against [`IndexedOracle`] rather than
-//! against a concrete BCS-shaped tuple of `(root, opening proof,
-//! precomputed answer table)`. The handle internally validates the
-//! commitment-scheme opening and exposes a partial-function view of the
-//! committed oracle:
+//! IOR verifiers code against [`IndexedOracle`] rather than against a
+//! concrete BCS-shaped tuple of `(root, opening proof, precomputed answer
+//! table)`. The handle internally validates the commitment-scheme opening
+//! and exposes a partial-function view of the committed oracle:
 //!
 //! ```text
 //!   query(i) -> Some(value)  iff  index in range AND opening passes
 //!   query(i) -> None         otherwise
 //! ```
 //!
-//! This matches the IOP/BCS formalism where oracles are partial
-//! functions; the BCS instantiation (Merkle root + path-pruned
-//! multi-opening proof + the values that get authenticated) lives behind
-//! the trait, not in the phase verifier code.
+//! Matches the IOP/BCS formalism where oracles are partial functions;
+//! the BCS instantiation (Merkle root + path-pruned multi-opening proof +
+//! authenticated values) lives behind the trait, not in IOR verifier code.
 //!
 //! Currently used by [`super::proximity`] on the verifier side. Other
-//! phases continue to use concrete oracle types for now; the migration
-//! of OOD / Batching prover-side `Oracle<F>` access to a sibling
+//! IORs continue to use concrete oracle types for now; migration of
+//! OOD / Batching prover-side `Oracle<F>` access to a sibling
 //! `EvalOracle<F>` trait is tracked as a follow-up.
 
 use std::cell::OnceCell;
@@ -35,7 +33,7 @@ use crate::crypto::merkle::{WarpProof, WarpScheme};
 /// range" and "opening failed validation."
 pub trait IndexedOracle<A> {
     fn query(&self, i: usize) -> Option<A>;
-    /// Optional eager validation hook. Phases that want a single
+    /// Optional eager validation hook. Callers that want a single
     /// up-front check (rather than lazy per-query) call `validate()`
     /// once. The default impl performs a no-op `query(0)` to drive
     /// whatever lazy validation the impl uses.
