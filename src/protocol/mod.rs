@@ -1,4 +1,4 @@
 pub mod oracle;
-pub mod phases;
+pub mod iors;
 pub mod query;
 pub mod transcript;

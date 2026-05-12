@@ -25,7 +25,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::IOR;
 use crate::protocol::query::QueryIndices;
 
 pub struct SampleQueriesStatement {
@@ -64,7 +64,12 @@ impl<'a, F> IOR for SampleQueries<'a, F>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    type Statement = SampleQueriesStatement;
+    const NAME: &'static str = "SampleQueries";
+
+    type Statement<'b>
+        = SampleQueriesStatement
+    where
+        Self: 'b;
     type Witness<'b>
         = ()
     where
@@ -83,11 +88,14 @@ where
     type ReducedWitness = ();
     type VerifierOutputs = ();
 
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'b>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
         SampleQueriesReducedStatement {
             queries: inputs.queries.clone(),
         }
@@ -97,7 +105,7 @@ where
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         _inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -119,7 +127,7 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         _inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where

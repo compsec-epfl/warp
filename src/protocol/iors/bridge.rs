@@ -46,8 +46,8 @@ use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted};
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracle::Oracle;
-use crate::protocol::phases::twin_constraint::DeferredOracleCheck;
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::twin_constraint::DeferredOracleCheck;
+use crate::protocol::iors::IOR;
 use crate::relations::BundledPESAT;
 
 pub struct BridgeStatement<F: Field> {
@@ -137,14 +137,19 @@ where
     }
 }
 
-impl<'a, F, P, H> IOR for Bridge<'a, F, P, H>
+impl<'cfg, F, P, H> IOR for Bridge<'cfg, F, P, H>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: BundledPESAT<F>,
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone,
 {
-    type Statement = BridgeStatement<F>;
+    const NAME: &'static str = "Bridge";
+
+    type Statement<'b>
+        = BridgeStatement<F>
+    where
+        Self: 'b;
     type Witness<'b>
         = BridgeWitness<'b, F>
     where
@@ -163,11 +168,14 @@ where
     type ReducedWitness = BridgeReducedWitness<F, H>;
     type VerifierOutputs = ();
 
-    fn reduce_statement(
+    fn reduce_statement<'a>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'a>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'a,
+    {
         BridgeReducedStatement {
             eta: inputs.eta,
             nu_0: inputs.nu_0,
@@ -180,12 +188,12 @@ where
         skip_all,
         fields(log_m = statement.log_m, n_minus_k = statement.n_minus_k)
     )]
-    fn prove_inner<'b>(
+    fn prove_inner<'a>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
-        witness: &Self::Witness<'b>,
-        inputs: &Self::ProverInputs<'b>,
+        statement: &Self::Statement<'a>,
+        witness: &Self::Witness<'a>,
+        inputs: &Self::ProverInputs<'a>,
     ) -> Result<
         (
             Self::ReductionInputs,
@@ -195,7 +203,7 @@ where
         ProverError,
     >
     where
-        Self: 'b,
+        Self: 'a,
     {
         // η = ⟨ eq(β_τ), p(z) ⟩
         let beta_eq_evals = compute_hypercube_eq_evals(statement.log_m, &statement.beta_tau);
@@ -242,14 +250,14 @@ where
     }
 
     #[tracing::instrument(name = "bridge.verify", skip_all)]
-    fn verify_inner<'b, 'c>(
+    fn verify_inner<'a, 'b>(
         &self,
-        verifier_state: &mut VerifierState<'b>,
-        _statement: &Self::Statement,
-        inputs: &Self::VerifierInputs<'c>,
+        verifier_state: &mut VerifierState<'a>,
+        _statement: &Self::Statement<'b>,
+        inputs: &Self::VerifierInputs<'b>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
-        Self: 'c,
+        Self: 'b,
     {
         // Read (td_digest, η, ν₀) from the transcript.
         let td_new_root: H::Digest = verifier_state.prover_message()?;

@@ -60,17 +60,19 @@ use crate::error::{ProverError, VerifierError};
 /// where prover and verifier compute the same reduction via parallel
 /// code paths that silently diverge.
 pub trait IOR {
-    /// Pre-reduction claim. Visible to prover and verifier.
-    type Statement;
-    /// Prover-only data the prover reads. Lifetime-parameterized so a
-    /// pipeline composition can borrow inter-phase data into the witness
-    /// for one `prove` call without the borrow leaking into the phase
-    /// struct's lifetime — see `crate::protocol::composition`.
+    /// Human-readable identifier — the WARP paper's name for the IOR.
+    const NAME: &'static str;
+
+    /// Pre-reduction claim. Visible to prover and verifier. GAT so the
+    /// statement may borrow from upstream-IOR outputs.
+    type Statement<'a>
+    where
+        Self: 'a;
+    /// Prover-only data the prover reads.
     type Witness<'a>
     where
         Self: 'a;
     /// Oracles flowing in from upstream IORs (prover view: full data).
-    /// Lifetime-parameterized for the same reason as `Witness`.
     type ProverInputs<'a>
     where
         Self: 'a;
@@ -96,7 +98,7 @@ pub trait IOR {
     /// the verifier; the trait does not assume it is private.
     type ReducedWitness;
     /// Verifier-side outputs (commitments, parsed digests). Threaded into
-    /// downstream phase `VerifierInputs`.
+    /// downstream IORs' `VerifierInputs`.
     type VerifierOutputs;
 
     /// THE single source of truth for `ReducedStatement`.
@@ -105,11 +107,13 @@ pub trait IOR {
     /// [`Self::ReductionInputs`] (assembled in `prove_inner` /
     /// `verify_inner`). Drift between sides is structurally impossible
     /// because both go through this function.
-    fn reduce_statement(
+    fn reduce_statement<'a>(
         &self,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'a>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement;
+    ) -> Self::ReducedStatement
+    where
+        Self: 'a;
 
     /// Implementor's prover-side body. Runs the protocol's prover
     /// machinery and returns the inputs `reduce_statement` needs, plus
@@ -117,7 +121,7 @@ pub trait IOR {
     fn prove_inner<'a>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'a>,
         witness: &Self::Witness<'a>,
         inputs: &Self::ProverInputs<'a>,
     ) -> Result<
@@ -137,7 +141,7 @@ pub trait IOR {
     fn verify_inner<'a, 'b>(
         &self,
         verifier_state: &mut VerifierState<'a>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         inputs: &Self::VerifierInputs<'b>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
@@ -147,7 +151,7 @@ pub trait IOR {
     fn prove<'a>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'a>,
         witness: &Self::Witness<'a>,
         inputs: &Self::ProverInputs<'a>,
     ) -> Result<
@@ -171,7 +175,7 @@ pub trait IOR {
     fn verify<'a, 'b>(
         &self,
         verifier_state: &mut VerifierState<'a>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         inputs: &Self::VerifierInputs<'b>,
     ) -> Result<(Self::ReducedStatement, Self::VerifierOutputs), VerifierError>
     where
@@ -181,4 +185,83 @@ pub trait IOR {
         let reduced = self.reduce_statement(statement, &red_inputs);
         Ok((reduced, vouts))
     }
+}
+
+// ─── Choreography-syntax helpers ─────────────────────────────────────────
+//
+// These wrap the trait's tuple return into named-field structs so
+// `lib.rs` can destructure `reduced` / `proof` / `witness` by name. The
+// IOR trait itself stays formal (Statement / Witness / ProverInputs /
+// ReductionInputs / ReducedStatement / ProofString / ReducedWitness /
+// VerifierOutputs); these are pure call-site syntax sugar.
+
+/// Generic destructuring carrier for `IOR::prove`. The macro
+/// [`prove_ior!`] returns this so callers can write
+/// `let IorProveResult { reduced, proof, witness } = prove_ior!(...)?;`.
+pub struct IorProveResult<R, P, W> {
+    pub reduced: R,
+    pub proof: P,
+    pub witness: W,
+}
+
+/// Generic destructuring carrier for `IOR::verify`.
+pub struct IorVerifyResult<R, V> {
+    pub reduced: R,
+    pub outputs: V,
+}
+
+/// Calls `IOR::prove` on the given IOR and packages the `(reduced,
+/// proof, witness)` tuple into a named-field [`IorProveResult`].
+///
+/// ```ignore
+/// let IorProveResult {
+///     reduced: PesatReducedStatement { mus, taus },
+///     proof: _,
+///     witness: PesatReducedWitness { codewords, td_0 },
+/// } = prove_ior!(
+///     pesat_ior,
+///     prover_state,
+///     statement: PesatStatement { l1, log_m },
+///     witness: PesatWitness { witnesses: &witnesses },
+///     inputs: (),
+/// )?;
+/// ```
+#[macro_export]
+macro_rules! prove_ior {
+    (
+        $ior:expr,
+        $transcript:expr,
+        statement: $statement:expr,
+        witness: $witness:expr,
+        inputs: $inputs:expr $(,)?
+    ) => {{
+        let __stmt = $statement;
+        let __wit = $witness;
+        let __ins = $inputs;
+        $crate::protocol::iors::IOR::prove(&$ior, $transcript, &__stmt, &__wit, &__ins).map(
+            |(reduced, proof, witness)| $crate::protocol::iors::IorProveResult {
+                reduced,
+                proof,
+                witness,
+            },
+        )
+    }};
+}
+
+/// Calls `IOR::verify` on the given IOR and packages the `(reduced,
+/// outputs)` tuple into a named-field [`IorVerifyResult`].
+#[macro_export]
+macro_rules! verify_ior {
+    (
+        $ior:expr,
+        $transcript:expr,
+        statement: $statement:expr,
+        inputs: $inputs:expr $(,)?
+    ) => {{
+        let __stmt = $statement;
+        let __ins = $inputs;
+        $crate::protocol::iors::IOR::verify(&$ior, $transcript, &__stmt, &__ins).map(
+            |(reduced, outputs)| $crate::protocol::iors::IorVerifyResult { reduced, outputs },
+        )
+    }};
 }

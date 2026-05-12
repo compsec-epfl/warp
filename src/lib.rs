@@ -47,7 +47,7 @@ pub mod prelude {
 
 use crate::crypto::merkle::warp_scheme;
 use error::{DeciderError, ProverError, VerifierError};
-use protocol::phases::{
+use protocol::iors::{
     batching::{
         Batching, BatchingProverInputs, BatchingReducedStatement, BatchingReducedWitness,
         BatchingStatement, BatchingVerifierInputs,
@@ -71,7 +71,7 @@ use protocol::phases::{
         TwinConstraint, TwinConstraintProverInputs, TwinConstraintReducedStatement,
         TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
     },
-    IOR,
+    IorProveResult, IorVerifyResult,
 };
 
 pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
@@ -192,49 +192,52 @@ where
         } = acc_witness;
         let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
 
-        // Phase structs (held by value, borrow setup data for &self lifetime).
-        let pesat_phase = Pesat::<F, C, H> {
+        // IOR instances (stateless or borrowing &self.params for the &self lifetime).
+        let pesat_ior = Pesat::<F, C, H> {
             code: &self.params.code,
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
-        let tc_phase = TwinConstraint::<F, H> {
+        let twin_constraint_ior = TwinConstraint::<F, H> {
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_phase = Bridge::<F, P, H>::new();
-        let ood_phase = Ood::<F>::new();
-        let sample_queries_phase = SampleQueries::<F>::new();
-        let batching_phase = Batching::<F>::new();
-        let proximity_phase = Proximity::<F, H> {
+        let bridge_ior = Bridge::<F, P, H>::new();
+        let ood_ior = Ood::<F>::new();
+        let sample_queries_ior = SampleQueries::<F>::new();
+        let batching_ior = Batching::<F>::new();
+        let proximity_ior = Proximity::<F, H> {
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
 
-        // ── Phase 2: PESAT — encode witnesses, commit, derive τ ──────
-        let (PesatReducedStatement { mus, taus }, _, PesatReducedWitness { codewords, td_0 }) =
-            pesat_phase.prove(
-                prover_state,
-                &PesatStatement { l1, log_m },
-                &PesatWitness {
-                    witnesses: &witnesses,
-                },
-                &(),
-            )?;
+        // ── IOR 1: PESAT — encode witnesses, commit, derive τ ────────
+        let IorProveResult {
+            reduced: PesatReducedStatement { mus, taus },
+            proof: _,
+            witness: PesatReducedWitness { codewords, td_0 },
+        } = prove_ior!(
+            pesat_ior,
+            prover_state,
+            statement: PesatStatement { l1, log_m },
+            witness: PesatWitness { witnesses: &witnesses },
+            inputs: (),
+        )?;
 
-        // ── Phase 3a: TwinConstraint — fused-fold sumcheck ───────────
-        let (
-            TwinConstraintReducedStatement {
+        // ── IOR 2: TwinConstraint — fused-fold sumcheck ──────────────
+        let IorProveResult {
+            reduced: TwinConstraintReducedStatement {
                 gamma: _,
                 zeta_0,
                 beta_tau,
                 deferred: _,
             },
-            _,
-            TwinConstraintReducedWitness { f, z },
-        ) = tc_phase.prove(
+            proof: _,
+            witness: TwinConstraintReducedWitness { f, z },
+        } = prove_ior!(
+            twin_constraint_ior,
             prover_state,
-            &TwinConstraintStatement {
+            statement: TwinConstraintStatement {
                 acc_instance,
                 l1_mus: mus.clone(),
                 l1_taus: taus,
@@ -242,40 +245,37 @@ where
                 log_m,
                 log_n,
             },
-            &TwinConstraintWitness {
+            witness: TwinConstraintWitness {
                 acc_witness_w: &acc_ws,
                 instances: &instances,
                 witnesses: &witnesses,
             },
-            &TwinConstraintProverInputs {
+            inputs: TwinConstraintProverInputs {
                 fresh_codewords: &codewords,
                 acc_codewords: &acc_fs,
             },
         )?;
 
-        // ── Phase 3b: Bridge — publish (td_new, η, ν₀); split z ──────
-        let (
-            BridgeReducedStatement {
+        // ── IOR 3: Bridge — publish (td_new, η, ν₀); split z ─────────
+        let IorProveResult {
+            reduced: BridgeReducedStatement {
                 eta,
                 nu_0,
                 td_new_root: _,
             },
-            _,
-            BridgeReducedWitness {
-                td_new,
-                new_x,
-                new_w,
-            },
-        ) = bridge_phase.prove(
+            proof: _,
+            witness: BridgeReducedWitness { td_new, new_x, new_w },
+        } = prove_ior!(
+            bridge_ior,
             prover_state,
-            &BridgeStatement {
+            statement: BridgeStatement {
                 zeta_0: zeta_0.clone(),
                 beta_tau: beta_tau.clone(),
                 log_m,
                 n_minus_k: N - k,
             },
-            &BridgeWitness { z: &z, f: &f },
-            &BridgeProverInputs {
+            witness: BridgeWitness { z: &z, f: &f },
+            inputs: BridgeProverInputs {
                 bundled_pesat: &self.params.p,
                 hasher: &self.params.hasher,
                 code_len: n,
@@ -283,63 +283,72 @@ where
             },
         )?;
 
-        // ── Phase 3c: OOD — out-of-domain queries ────────────────────
-        let (OodReducedStatement { samples_flat, answers }, _, _) = ood_phase.prove(
+        // ── IOR 4: OOD — out-of-domain queries on the reduced oracle ──
+        let IorProveResult {
+            reduced: OodReducedStatement { samples_flat, answers },
+            proof: _,
+            witness: _,
+        } = prove_ior!(
+            ood_ior,
             prover_state,
-            &OodStatement {
-                s: self.params.config.s,
-                log_n,
-            },
-            &(),
-            &OodProverInputs { oracle: &f },
+            statement: OodStatement { s: self.params.config.s, log_n },
+            witness: (),
+            inputs: OodProverInputs { oracle: &f },
         )?;
 
-        // ── Phase 3c → 3d: SampleQueries — sample t shift positions ──
-        let (SampleQueriesReducedStatement { queries }, _, _) = sample_queries_phase.prove(
+        // ── IOR 5: SampleQueries — sample t shift positions ──────────
+        let IorProveResult {
+            reduced: SampleQueriesReducedStatement { queries },
+            proof: _,
+            witness: _,
+        } = prove_ior!(
+            sample_queries_ior,
             prover_state,
-            &SampleQueriesStatement {
-                log_n,
-                t: self.params.config.t,
-            },
-            &(),
-            &(),
+            statement: SampleQueriesStatement { log_n, t: self.params.config.t },
+            witness: (),
+            inputs: (),
         )?;
 
-        // ── Phase 3d: Batching — DAG fan-in over (ζ₀, OOD, queries) ──
-        let (BatchingReducedStatement { alpha }, _, BatchingReducedWitness { mu }) = batching_phase
-            .prove(
-                prover_state,
-                &BatchingStatement::from_phase_outputs(
-                    zeta_0.clone(),
-                    &samples_flat,
-                    &queries.evaluation_points,
-                    self.params.config.s,
-                    self.params.config.t,
-                    log_n,
-                ),
-                &(),
-                &BatchingProverInputs { oracle: &f },
-            )?;
+        // ── IOR 6: Batching — DAG fan-in over (ζ₀, OOD, queries) ─────
+        let IorProveResult {
+            reduced: BatchingReducedStatement { alpha },
+            proof: _,
+            witness: BatchingReducedWitness { mu },
+        } = prove_ior!(
+            batching_ior,
+            prover_state,
+            statement: BatchingStatement::from_phase_outputs(
+                zeta_0.clone(),
+                &samples_flat,
+                &queries.evaluation_points,
+                self.params.config.s,
+                self.params.config.t,
+                log_n,
+            ),
+            witness: (),
+            inputs: BatchingProverInputs { oracle: &f },
+        )?;
 
-        // ── Phase 3e: Proximity — shift-query openings ───────────────
-        let (
-            _,
-            ProximityProofString {
+        // ── IOR 7: Proximity — open committed oracles at shift positions ──
+        let IorProveResult {
+            reduced: _,
+            proof: ProximityProofString {
                 auth_0,
                 auth_j,
                 shift_query_answers,
             },
-            _,
-        ) = proximity_phase.prove(
+            witness: _,
+        } = prove_ior!(
+            proximity_ior,
             prover_state,
-            &ProximityStatement {
+            statement: ProximityStatement {
                 queries: queries.clone(),
                 l2,
                 t: self.params.config.t,
                 n,
             },
-            &(),
-            &ProximityProverInputs {
+            witness: (),
+            inputs: ProximityProverInputs {
                 td_0: &td_0,
                 acc_td: &acc_tds,
             },
@@ -411,46 +420,52 @@ where
         // statement — Proximity needs them for the per-acc Merkle handles.
         let l2_roots = parsed_acc.rt.clone();
 
-        // Phase structs (held by value, borrow setup data for &self lifetime).
-        let pesat_phase = Pesat::<F, C, H> {
+        // IOR instances.
+        let pesat_ior = Pesat::<F, C, H> {
             code: &self.params.code,
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
-        let tc_phase = TwinConstraint::<F, H> {
+        let twin_constraint_ior = TwinConstraint::<F, H> {
             r1cs: self.params.p.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_phase = Bridge::<F, P, H>::new();
-        let ood_phase = Ood::<F>::new();
-        let sample_queries_phase = SampleQueries::<F>::new();
-        let batching_phase = Batching::<F>::new();
-        let proximity_phase = Proximity::<F, H> {
+        let bridge_ior = Bridge::<F, P, H>::new();
+        let ood_ior = Ood::<F>::new();
+        let sample_queries_ior = SampleQueries::<F>::new();
+        let batching_ior = Batching::<F>::new();
+        let proximity_ior = Proximity::<F, H> {
             hasher: &self.params.hasher,
             _phantom: PhantomData,
         };
 
-        // ── Phase 2: PESAT::verify ──────────────────────────────────
-        let (
-            PesatReducedStatement {
+        // ── IOR 1: PESAT::verify ─────────────────────────────────────
+        let IorVerifyResult {
+            reduced: PesatReducedStatement {
                 mus: l1_mus,
                 taus: l1_taus,
             },
-            PesatVerifierOutputs { rt_0 },
-        ) = pesat_phase.verify(verifier_state, &PesatStatement { l1, log_m }, &())?;
+            outputs: PesatVerifierOutputs { rt_0 },
+        } = verify_ior!(
+            pesat_ior,
+            verifier_state,
+            statement: PesatStatement { l1, log_m },
+            inputs: (),
+        )?;
 
-        // ── Phase 3a: TwinConstraint::verify ────────────────────────
-        let (
-            TwinConstraintReducedStatement {
+        // ── IOR 2: TwinConstraint::verify ────────────────────────────
+        let IorVerifyResult {
+            reduced: TwinConstraintReducedStatement {
                 gamma,
                 zeta_0,
                 beta_tau,
                 deferred,
             },
-            _,
-        ) = tc_phase.verify(
+            outputs: _,
+        } = verify_ior!(
+            twin_constraint_ior,
             verifier_state,
-            &TwinConstraintStatement {
+            statement: TwinConstraintStatement {
                 acc_instance: parsed_acc,
                 l1_mus: l1_mus.clone(),
                 l1_taus: l1_taus.clone(),
@@ -458,49 +473,52 @@ where
                 log_m,
                 log_n,
             },
-            &(),
+            inputs: (),
         )?;
 
-        // ── Phase 3b: Bridge::verify — read (td, η, ν₀), discharge TC's deferred check ─
-        let (
-            BridgeReducedStatement {
+        // ── IOR 3: Bridge::verify — read (td, η, ν₀); discharge deferred ─
+        let IorVerifyResult {
+            reduced: BridgeReducedStatement {
                 eta: _,
                 nu_0,
                 td_new_root: _,
             },
-            _,
-        ) = bridge_phase.verify(
+            outputs: _,
+        } = verify_ior!(
+            bridge_ior,
             verifier_state,
-            &BridgeStatement {
+            statement: BridgeStatement {
                 zeta_0: zeta_0.clone(),
                 beta_tau,
                 log_m,
                 n_minus_k: N - k,
             },
-            &BridgeVerifierInputs {
+            inputs: BridgeVerifierInputs {
                 deferred: &deferred,
                 gamma: &gamma,
             },
         )?;
 
-        // ── Phase 3c: OOD::verify ───────────────────────────────────
-        let (OodReducedStatement { samples_flat, answers }, _) = ood_phase.verify(
+        // ── IOR 4: OOD::verify ───────────────────────────────────────
+        let IorVerifyResult {
+            reduced: OodReducedStatement { samples_flat, answers },
+            outputs: _,
+        } = verify_ior!(
+            ood_ior,
             verifier_state,
-            &OodStatement {
-                s: self.params.config.s,
-                log_n,
-            },
-            &(),
+            statement: OodStatement { s: self.params.config.s, log_n },
+            inputs: (),
         )?;
 
-        // ── Phase 3c → 3d: SampleQueries::verify ────────────────────
-        let (SampleQueriesReducedStatement { queries }, _) = sample_queries_phase.verify(
+        // ── IOR 5: SampleQueries::verify ─────────────────────────────
+        let IorVerifyResult {
+            reduced: SampleQueriesReducedStatement { queries },
+            outputs: _,
+        } = verify_ior!(
+            sample_queries_ior,
             verifier_state,
-            &SampleQueriesStatement {
-                log_n,
-                t: self.params.config.t,
-            },
-            &(),
+            statement: SampleQueriesStatement { log_n, t: self.params.config.t },
+            inputs: (),
         )?;
 
         // ── Whole-proof arity checks (orchestrator-owned) ────────────
@@ -552,23 +570,24 @@ where
             })
             .collect();
 
-        // ── Phase 3e: Proximity::verify ─────────────────────────────
-        proximity_phase.verify(
+        // ── IOR 7: Proximity::verify ─────────────────────────────────
+        verify_ior!(
+            proximity_ior,
             verifier_state,
-            &ProximityStatement {
+            statement: ProximityStatement {
                 queries: queries.clone(),
                 l2,
                 t: self.params.config.t,
                 n,
             },
-            &ProximityVerifierInputs {
+            inputs: ProximityVerifierInputs {
                 fresh: &fresh_handle,
                 acc: &acc_handles,
                 _f: PhantomData,
             },
         )?;
 
-        // ── Recompute ν vector from shift answers ──────────────────
+        // ── Recompute ν vector from shift answers (orchestrator-owned) ──
         let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
         let mut nus = Vec::with_capacity(1 + self.params.config.s + self.params.config.t);
         nus.push(nu_0);
@@ -581,10 +600,14 @@ where
             nus.push(nu_st);
         }
 
-        // ── Phase 3d: Batching::verify ─────────────────────────────
-        let (BatchingReducedStatement { alpha }, _) = batching_phase.verify(
+        // ── IOR 6: Batching::verify ──────────────────────────────────
+        let IorVerifyResult {
+            reduced: BatchingReducedStatement { alpha },
+            outputs: _,
+        } = verify_ior!(
+            batching_ior,
             verifier_state,
-            &BatchingStatement::from_phase_outputs(
+            statement: BatchingStatement::from_phase_outputs(
                 zeta_0.clone(),
                 &samples_flat,
                 &queries.evaluation_points,
@@ -592,7 +615,7 @@ where
                 self.params.config.t,
                 log_n,
             ),
-            &BatchingVerifierInputs {
+            inputs: BatchingVerifierInputs {
                 nus,
                 acc_mu: acc_mu_first,
             },

@@ -26,8 +26,8 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::phases::oracle_handle::IndexedOracle;
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::oracle_handle::IndexedOracle;
+use crate::protocol::iors::IOR;
 use crate::protocol::query::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
@@ -100,7 +100,12 @@ where
     F: Field,
     H: MerkleHasher<Symbol = Vec<F>>,
 {
-    type Statement = ProximityStatement<F>;
+    const NAME: &'static str = "Proximity";
+
+    type Statement<'b>
+        = ProximityStatement<F>
+    where
+        Self: 'b;
     type Witness<'b>
         = ()
     where
@@ -113,7 +118,7 @@ where
         = ProximityVerifierInputs<
             'b,
             F,
-            crate::protocol::phases::oracle_handle::MerkleIndexedOracle<'b, F, H>,
+            crate::protocol::iors::oracle_handle::MerkleIndexedOracle<'b, F, H>,
         >
     where
         Self: 'b;
@@ -123,11 +128,14 @@ where
     type ReducedWitness = ();
     type VerifierOutputs = ();
 
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'b>,
         _inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
     }
 
     #[tracing::instrument(
@@ -141,7 +149,7 @@ where
     fn prove_inner<'b>(
         &self,
         _prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -153,6 +161,7 @@ where
         ProverError,
     >
     where
+        Self: 'b,
         'a: 'b,
         H: 'b,
     {
@@ -233,10 +242,11 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         _verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
+        Self: 'c,
         'a: 'c,
         H: 'c,
     {

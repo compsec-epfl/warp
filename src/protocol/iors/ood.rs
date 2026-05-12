@@ -26,7 +26,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracle::Oracle;
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::IOR;
 
 pub struct OodStatement {
     pub s: usize,
@@ -73,7 +73,12 @@ impl<'a, F> IOR for Ood<'a, F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    type Statement = OodStatement;
+    const NAME: &'static str = "OOD";
+
+    type Statement<'b>
+        = OodStatement
+    where
+        Self: 'b;
     type Witness<'b>
         = ()
     where
@@ -92,11 +97,14 @@ where
     type ReducedWitness = ();
     type VerifierOutputs = ();
 
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'b>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
         OodReducedStatement {
             samples_flat: inputs.samples_flat.clone(),
             answers: inputs.answers.clone(),
@@ -107,7 +115,7 @@ where
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -119,7 +127,7 @@ where
         ProverError,
     >
     where
-        'a: 'b,
+        Self: 'b,
     {
         let samples_flat = prover_state.verifier_messages_vec::<F>(statement.s * statement.log_n);
         count_ops!(OodPointQueries, statement.s as u64);
@@ -146,11 +154,11 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         _inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
-        'a: 'c,
+        Self: 'c,
     {
         let samples_flat: Vec<F> = (0..statement.s * statement.log_n)
             .map(|_| verifier_state.verifier_message::<F>())

@@ -49,7 +49,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracle::Oracle;
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
@@ -288,7 +288,12 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     H: MerkleHasher,
 {
-    type Statement = TwinConstraintStatement<F, H>;
+    const NAME: &'static str = "TwinConstraint";
+
+    type Statement<'b>
+        = TwinConstraintStatement<F, H>
+    where
+        Self: 'b;
     type Witness<'b>
         = TwinConstraintWitness<'b, F>
     where
@@ -310,11 +315,14 @@ where
     /// Single source of truth for ζ₀ / β_τ. Both prover and verifier
     /// land here with `(ω, τ, γ, final_claim)`; the new accumulator
     /// state is computed identically on both sides.
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
         let log_l = statement.log_l;
         let log_n = statement.log_n;
         let l1 = statement.l1_mus.len();
@@ -359,7 +367,7 @@ where
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -371,6 +379,7 @@ where
         ProverError,
     >
     where
+        Self: 'b,
         'a: 'b,
         H: 'b,
     {
@@ -469,10 +478,11 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         _inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
+        Self: 'c,
         'a: 'c,
         H: 'c,
     {

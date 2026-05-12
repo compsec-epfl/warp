@@ -38,7 +38,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracle::Oracle;
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
@@ -176,7 +176,12 @@ impl<'a, F> IOR for Batching<'a, F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    type Statement = BatchingStatement<F>;
+    const NAME: &'static str = "Batching";
+
+    type Statement<'b>
+        = BatchingStatement<F>
+    where
+        Self: 'b;
     type Witness<'b>
         = ()
     where
@@ -195,11 +200,14 @@ where
     type ReducedWitness = BatchingReducedWitness<F>;
     type VerifierOutputs = ();
 
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'b>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
         BatchingReducedStatement {
             alpha: inputs.alpha.clone(),
         }
@@ -213,7 +221,7 @@ where
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -225,6 +233,7 @@ where
         ProverError,
     >
     where
+        Self: 'b,
         'a: 'b,
     {
         let n = inputs.oracle.len();
@@ -286,10 +295,11 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
+        Self: 'c,
         'a: 'c,
     {
         let r = 1 + statement.s + statement.t;

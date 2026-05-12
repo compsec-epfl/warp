@@ -26,7 +26,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{encode_codewords, warp_scheme, WarpCommitted};
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::phases::IOR;
+use crate::protocol::iors::IOR;
 
 pub struct PesatStatement {
     pub l1: usize,
@@ -79,7 +79,11 @@ where
     H: MerkleHasher<Symbol = Vec<F>>,
     H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    type Statement = PesatStatement;
+    const NAME: &'static str = "PESAT";
+    type Statement<'b>
+        = PesatStatement
+    where
+        Self: 'b;
     type Witness<'b>
         = PesatWitness<'b, F>
     where
@@ -98,11 +102,14 @@ where
     type ReducedWitness = PesatReducedWitness<F, H>;
     type VerifierOutputs = PesatVerifierOutputs<H>;
 
-    fn reduce_statement(
+    fn reduce_statement<'b>(
         &self,
-        _statement: &Self::Statement,
+        _statement: &Self::Statement<'b>,
         inputs: &Self::ReductionInputs,
-    ) -> Self::ReducedStatement {
+    ) -> Self::ReducedStatement
+    where
+        Self: 'b,
+    {
         PesatReducedStatement {
             mus: inputs.mus.clone(),
             taus: inputs.taus.clone(),
@@ -117,7 +124,7 @@ where
     fn prove_inner<'b>(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'b>,
         witness: &Self::Witness<'b>,
         _inputs: &Self::ProverInputs<'b>,
     ) -> Result<
@@ -179,7 +186,7 @@ where
     fn verify_inner<'b, 'c>(
         &self,
         verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement,
+        statement: &Self::Statement<'c>,
         _inputs: &Self::VerifierInputs<'c>,
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
