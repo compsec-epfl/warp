@@ -14,8 +14,8 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::VerifierError;
-use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::ior::{ProverTriple, IOR};
+use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
@@ -274,7 +274,9 @@ where
                 .into_iter()
                 .zip(&xi_eq_evals)
                 .fold(F::zero(), |acc, (a, b)| acc + a * *b);
-        (expected == res.final_claim).then_some(()).ok_or(VerifierError::Target)?;
+        (expected == res.final_claim)
+            .then_some(())
+            .ok_or(VerifierError::Target)?;
 
         Ok((BatchingReductionInputs { alpha: alpha_lsb }, ()))
     }

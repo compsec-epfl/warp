@@ -56,7 +56,12 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
                     |(mut prover_state, _x_w)| {
                         let _ = hash_chain_warp
                             .prove(
-                                WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+                                WARPProverKey {
+                                    index: r1cs.clone(),
+                                    m: r1cs.m,
+                                    n: r1cs.n,
+                                    k: r1cs.k,
+                                },
                                 &mut prover_state,
                                 instances_witnesses.1.clone(),
                                 instances_witnesses.0.clone(),

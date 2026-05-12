@@ -6,8 +6,8 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::VerifierError;
-use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::ior::{ProverTriple, IOR};
+use crate::protocol::oracles::evaluation::Oracle;
 
 pub struct OodStatement {
     pub s: usize,

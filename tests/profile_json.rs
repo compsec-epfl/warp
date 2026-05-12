@@ -27,8 +27,8 @@ use warp::relations::{
     },
     BundledPESAT, Relation, ToPolySystem,
 };
-use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
 use warp::utils::poseidon;
+use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
 use warp::WARP;
 
 /// `Arc<Mutex<Vec<u8>>>` wrapped so it implements `io::Write`.
@@ -102,7 +102,12 @@ fn json_layer_emits_phase_records() {
 
     hash_chain_warp
         .prove(
-            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPProverKey {
+                index: r1cs.clone(),
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut prover_state,
             witnesses,
             instances,

@@ -1,8 +1,6 @@
 //! The Interactive Oracle Reduction abstraction. Paired spec:
 //! `docs/paper-mods/mod1_oracle.tex`.
 
-
-
 use spongefish::{ProverState, VerifierState};
 
 use crate::error::{ProverError, VerifierError};
@@ -145,8 +143,7 @@ macro_rules! verify_ior {
     ) => {{
         let __stmt = $statement;
         let __ins = $inputs;
-        $crate::protocol::ior::IOR::verify(&$ior, $transcript, &__stmt, &__ins).map(
-            |(reduced, outputs)| $crate::protocol::ior::IorVerifyResult { reduced, outputs },
-        )
+        $crate::protocol::ior::IOR::verify(&$ior, $transcript, &__stmt, &__ins)
+            .map(|(reduced, outputs)| $crate::protocol::ior::IorVerifyResult { reduced, outputs })
     }};
 }

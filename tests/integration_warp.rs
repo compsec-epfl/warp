@@ -32,8 +32,8 @@ use warp::relations::{
     BundledPESAT, Relation, ToPolySystem,
 };
 use warp::serialize::acc_witness_size;
-use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
 use warp::utils::poseidon;
+use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
 use warp::WARP;
 
 #[test]
@@ -94,7 +94,12 @@ fn warp_test() {
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
-                WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+                WARPProverKey {
+                    index: r1cs.clone(),
+                    m: r1cs.m,
+                    n: r1cs.n,
+                    k: r1cs.k,
+                },
                 &mut prover_state,
                 instances_witnesses.1.clone(),
                 instances_witnesses.0.clone(),
@@ -120,7 +125,12 @@ fn warp_test() {
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
-            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPProverKey {
+                index: r1cs.clone(),
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut prover_state,
             instances_witnesses.1,
             instances_witnesses.0,
@@ -137,7 +147,11 @@ fn warp_test() {
         .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
-            WARPVerifierKey { m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPVerifierKey {
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut verifier_state,
             acc_x.clone(),
             pf.clone(),
@@ -214,7 +228,12 @@ fn warp_test_goldilocks() {
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
-                WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+                WARPProverKey {
+                    index: r1cs.clone(),
+                    m: r1cs.m,
+                    n: r1cs.n,
+                    k: r1cs.k,
+                },
                 &mut prover_state,
                 instances_witnesses.1.clone(),
                 instances_witnesses.0.clone(),
@@ -242,7 +261,12 @@ fn warp_test_goldilocks() {
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
-            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPProverKey {
+                index: r1cs.clone(),
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut prover_state,
             instances_witnesses.1,
             instances_witnesses.0,
@@ -259,7 +283,11 @@ fn warp_test_goldilocks() {
         .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
-            WARPVerifierKey { m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPVerifierKey {
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut verifier_state,
             acc_x.clone(),
             pf.clone(),
@@ -277,6 +305,9 @@ fn warp_test_goldilocks() {
         "Goldilocks acc_w size: {}",
         acc_witness_size(&acc_w, Compress::Yes)
     );
-    println!("Goldilocks proof size: {}", pf.serialized_size(Compress::Yes));
+    println!(
+        "Goldilocks proof size: {}",
+        pf.serialized_size(Compress::Yes)
+    );
     println!("Goldilocks narg_str size: {}", narg_str.len());
 }

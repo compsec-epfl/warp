@@ -19,16 +19,16 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::VerifierError;
-use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::ior::{ProverTriple, IOR};
+use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::relations::r1cs::R1CSConstraints;
-use crate::warp::AccumulatorInstance;
 use crate::utils::{
     concat_slices,
     poly::{eq_poly, eq_poly_non_binary},
     scale_and_sum,
 };
+use crate::warp::AccumulatorInstance;
 
 /// Degree-1 polynomial interpolating two field elements: `lo + (hi - lo)·X`.
 fn linear_poly<F: Field>(lo: F, hi: F) -> DensePolynomial<F> {
@@ -184,7 +184,9 @@ pub struct DeferredOracleCheck<F: Field> {
 impl<F: Field> DeferredOracleCheck<F> {
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
         let expected = eq_poly_non_binary(&self.tau, gamma) * (nu_0 + self.omega * eta);
-        (expected == self.claim).then_some(()).ok_or(VerifierError::Target)
+        (expected == self.claim)
+            .then_some(())
+            .ok_or(VerifierError::Target)
     }
 }
 

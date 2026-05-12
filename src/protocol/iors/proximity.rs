@@ -13,8 +13,8 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
 use crate::error::VerifierError;
-use crate::protocol::oracles::indexed_merkle::IndexedOracle;
 use crate::protocol::ior::{ProverTriple, IOR};
+use crate::protocol::oracles::indexed_merkle::IndexedOracle;
 use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
@@ -95,10 +95,10 @@ where
         Self: 'b;
     type VerifierInputs<'b>
         = ProximityVerifierInputs<
-            'b,
-            F,
-            crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle<'b, F, H>,
-        >
+        'b,
+        F,
+        crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle<'b, F, H>,
+    >
     where
         Self: 'b;
     type ReductionInputs = ();
@@ -223,7 +223,9 @@ where
         H: 'c,
     {
         // Arity check: number of accumulator openings must match l2.
-        (inputs.acc.len() == statement.l2).then_some(()).ok_or(VerifierError::NumL2Instances)?;
+        (inputs.acc.len() == statement.l2)
+            .then_some(())
+            .ok_or(VerifierError::NumL2Instances)?;
 
         // Validate each oracle handle. The handle is a partial function:
         // validate() runs the (lazy, memoized) BCS check internally —
@@ -231,13 +233,17 @@ where
         inputs
             .fresh
             .validate()
-            .then_some(()).ok_or(VerifierError::ShiftQuery)?;
+            .then_some(())
+            .ok_or(VerifierError::ShiftQuery)?;
         count_ops!(
             MerklePathsVerified,
             statement.queries.leaf_positions.len() as u64
         );
         for handle in inputs.acc.iter() {
-            handle.validate().then_some(()).ok_or(VerifierError::ShiftQuery)?;
+            handle
+                .validate()
+                .then_some(())
+                .ok_or(VerifierError::ShiftQuery)?;
             count_ops!(
                 MerklePathsVerified,
                 statement.queries.leaf_positions.len() as u64

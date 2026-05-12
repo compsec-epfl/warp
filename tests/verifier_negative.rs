@@ -39,8 +39,10 @@ use warp::relations::{
     },
     BundledPESAT, Relation, ToPolySystem,
 };
-use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProof, WARPProverKey, WARPVerifierKey};
 use warp::utils::poseidon;
+use warp::warp::{
+    AccumulatorInstance, AccumulatorWitness, WARPProof, WARPProverKey, WARPVerifierKey,
+};
 use warp::WARP;
 
 type F = BLS12_381;
@@ -127,7 +129,12 @@ fn make_fixture() -> Fixture {
         let mut ps = ds.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _) = w1
             .prove(
-                WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+                WARPProverKey {
+                    index: r1cs.clone(),
+                    m: r1cs.m,
+                    n: r1cs.n,
+                    k: r1cs.k,
+                },
                 &mut ps,
                 witnesses.clone(),
                 instances.clone(),
@@ -148,7 +155,12 @@ fn make_fixture() -> Fixture {
     let mut ps = ds.without_session().instance(&0u32).std_prover();
     let ((acc_x, _acc_w), proof) = warp
         .prove(
-            WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+            WARPProverKey {
+                index: r1cs.clone(),
+                m: r1cs.m,
+                n: r1cs.n,
+                k: r1cs.k,
+            },
             &mut ps,
             witnesses,
             instances,
@@ -159,7 +171,11 @@ fn make_fixture() -> Fixture {
 
     Fixture {
         warp,
-        vk: WARPVerifierKey { m: r1cs.m, n: r1cs.n, k: r1cs.k },
+        vk: WARPVerifierKey {
+            m: r1cs.m,
+            n: r1cs.n,
+            k: r1cs.k,
+        },
         acc_x,
         proof,
         narg_str: ps.narg_string().to_vec(),
@@ -288,12 +304,8 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
         .unzip();
 
     let warp_cfg = WARPConfig::new(l1, l1, s, t, r1cs.config(), code.code_len());
-    let warp = WARP::<F, R1CS<F>, _, H>::new(
-        warp_cfg,
-        code,
-        r1cs.clone(),
-        Blake3FieldHasher::<F>::new(),
-    );
+    let warp =
+        WARP::<F, R1CS<F>, _, H>::new(warp_cfg, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
 
     let mut witnesses_short = witnesses;
     witnesses_short.pop();
@@ -301,7 +313,12 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
     let ds = spongefish::domain_separator!("test::warp::prove_negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
     let result = warp.prove(
-        WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k },
+        WARPProverKey {
+            index: r1cs.clone(),
+            m: r1cs.m,
+            n: r1cs.n,
+            k: r1cs.k,
+        },
         &mut ps,
         witnesses_short,
         instances,

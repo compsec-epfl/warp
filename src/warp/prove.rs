@@ -6,7 +6,6 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::error::ProverError;
-use crate::prove_ior;
 use crate::protocol::ior::IorProveResult;
 use crate::protocol::iors::{
     batching::{
@@ -27,6 +26,7 @@ use crate::protocol::iors::{
     },
 };
 use crate::protocol::transcript::absorb_instances;
+use crate::prove_ior;
 use crate::relations::{r1cs::R1CSConstraints, BundledPESAT};
 use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness};
 use crate::warp::keys::WARPProverKey;
@@ -129,12 +129,13 @@ where
         )?;
 
         let IorProveResult {
-            reduced: TwinConstraintReducedStatement {
-                gamma: _,
-                zeta_0,
-                beta_tau,
-                deferred: _,
-            },
+            reduced:
+                TwinConstraintReducedStatement {
+                    gamma: _,
+                    zeta_0,
+                    beta_tau,
+                    deferred: _,
+                },
             proof: _,
             witness: TwinConstraintReducedWitness { f, z },
         } = prove_ior!(
@@ -160,13 +161,19 @@ where
         )?;
 
         let IorProveResult {
-            reduced: BridgeReducedStatement {
-                eta,
-                nu_0,
-                td_new_root: _,
-            },
+            reduced:
+                BridgeReducedStatement {
+                    eta,
+                    nu_0,
+                    td_new_root: _,
+                },
             proof: _,
-            witness: BridgeReducedWitness { td_new, new_x, new_w },
+            witness:
+                BridgeReducedWitness {
+                    td_new,
+                    new_x,
+                    new_w,
+                },
         } = prove_ior!(
             bridge_ior,
             prover_state,
@@ -186,7 +193,11 @@ where
         )?;
 
         let IorProveResult {
-            reduced: OodReducedStatement { samples_flat, answers },
+            reduced:
+                OodReducedStatement {
+                    samples_flat,
+                    answers,
+                },
             proof: _,
             witness: _,
         } = prove_ior!(
@@ -230,11 +241,12 @@ where
 
         let IorProveResult {
             reduced: _,
-            proof: ProximityProofString {
-                auth_0,
-                auth_j,
-                shift_query_answers,
-            },
+            proof:
+                ProximityProofString {
+                    auth_0,
+                    auth_j,
+                    shift_query_answers,
+                },
             witness: _,
         } = prove_ior!(
             proximity_ior,

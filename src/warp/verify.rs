@@ -10,9 +10,7 @@ use crate::crypto::merkle::warp_scheme;
 use crate::error::VerifierError;
 use crate::protocol::ior::IorVerifyResult;
 use crate::protocol::iors::{
-    batching::{
-        Batching, BatchingReducedStatement, BatchingStatement, BatchingVerifierInputs,
-    },
+    batching::{Batching, BatchingReducedStatement, BatchingStatement, BatchingVerifierInputs},
     bridge::{Bridge, BridgeReducedStatement, BridgeStatement, BridgeVerifierInputs},
     ood::{Ood, OodReducedStatement, OodStatement},
     pesat::{Pesat, PesatReducedStatement, PesatStatement, PesatVerifierOutputs},
@@ -84,10 +82,11 @@ where
         };
 
         let IorVerifyResult {
-            reduced: PesatReducedStatement {
-                mus: l1_mus,
-                taus: l1_taus,
-            },
+            reduced:
+                PesatReducedStatement {
+                    mus: l1_mus,
+                    taus: l1_taus,
+                },
             outputs: PesatVerifierOutputs { rt_0 },
         } = verify_ior!(
             pesat_ior,
@@ -97,12 +96,13 @@ where
         )?;
 
         let IorVerifyResult {
-            reduced: TwinConstraintReducedStatement {
-                gamma,
-                zeta_0,
-                beta_tau,
-                deferred,
-            },
+            reduced:
+                TwinConstraintReducedStatement {
+                    gamma,
+                    zeta_0,
+                    beta_tau,
+                    deferred,
+                },
             outputs: _,
         } = verify_ior!(
             twin_constraint_ior,
@@ -119,11 +119,12 @@ where
         )?;
 
         let IorVerifyResult {
-            reduced: BridgeReducedStatement {
-                eta: _,
-                nu_0,
-                td_new_root: _,
-            },
+            reduced:
+                BridgeReducedStatement {
+                    eta: _,
+                    nu_0,
+                    td_new_root: _,
+                },
             outputs: _,
         } = verify_ior!(
             bridge_ior,
@@ -141,7 +142,11 @@ where
         )?;
 
         let IorVerifyResult {
-            reduced: OodReducedStatement { samples_flat, answers },
+            reduced:
+                OodReducedStatement {
+                    samples_flat,
+                    answers,
+                },
             outputs: _,
         } = verify_ior!(
             ood_ior,
