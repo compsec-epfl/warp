@@ -49,15 +49,15 @@ where
             .then_some(())
             .ok_or(DeciderError::MLExtensionEvaluation)?;
 
-        let tau = &acc_instance.beta_twin_pairs.0[0];
+        let tau = &acc_instance.beta_twin_pairs[0].tau;
         let tau_zero_evader = compute_hypercube_eq_evals(tau.len(), tau);
-        let mut z = acc_instance.beta_twin_pairs.1[0].clone();
+        let mut z = acc_instance.beta_twin_pairs[0].x.clone();
         z.extend(acc_witness.w_witnesses[0].clone());
         let computed_eta = self
             .params
             .predicate
             .evaluate_bundled(&tau_zero_evader, &z)
-            .unwrap();
+            .map_err(|_| DeciderError::BundledEvaluation)?;
         (computed_eta == acc_instance.eta_predicate_evals[0])
             .then_some(())
             .ok_or(DeciderError::BundledEvaluation)?;

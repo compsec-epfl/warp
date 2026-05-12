@@ -17,6 +17,8 @@ pub enum WARPError {
     ZeroEvaderSize(usize, usize),
     #[error("LC does not exist")]
     R1CSNonExistingLC,
+    #[error("R1CS construction: {reason}")]
+    R1CSConstruction { reason: &'static str },
 }
 
 #[derive(Error, Debug)]
@@ -35,6 +37,12 @@ pub enum ProverError {
     ConfigParameterInvalid { reason: String },
     #[error("instance length mismatch: expected {expected}, got {got}")]
     InstanceLengthMismatch { expected: usize, got: usize },
+    #[error("statement layout mismatch: {what} expected {expected}, got {got}")]
+    StatementShape {
+        what: &'static str,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl From<spongefish::VerificationError> for ProverError {
@@ -67,6 +75,12 @@ pub enum VerifierError {
     SumcheckRound,
     #[error("Incorrect target")]
     Target,
+    #[error("statement layout mismatch: {what} expected {expected}, got {got}")]
+    StatementShape {
+        what: &'static str,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl From<spongefish::VerificationError> for VerifierError {

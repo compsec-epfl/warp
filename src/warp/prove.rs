@@ -6,7 +6,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::error::ProverError;
-use crate::protocol::ior::IorProveResult;
+use crate::protocol::ior::{absorb_protocol_map_prover, IorProveResult, IOR};
 use crate::protocol::iors::{
     batching::{
         Batching, BatchingProverInputs, BatchingReducedStatement, BatchingReducedWitness,
@@ -28,7 +28,7 @@ use crate::protocol::iors::{
 use crate::protocol::transcript::absorb_instances;
 use crate::prove_ior;
 use crate::relations::PolyPredicate;
-use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness};
+use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness, BetaTwinPair};
 use crate::warp::keys::WARPProverKey;
 use crate::warp::proof::{ProveResult, WARPProof};
 use crate::warp::scheme::WARP;
@@ -74,6 +74,22 @@ where
                 ),
             });
         }
+        if pk.m_num_constraints == 0 || pk.n_num_variables == 0 {
+            return Err(ProverError::ConfigParameterInvalid {
+                reason: format!(
+                    "pk.m_num_constraints = {} and pk.n_num_variables = {} must both be > 0",
+                    pk.m_num_constraints, pk.n_num_variables
+                ),
+            });
+        }
+        if pk.n_num_variables < pk.k_num_witness_vars {
+            return Err(ProverError::ConfigParameterInvalid {
+                reason: format!(
+                    "pk.n_num_variables ({}) < pk.k_num_witness_vars ({})",
+                    pk.n_num_variables, pk.k_num_witness_vars
+                ),
+            });
+        }
         let expected_instance_len = pk.n_num_variables - pk.k_num_witness_vars;
         if instances[0].len() != expected_instance_len {
             return Err(ProverError::InstanceLengthMismatch {
@@ -101,6 +117,22 @@ where
         let n_code_len = self.params.code.code_len();
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = pk.n_num_variables - pk.k_num_witness_vars;
+
+        // Domain-separation for the FS-affecting IOR sequence. Order here
+        // must match `WARP::verify`. (Proximity is FS-transparent and
+        // intentionally omitted; its position is allowed to differ between
+        // prover and verifier without affecting soundness.)
+        absorb_protocol_map_prover(
+            prover_state,
+            &[
+                Pesat::<F, C, H>::NAME,
+                TwinConstraint::<F, H>::NAME,
+                Bridge::<F, P, H>::NAME,
+                Ood::<F>::NAME,
+                SampleQueries::<F>::NAME,
+                Batching::<F>::NAME,
+            ],
+        );
 
         absorb_instances(prover_state, &instances);
         acc_instance.absorb_into(prover_state);
@@ -306,7 +338,10 @@ where
             rt_merkle_roots: vec![td_new.root().clone()],
             alpha_fold_vectors: vec![alpha_sumcheck_challenges],
             mu_claimed_evals: vec![mu_claimed_eval],
-            beta_twin_pairs: (vec![beta_tau], vec![new_x]),
+            beta_twin_pairs: vec![BetaTwinPair {
+                tau: beta_tau,
+                x: new_x,
+            }],
             eta_predicate_evals: vec![eta_predicate_eval],
         };
         let new_acc_witness = AccumulatorWitness {

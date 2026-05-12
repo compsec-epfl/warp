@@ -3,13 +3,22 @@ use ark_mt::MerkleHasher;
 
 use crate::crypto::merkle::WarpCommitted;
 
+/// Per-instance β coordinates absorbed into the accumulator: the `(τ, x)`
+/// twin pair. Replaces the old parallel-`Vec` tuple shape which let callers
+/// accidentally swap or desync the two halves.
+#[derive(Clone, Debug)]
+pub struct BetaTwinPair<F: Field> {
+    pub tau: Vec<F>,
+    pub x: Vec<F>,
+}
+
 /// Public part of an accumulated claim: `(rt, α, μ, (τ, x), η)` in the paper.
 #[derive(Clone)]
 pub struct AccumulatorInstance<F: Field, H: MerkleHasher> {
     pub rt_merkle_roots: Vec<H::Digest>,
     pub alpha_fold_vectors: Vec<Vec<F>>,
     pub mu_claimed_evals: Vec<F>,
-    pub beta_twin_pairs: (Vec<Vec<F>>, Vec<Vec<F>>),
+    pub beta_twin_pairs: Vec<BetaTwinPair<F>>,
     pub eta_predicate_evals: Vec<F>,
 }
 
@@ -19,7 +28,7 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
             rt_merkle_roots: vec![],
             alpha_fold_vectors: vec![],
             mu_claimed_evals: vec![],
-            beta_twin_pairs: (vec![], vec![]),
+            beta_twin_pairs: vec![],
             eta_predicate_evals: vec![],
         }
     }
@@ -28,8 +37,7 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
         self.rt_merkle_roots.extend(other.rt_merkle_roots);
         self.alpha_fold_vectors.extend(other.alpha_fold_vectors);
         self.mu_claimed_evals.extend(other.mu_claimed_evals);
-        self.beta_twin_pairs.0.extend(other.beta_twin_pairs.0);
-        self.beta_twin_pairs.1.extend(other.beta_twin_pairs.1);
+        self.beta_twin_pairs.extend(other.beta_twin_pairs);
         self.eta_predicate_evals.extend(other.eta_predicate_evals);
         self
     }

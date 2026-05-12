@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-use warp::params::{lookup, select, validate, ParamError, Params, Regime, SecurityLevel, PRESETS};
+use warp::params::{inspect, lookup, select, ParamError, Params, Regime, SecurityLevel, PRESETS};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -114,7 +114,7 @@ fn cmd_validate(args: &[String]) -> ExitCode {
         }
     };
     let params = Params { s, t };
-    match validate(&params, field_bits, rate.as_f64(), regime, lambda) {
+    match inspect(&params, field_bits, rate.as_f64(), regime, lambda) {
         Ok(bound) => {
             println!(
                 "proximity_bits={:.2} field_admissible={} ood_admissible={} meets_target={}",
@@ -243,6 +243,17 @@ fn format_err(e: ParamError) -> String {
                 "field is only {field_bits} bits; \
                  a target of {lambda} bits requires at least {} bits",
                 lambda + warp::params::select::FIELD_EPSILON
+            )
+        }
+        ParamError::OodSamplesTooFew { s, min } => {
+            format!("OOD samples s = {s} is below minimum {min}")
+        }
+        ParamError::ProximitySoundnessBelowTarget {
+            proximity_bits,
+            target_bits,
+        } => {
+            format!(
+                "proximity soundness {proximity_bits:.2} bits is below target {target_bits} bits"
             )
         }
     }

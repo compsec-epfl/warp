@@ -30,11 +30,18 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
         use ark_relations::gr1cs::R1CS_PREDICATE_LABEL;
 
-        let inner = cs.into_inner().unwrap();
-        let all_matrices = inner.to_matrices().unwrap();
-        let r1cs_matrices = all_matrices
-            .get(R1CS_PREDICATE_LABEL)
-            .expect("R1CS predicate must exist");
+        let inner = cs.into_inner().ok_or(WARPError::R1CSConstruction {
+            reason: "constraint system has outstanding borrows",
+        })?;
+        let all_matrices = inner.to_matrices().map_err(|_| WARPError::R1CSConstruction {
+            reason: "constraint system not finalized or matrices unavailable",
+        })?;
+        let r1cs_matrices =
+            all_matrices
+                .get(R1CS_PREDICATE_LABEL)
+                .ok_or(WARPError::R1CSConstruction {
+                    reason: "R1CS predicate not present in constraint system",
+                })?;
 
         let num_constraints = inner
             .get_predicate_num_constraints(R1CS_PREDICATE_LABEL)
@@ -44,9 +51,14 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         let m = num_constraints.next_power_of_two();
         let n = inner.num_instance_variables() + inner.num_witness_variables();
         let k = inner.num_witness_variables();
+        if n == 0 {
+            return Err(WARPError::R1CSConstruction {
+                reason: "n = num_instance_variables + num_witness_variables must be > 0",
+            });
+        }
 
-        // both `unwrap()` calls below are safe since warp/lib.rs forbids compiling on platforms
-        // with 16-bits pointers width
+        // Safe: `m` is always ≥ 1 (next_power_of_two of any usize is ≥ 1) and `n > 0`
+        // checked above. usize→u32 cast is safe on ≥32-bit platforms per lib.rs.
         let log_m = m.ilog2().try_into().unwrap();
         let log_n = n.ilog2().try_into().unwrap();
 

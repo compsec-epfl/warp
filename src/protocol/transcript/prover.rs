@@ -38,14 +38,17 @@ where
             prover_state.prover_message(f);
         }
 
-        for tau in &self.beta_twin_pairs.0 {
-            for f in tau {
+        // Layout: all τ vectors first (l2 of them), then all x vectors.
+        // Verifier reads in the same order. Keeping the τ/x halves in
+        // separate passes lets the verifier reconstruct the pair list
+        // without needing length-prefixes per pair.
+        for pair in &self.beta_twin_pairs {
+            for f in &pair.tau {
                 prover_state.prover_message(f);
             }
         }
-
-        for x in &self.beta_twin_pairs.1 {
-            for f in x {
+        for pair in &self.beta_twin_pairs {
+            for f in &pair.x {
                 prover_state.prover_message(f);
             }
         }

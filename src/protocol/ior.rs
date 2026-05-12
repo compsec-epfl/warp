@@ -94,6 +94,33 @@ pub trait IOR {
     }
 }
 
+/// Single-shot protocol-map domain separator: absorbs the ordered sequence
+/// of FS-affecting IOR names into the transcript before any messages or
+/// challenges are exchanged. Pairs identically on prover and verifier.
+///
+/// Per-IOR labels would be the more obvious design, but WARP intentionally
+/// orders FS-transparent IORs (Proximity) differently on the prover vs the
+/// verifier; absorbing labels mid-stream would diverge the two transcripts.
+/// Committing the full sequence up-front catches permutations of the
+/// FS-affecting IORs without disturbing the FS-transparent ones.
+pub fn absorb_protocol_map_prover(prover_state: &mut ProverState, names: &[&'static str]) {
+    prover_state.public_message(b"WARP.protocol_map");
+    for name in names {
+        prover_state.public_message(name.as_bytes());
+        prover_state.public_message(b"|");
+    }
+}
+
+/// Verifier-side pair of [`absorb_protocol_map_prover`]. Must be called with
+/// the identical `names` slice on the same transcript position.
+pub fn absorb_protocol_map_verifier(verifier_state: &mut VerifierState, names: &[&'static str]) {
+    verifier_state.public_message(b"WARP.protocol_map");
+    for name in names {
+        verifier_state.public_message(name.as_bytes());
+        verifier_state.public_message(b"|");
+    }
+}
+
 /// Destructuring carrier for [`IOR::prove`].
 pub struct IorProveResult<R, P, W> {
     pub reduced: R,

@@ -41,8 +41,22 @@ impl SoundnessBound {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamError {
     InvalidRate,
-    FieldTooSmall { field_bits: u32, lambda: u32 },
+    FieldTooSmall {
+        field_bits: u32,
+        lambda: u32,
+    },
+    /// Returned by `validate()` when `params.s` is below the OOD-samples
+    /// minimum required for the chosen target.
+    OodSamplesTooFew {
+        s: usize,
+        min: usize,
+    },
+    /// Returned by `validate()` when proximity soundness is below target.
+    ProximitySoundnessBelowTarget {
+        proximity_bits: f64,
+        target_bits: u32,
+    },
 }

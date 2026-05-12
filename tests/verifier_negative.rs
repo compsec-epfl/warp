@@ -215,7 +215,7 @@ fn tampered_alpha_raises_code_evaluation_point() {
 fn tampered_beta_tau_raises_circuit_evaluation_point() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.beta_twin_pairs.0[0][0] += F::from(1u64);
+    acc_x.beta_twin_pairs[0].tau[0] += F::from(1u64);
     assert_err(
         fix.verify(acc_x, fix.proof.clone()),
         "CircuitEvaluationPoint",
@@ -226,7 +226,7 @@ fn tampered_beta_tau_raises_circuit_evaluation_point() {
 fn tampered_beta_x_raises_circuit_evaluation_point() {
     let fix = make_fixture();
     let mut acc_x = fix.acc_x.clone();
-    acc_x.beta_twin_pairs.1[0][0] += F::from(1u64);
+    acc_x.beta_twin_pairs[0].x[0] += F::from(1u64);
     assert_err(
         fix.verify(acc_x, fix.proof.clone()),
         "CircuitEvaluationPoint",

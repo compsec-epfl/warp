@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::error::VerifierError;
+use crate::error::{ProverError, VerifierError};
 use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::transcript::EffscVerifierTranscript;
@@ -179,7 +179,13 @@ where
         let n = inputs.oracle.len();
         let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
-        debug_assert_eq!(statement.zetas_prefix.len(), r);
+        if statement.zetas_prefix.len() != r {
+            return Err(ProverError::StatementShape {
+                what: "zetas_prefix",
+                expected: r,
+                got: statement.zetas_prefix.len(),
+            });
+        }
 
         let xis = prover_state.verifier_messages_vec::<F>(log_r);
 
@@ -250,8 +256,20 @@ where
     {
         let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
-        debug_assert_eq!(statement.zetas_prefix.len(), r);
-        debug_assert_eq!(inputs.nus_claimed_evals.len(), r);
+        if statement.zetas_prefix.len() != r {
+            return Err(VerifierError::StatementShape {
+                what: "zetas_prefix",
+                expected: r,
+                got: statement.zetas_prefix.len(),
+            });
+        }
+        if inputs.nus_claimed_evals.len() != r {
+            return Err(VerifierError::StatementShape {
+                what: "nus_claimed_evals",
+                expected: r,
+                got: inputs.nus_claimed_evals.len(),
+            });
+        }
 
         // Squeeze ξ matching the prover.
         let xis: Vec<F> = (0..log_r)

@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 
 use crate::crypto::merkle::warp_scheme;
 use crate::error::VerifierError;
-use crate::protocol::ior::IorVerifyResult;
+use crate::protocol::ior::{absorb_protocol_map_verifier, IorVerifyResult, IOR};
 use crate::protocol::iors::{
     batching::{Batching, BatchingReducedStatement, BatchingStatement, BatchingVerifierInputs},
     bridge::{Bridge, BridgeReducedStatement, BridgeStatement, BridgeVerifierInputs},
@@ -49,6 +49,20 @@ where
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = vk.n_num_variables - vk.k_num_witness_vars;
 
+        // Paired with `WARP::prove`. Catches reorder/swap of FS-affecting
+        // IORs between prover and verifier.
+        absorb_protocol_map_verifier(
+            verifier_state,
+            &[
+                Pesat::<F, C, H>::NAME,
+                TwinConstraint::<F, H>::NAME,
+                Bridge::<F, P, H>::NAME,
+                Ood::<F>::NAME,
+                SampleQueries::<F>::NAME,
+                Batching::<F>::NAME,
+            ],
+        );
+
         let (l1_xs, parsed_acc) = parse_statement::<F, H>(
             verifier_state,
             self.params.config.l1_first_fold_factor,
@@ -59,11 +73,19 @@ where
         )?;
 
         let acc_alpha_first = acc_instance.alpha_fold_vectors[0].clone();
-        let acc_beta_0_first = acc_instance.beta_twin_pairs.0[0].clone();
-        let acc_beta_1_first = acc_instance.beta_twin_pairs.1[0].clone();
+        let acc_beta_0_first = acc_instance.beta_twin_pairs[0].tau.clone();
+        let acc_beta_1_first = acc_instance.beta_twin_pairs[0].x.clone();
         let acc_mu_first = acc_instance.mu_claimed_evals[0];
-        let l2_taus = parsed_acc.beta_twin_pairs.0.clone();
-        let l2_xs = parsed_acc.beta_twin_pairs.1.clone();
+        let l2_taus: Vec<Vec<F>> = parsed_acc
+            .beta_twin_pairs
+            .iter()
+            .map(|p| p.tau.clone())
+            .collect();
+        let l2_xs: Vec<Vec<F>> = parsed_acc
+            .beta_twin_pairs
+            .iter()
+            .map(|p| p.x.clone())
+            .collect();
         let l2_roots = parsed_acc.rt_merkle_roots.clone();
 
         let pesat_ior = Pesat::<F, C, H> {
@@ -145,6 +167,13 @@ where
                 gamma_twin_constraint_challenges: &gamma_sumcheck_challenges,
             },
         )?;
+
+        // Composition-safety assertion: any downstream IOR consuming TC's
+        // deferred check must have called discharge(). If this fires the
+        // protocol composition has a soundness gap.
+        if !deferred.is_discharged() {
+            return Err(VerifierError::Target);
+        }
 
         let IorVerifyResult {
             reduced:

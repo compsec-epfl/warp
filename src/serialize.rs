@@ -29,23 +29,23 @@ where
             .serialize_with_mode(&mut writer, compress)?;
         self.mu_claimed_evals
             .serialize_with_mode(&mut writer, compress)?;
-        self.beta_twin_pairs
-            .0
-            .serialize_with_mode(&mut writer, compress)?;
-        self.beta_twin_pairs
-            .1
-            .serialize_with_mode(&mut writer, compress)?;
+        let taus: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.tau).collect();
+        let xs: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.x).collect();
+        taus.serialize_with_mode(&mut writer, compress)?;
+        xs.serialize_with_mode(&mut writer, compress)?;
         self.eta_predicate_evals
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
+        let taus: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.tau).collect();
+        let xs: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.x).collect();
         self.rt_merkle_roots.serialized_size(compress)
             + self.alpha_fold_vectors.serialized_size(compress)
             + self.mu_claimed_evals.serialized_size(compress)
-            + self.beta_twin_pairs.0.serialized_size(compress)
-            + self.beta_twin_pairs.1.serialized_size(compress)
+            + taus.serialized_size(compress)
+            + xs.serialized_size(compress)
             + self.eta_predicate_evals.serialized_size(compress)
     }
 }

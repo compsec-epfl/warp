@@ -63,13 +63,19 @@ where
             .map(|_| verifier_state.prover_messages_vec(instance_len))
             .collect::<Result<_, _>>()?;
 
+        let beta_twin_pairs: Vec<crate::warp::accumulator::BetaTwinPair<F>> = taus
+            .into_iter()
+            .zip(xs)
+            .map(|(tau, x)| crate::warp::accumulator::BetaTwinPair { tau, x })
+            .collect();
+
         let eta: Vec<F> = verifier_state.prover_messages_vec(l2)?;
 
         Ok(Self {
             rt_merkle_roots: rt,
             alpha_fold_vectors: alpha,
             mu_claimed_evals: mu,
-            beta_twin_pairs: (taus, xs),
+            beta_twin_pairs,
             eta_predicate_evals: eta,
         })
     }

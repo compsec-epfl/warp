@@ -18,7 +18,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::error::VerifierError;
+use crate::error::{ProverError, VerifierError};
 use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::transcript::EffscVerifierTranscript;
@@ -175,19 +175,45 @@ pub struct TwinConstraintProverInputs<'a, F: Field> {
 
 /// Deferred oracle check: `final_claim ≟ eq(τ,γ)·(ν₀ + ω·η)`. Cannot fire
 /// inside `verify` because ν₀, η arrive on the transcript only after Bridge.
+///
+/// **Invariant:** every instance must be discharged before the verifier
+/// returns. Fields are private (only constructable inside `TwinConstraint`)
+/// and `#[must_use]` makes drop-without-use a compile warning. The
+/// orchestrator can additionally assert `is_discharged()` after `verify` to
+/// catch any composition that forgets the call.
+#[must_use = "DeferredOracleCheck must be discharged by the downstream IOR; \
+              dropping it without calling discharge() leaves the verifier unsound"]
 pub struct DeferredOracleCheck<F: Field> {
-    pub omega_zero_check_randomness: F,
-    pub tau_zero_check_challenges: Vec<F>,
-    pub claim: F,
+    omega_zero_check_randomness: F,
+    tau_zero_check_challenges: Vec<F>,
+    claim: F,
+    discharged: std::cell::Cell<bool>,
 }
 
 impl<F: Field> DeferredOracleCheck<F> {
+    pub(crate) fn new(omega: F, tau: Vec<F>, claim: F) -> Self {
+        Self {
+            omega_zero_check_randomness: omega,
+            tau_zero_check_challenges: tau,
+            claim,
+            discharged: std::cell::Cell::new(false),
+        }
+    }
+
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
         let expected = eq_poly_non_binary(&self.tau_zero_check_challenges, gamma)
             * (nu_0 + self.omega_zero_check_randomness * eta);
-        (expected == self.claim)
-            .then_some(())
-            .ok_or(VerifierError::Target)
+        let ok = expected == self.claim;
+        self.discharged.set(true);
+        ok.then_some(()).ok_or(VerifierError::Target)
+    }
+
+    /// Returns true once `discharge` has been invoked at least once on this
+    /// handle. The orchestrator should assert this is true after `verify`
+    /// returns; an undischarged handle means the protocol composition has a
+    /// soundness gap.
+    pub fn is_discharged(&self) -> bool {
+        self.discharged.get()
     }
 }
 
@@ -276,9 +302,8 @@ where
         let beta_taus: Vec<Vec<F>> = statement
             .acc_instance
             .beta_twin_pairs
-            .0
             .iter()
-            .cloned()
+            .map(|p| p.tau.clone())
             .chain(statement.l1_taus_zero_check_challenges.iter().cloned())
             .collect();
         let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
@@ -287,11 +312,11 @@ where
             gamma_sumcheck_challenges: inputs.gamma_sumcheck_challenges.clone(),
             zeta_0,
             beta_tau,
-            deferred: DeferredOracleCheck {
-                omega_zero_check_randomness: inputs.omega_zero_check_randomness,
-                tau_zero_check_challenges: inputs.tau_zero_check_challenges.clone(),
-                claim: inputs.final_claim,
-            },
+            deferred: DeferredOracleCheck::new(
+                inputs.omega_zero_check_randomness,
+                inputs.tau_zero_check_challenges.clone(),
+                inputs.final_claim,
+            ),
         }
     }
 
@@ -334,8 +359,8 @@ where
         let z_vecs: Vec<Vec<F>> = statement
             .acc_instance
             .beta_twin_pairs
-            .1
             .iter()
+            .map(|p| &p.x)
             .zip(witness.acc_witness_w)
             .chain(witness.instances.iter().zip(witness.witnesses))
             .map(|(x, w)| concat_slices(x, w))
@@ -345,9 +370,8 @@ where
         let beta_vecs: Vec<Vec<F>> = statement
             .acc_instance
             .beta_twin_pairs
-            .0
             .iter()
-            .cloned()
+            .map(|p| p.tau.clone())
             .chain(statement.l1_taus_zero_check_challenges.iter().cloned())
             .collect();
 
@@ -373,14 +397,26 @@ where
             count_ops!(TwinConstraintRounds, log_l as u64);
             sumcheck(&mut cc, log_l, prover_state, noop_hook)
         };
-        debug_assert_eq!(proof.challenges.len(), log_l);
+        if proof.challenges.len() != log_l {
+            return Err(ProverError::StatementShape {
+                what: "sumcheck.challenges",
+                expected: log_l,
+                got: proof.challenges.len(),
+            });
+        }
 
         // d. pull only the reduced *witness* halves out of CC. ζ₀ and β_τ
         // are NOT pulled here — `reduce_statement` recomputes them from
         // (statement, γ) via `scale_and_sum`, which is the single source
         // of truth that both prover and verifier go through.
         let reduced = cc.tablewise();
-        debug_assert!(reduced.iter().all(|t| t.len() == 1));
+        if !reduced.iter().all(|t| t.len() == 1) {
+            return Err(ProverError::StatementShape {
+                what: "sumcheck.tablewise (singleton after full fold)",
+                expected: 1,
+                got: reduced.iter().map(|t| t.len()).max().unwrap_or(0),
+            });
+        }
         let f = reduced[0][0].clone();
         let z = reduced[1][0].clone();
 

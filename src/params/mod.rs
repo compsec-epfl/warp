@@ -9,7 +9,7 @@ pub mod validate;
 pub use presets::{lookup, Preset, PRESETS};
 pub use select::select;
 pub use types::{ParamError, Params, Regime, SecurityLevel, SoundnessBound};
-pub use validate::validate;
+pub use validate::{inspect, validate};
 
 #[cfg(test)]
 mod tests {
