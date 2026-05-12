@@ -2,7 +2,7 @@ use ark_ff::Field;
 use ark_mt::MerkleHasher;
 use spongefish::{Decoding, Encoding, NargDeserialize, VerificationResult, VerifierState};
 
-use crate::types::AccumulatorInstance;
+use crate::warp::AccumulatorInstance;
 
 // (l1 instances, accumulated instance)
 pub type ParsedStatement<F, H> = (Vec<Vec<F>>, AccumulatorInstance<F, H>);

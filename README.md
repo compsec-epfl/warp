@@ -51,15 +51,19 @@ for batch in batches {
 warp.decide(acc_w, acc_x)?;
 ```
 
-The `examples/profile_phases.rs` runs the full pipeline and prints a
-per-phase wall-time breakdown when built with `--features profile`.
+`examples/profile_iors.rs` runs the full prover and prints a per-IOR
+wall-time breakdown when built with `--features profile`.
 
 ## Layout
 
-- `src/lib.rs` — `WARP::{prove, verify, decide}` orchestrator
-- `src/protocol/phases/` — IOR phases (`pesat`, `twin_constraint`, `ood`, `batching`, `proximity`)
+- `src/warp/` — `WARP::{prove, verify, decide}` choreography over IORs
+- `src/protocol/ior.rs` — the `IOR` trait
+- `src/protocol/iors/` — concrete IORs (`pesat`, `twin_constraint`, `bridge`, `ood`, `sample_queries`, `batching`, `proximity`)
+- `src/protocol/oracles/` — oracle vocabulary used by IORs
+- `src/protocol/transcript/` — transcript absorb / parse helpers
+- `src/accumulation.rs` — the `AccumulationScheme` trait
 - `src/relations/` — `R1CS`, `BundledPESAT`, `HashChainRelation`
-- `src/crypto/`, `src/utils/` — Merkle wrapper, field/poly helpers
+- `src/crypto/`, `src/utils/` — Merkle wrapper, field / poly helpers
 - `src/profile/` — opt-in tracing layer (gated behind the `profile` feature)
 - `tests/integration_warp.rs` — end-to-end on BLS12-381 and Goldilocks
 - `tests/verifier_negative.rs` — single-tamper rejection tests
@@ -69,5 +73,5 @@ per-phase wall-time breakdown when built with `--features profile`.
 ```sh
 cargo test --release
 cargo bench
-cargo run --release --features profile --example profile_phases
+cargo run --release --features profile --example profile_iors
 ```

@@ -2,7 +2,7 @@ use ark_ff::Field;
 use ark_mt::MerkleHasher;
 use spongefish::{Encoding, ProverState};
 
-use crate::types::AccumulatorInstance;
+use crate::warp::AccumulatorInstance;
 
 // absorb a list of plain instances into the transcript
 pub fn absorb_instances<F: Field + Encoding<[u8]>>(

@@ -1,25 +1,13 @@
-//! Per-phase wall-time profile of a Goldilocks WARP prove run — used to
-//! report the micro-profile table after the rewrite-v2 effsc integration.
-//! See the original shape in the PR #22 body.
+//! Per-IOR wall-time profile of a Goldilocks WARP prove run.
 //!
-//! Run:
-//! ```text
-//! cargo run --release --features profile --example profile_phases
-//! ```
-//!
-//! The `profile` feature installs the JSON layer from `warp::profile::init_json`.
-//! This binary captures the emitted records, aggregates wall_ns per phase
-//! over a handful of prove invocations, and prints a markdown table that
-//! mirrors the PR #22 breakdown (rs_encode, pesat_merkle_tree,
-//! twin_constraint_sumcheck, etc.).
-//!
-//! Best run with `RAYON_NUM_THREADS` pinned and all other workloads off.
+//! Run: `cargo run --release --features profile --example profile_iors`.
+//! Best run with `RAYON_NUM_THREADS` pinned and other workloads off.
 
 #[cfg(not(feature = "profile"))]
 fn main() {
     eprintln!(
-        "profile_phases: build with --features profile (and preferably --release).\n\
-         example: cargo run --release --features profile --example profile_phases"
+        "profile_iors: build with --features profile (and preferably --release).\n\
+         example: cargo run --release --features profile --example profile_iors"
     );
 }
 
@@ -51,8 +39,8 @@ mod inner {
         },
         BundledPESAT, Relation, ToPolySystem,
     };
-    use warp::traits::AccumulationScheme;
-    use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
+    use warp::accumulation::AccumulationScheme;
+    use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
     use warp::utils::fields::Goldilocks;
     use warp::utils::poseidon;
     use warp::WARP;

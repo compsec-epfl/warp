@@ -3,7 +3,7 @@ use ark_mt::MerkleHasher;
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Valid, Write};
 
 use crate::crypto::merkle::WarpProof;
-use crate::types::{AccumulatorInstance, AccumulatorWitness, WARPProof};
+use crate::warp::{AccumulatorInstance, AccumulatorWitness, WARPProof};
 
 // `AccumulatorInstance` and `WARPProof` carry generic associated types
 // (`H::Digest`, `WarpProof<H>`) whose serializability is not implied by

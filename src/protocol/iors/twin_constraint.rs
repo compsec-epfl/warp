@@ -48,11 +48,11 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::oracle::Oracle;
-use crate::protocol::iors::IOR;
+use crate::protocol::oracles::evaluation::Oracle;
+use crate::protocol::ior::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::relations::r1cs::R1CSConstraints;
-use crate::types::AccumulatorInstance;
+use crate::warp::AccumulatorInstance;
 use crate::utils::{
     concat_slices,
     poly::{eq_poly, eq_poly_non_binary},

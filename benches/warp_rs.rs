@@ -8,8 +8,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WARPConfig;
-use warp::traits::AccumulationScheme;
-use warp::types::WARPProverKey;
+use warp::accumulation::AccumulationScheme;
+use warp::warp::WARPProverKey;
 use warp::WARP;
 
 mod utils;
@@ -61,8 +61,8 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
                                 &mut prover_state,
                                 instances_witnesses.1.clone(),
                                 instances_witnesses.0.clone(),
-                                warp::types::AccumulatorInstance::empty(),
-                                warp::types::AccumulatorWitness::empty(),
+                                warp::warp::AccumulatorInstance::empty(),
+                                warp::warp::AccumulatorWitness::empty(),
                             )
                             .unwrap();
                     },

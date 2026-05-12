@@ -1,4 +1,4 @@
-pub mod oracle;
+pub mod ior;
 pub mod iors;
-pub mod query;
+pub mod oracles;
 pub mod transcript;

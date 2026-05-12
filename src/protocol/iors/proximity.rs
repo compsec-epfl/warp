@@ -26,9 +26,9 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::iors::oracle_handle::IndexedOracle;
-use crate::protocol::iors::IOR;
-use crate::protocol::query::QueryIndices;
+use crate::protocol::oracles::indexed_merkle::IndexedOracle;
+use crate::protocol::ior::IOR;
+use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
     pub queries: QueryIndices<F>,
@@ -48,16 +48,8 @@ where
     pub acc_td: &'a [WarpCommitted<H, F>],
 }
 
-/// Verifier-side inputs for Proximity.
-///
-/// The IOR verifier no longer sees roots / opening proofs / answer
-/// tables directly; it sees [`IndexedOracle`] handles and triggers
-/// their (lazy, memoized) BCS validation. IORs stay BCS-agnostic at
-/// the type level — the orchestrator picks the concrete handle type
-/// (today: [`oracle_handle::MerkleIndexedOracle`]).
-///
-/// Generic over `O: IndexedOracle<Vec<F>>` so dispatch is static; no
-/// trait objects.
+/// Verifier-side inputs. The IOR sees [`IndexedOracle`] handles, not
+/// raw roots / opening proofs — IORs stay BCS-agnostic.
 pub struct ProximityVerifierInputs<'a, F, O>
 where
     F: Field,
@@ -118,7 +110,7 @@ where
         = ProximityVerifierInputs<
             'b,
             F,
-            crate::protocol::iors::oracle_handle::MerkleIndexedOracle<'b, F, H>,
+            crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle<'b, F, H>,
         >
     where
         Self: 'b;

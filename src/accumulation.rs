@@ -3,7 +3,8 @@ use ark_mt::MerkleHasher;
 use spongefish::{ProverState, VerificationResult, VerifierState};
 
 use crate::error::{VerifierError, WARPError};
-use crate::types::{AccumulatorInstance, AccumulatorWitness, ProveResult, WARPProof};
+use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness};
+use crate::warp::proof::{ProveResult, WARPProof};
 
 pub trait AccumulationScheme<F: Field, H: MerkleHasher<Symbol = Vec<F>>> {
     type Index;
@@ -12,13 +13,11 @@ pub trait AccumulationScheme<F: Field, H: MerkleHasher<Symbol = Vec<F>>> {
     type Instances;
     type Witnesses;
 
-    // on given index, returns prover and verifier keys
     fn index(
         prover_state: &mut ProverState,
         index: Self::Index,
     ) -> VerificationResult<(Self::ProverKey, Self::VerifierKey)>;
 
-    // prove accumulation of instances and witnesses with previous accumulators `accs`
     fn prove(
         &self,
         pk: Self::ProverKey,

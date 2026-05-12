@@ -32,8 +32,8 @@ use warp::relations::{
     BundledPESAT, Relation, ToPolySystem,
 };
 use warp::serialize::acc_witness_size;
-use warp::traits::AccumulationScheme;
-use warp::types::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
+use warp::accumulation::AccumulationScheme;
+use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
 use warp::utils::poseidon;
 use warp::WARP;
 

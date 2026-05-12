@@ -45,9 +45,9 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted};
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::oracle::Oracle;
+use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::iors::twin_constraint::DeferredOracleCheck;
-use crate::protocol::iors::IOR;
+use crate::protocol::ior::IOR;
 use crate::relations::BundledPESAT;
 
 pub struct BridgeStatement<F: Field> {

@@ -25,8 +25,8 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::iors::IOR;
-use crate::protocol::query::QueryIndices;
+use crate::protocol::ior::IOR;
+use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct SampleQueriesStatement {
     pub log_n: usize,

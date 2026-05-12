@@ -2,7 +2,7 @@
 //!
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex`. This IOR is a thin
 //! composition of point queries on the committed oracle — see
-//! [`Oracle::query_at_point`](crate::protocol::oracle::Oracle::query_at_point).
+//! [`Oracle::query_at_point`](crate::protocol::oracles::evaluation::Oracle::query_at_point).
 //! The verifier derives the same random points from the transcript.
 //!
 //! IOR signature
@@ -25,8 +25,8 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::oracle::Oracle;
-use crate::protocol::iors::IOR;
+use crate::protocol::oracles::evaluation::Oracle;
+use crate::protocol::ior::IOR;
 
 pub struct OodStatement {
     pub s: usize,
