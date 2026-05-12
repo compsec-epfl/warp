@@ -33,9 +33,11 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         let inner = cs.into_inner().ok_or(WARPError::R1CSConstruction {
             reason: "constraint system has outstanding borrows",
         })?;
-        let all_matrices = inner.to_matrices().map_err(|_| WARPError::R1CSConstruction {
-            reason: "constraint system not finalized or matrices unavailable",
-        })?;
+        let all_matrices = inner
+            .to_matrices()
+            .map_err(|_| WARPError::R1CSConstruction {
+                reason: "constraint system not finalized or matrices unavailable",
+            })?;
         let r1cs_matrices =
             all_matrices
                 .get(R1CS_PREDICATE_LABEL)
