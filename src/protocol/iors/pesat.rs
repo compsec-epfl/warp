@@ -24,8 +24,8 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::crypto::merkle::{encode_codewords, warp_scheme, WarpCommitted};
-use crate::error::{ProverError, VerifierError};
-use crate::protocol::ior::IOR;
+use crate::error::VerifierError;
+use crate::protocol::ior::{ProverTriple, IOR};
 
 pub struct PesatStatement {
     pub l1: usize,
@@ -126,14 +126,7 @@ where
         statement: &Self::Statement<'b>,
         witness: &Self::Witness<'b>,
         _inputs: &Self::ProverInputs<'b>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         'a: 'b,
         H: 'b,

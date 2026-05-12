@@ -47,7 +47,7 @@ use crate::crypto::merkle::{warp_scheme, WarpCommitted};
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracles::evaluation::Oracle;
 use crate::protocol::iors::twin_constraint::DeferredOracleCheck;
-use crate::protocol::ior::IOR;
+use crate::protocol::ior::{ProverTriple, IOR};
 use crate::relations::BundledPESAT;
 
 pub struct BridgeStatement<F: Field> {
@@ -194,14 +194,7 @@ where
         statement: &Self::Statement<'a>,
         witness: &Self::Witness<'a>,
         inputs: &Self::ProverInputs<'a>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'a,
     {

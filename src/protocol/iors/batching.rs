@@ -36,9 +36,9 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::error::{ProverError, VerifierError};
+use crate::error::VerifierError;
 use crate::protocol::oracles::evaluation::Oracle;
-use crate::protocol::ior::IOR;
+use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
@@ -224,14 +224,7 @@ where
         statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'b,
         'a: 'b,

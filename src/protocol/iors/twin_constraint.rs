@@ -47,9 +47,9 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::error::{ProverError, VerifierError};
+use crate::error::VerifierError;
 use crate::protocol::oracles::evaluation::Oracle;
-use crate::protocol::ior::IOR;
+use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::warp::AccumulatorInstance;
@@ -370,14 +370,7 @@ where
         statement: &Self::Statement<'b>,
         witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'b,
         'a: 'b,

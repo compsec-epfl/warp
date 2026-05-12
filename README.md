@@ -1,13 +1,11 @@
 🌀 WARP 🌀
 
 Implementation repo for [WARP](https://eprint.iacr.org/2025/753) — an
-accumulation scheme over R1CS with code-based commitments.
+accumulation scheme with code-based commitments.
 
 ## Status
 
-Research artifact. Reproduces the protocol from the paper. Not packaged
-for crates.io (depends on git branches of `ark-vc`, `ark-codes`, and
-`effsc`).
+Ongoing research.
 
 ## Quick start
 
@@ -51,8 +49,26 @@ for batch in batches {
 warp.decide(acc_w, acc_x)?;
 ```
 
-`examples/profile_iors.rs` runs the full prover and prints a per-IOR
-wall-time breakdown when built with `--features profile`.
+## Picking `(s, t)` for a target security level
+
+The `warp-params` binary picks and validates soundness parameters per
+`docs/paper-mods/mod4_parameter_selection.tex`:
+
+```sh
+# Pick (s, t) for λ bits of security at a given code rate and field size.
+cargo run --release --bin warp-params -- select \
+    --lambda 128 --rate 1/2 --field-bits 64 --regime conjectured
+
+# Check that a specific (s, t) actually hits λ bits.
+cargo run --release --bin warp-params -- validate \
+    --s 8 --t 128 --lambda 128 --rate 1/2 --field-bits 64 --regime conjectured
+
+# Dump the attested presets as TSV.
+cargo run --release --bin warp-params -- table
+```
+
+`--regime` picks between `provable` and `conjectured` proximity bounds.
+Exit codes: 0 ok, 1 derivation failed / target not met, 2 bad args.
 
 ## Layout
 
@@ -63,15 +79,19 @@ wall-time breakdown when built with `--features profile`.
 - `src/protocol/transcript/` — transcript absorb / parse helpers
 - `src/accumulation.rs` — the `AccumulationScheme` trait
 - `src/relations/` — `R1CS`, `BundledPESAT`, `HashChainRelation`
+- `src/params/` — soundness-driven `(s, t)` selection backing `warp-params`
+- `src/bin/warp-params.rs` — CLI front-end for `src/params/`
 - `src/crypto/`, `src/utils/` — Merkle wrapper, field / poly helpers
 - `src/profile/` — opt-in tracing layer (gated behind the `profile` feature)
 - `tests/integration_warp.rs` — end-to-end on BLS12-381 and Goldilocks
 - `tests/verifier_negative.rs` — single-tamper rejection tests
 
-## Running tests / benches
+## Running tests / benches / profile
 
 ```sh
 cargo test --release
 cargo bench
+
+# Per-IOR wall-time breakdown of a prove run.
 cargo run --release --features profile --example profile_iors
 ```

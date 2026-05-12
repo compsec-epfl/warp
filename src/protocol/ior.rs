@@ -1,11 +1,15 @@
 //! The Interactive Oracle Reduction abstraction. Paired spec:
 //! `docs/paper-mods/mod1_oracle.tex`.
 
-#![allow(clippy::type_complexity)]
+
 
 use spongefish::{ProverState, VerifierState};
 
 use crate::error::{ProverError, VerifierError};
+
+/// Return type of [`IOR::prove_inner`] / [`IOR::prove`]:
+/// `Result<(stmt-like, proof-string, reduced-witness), _>`.
+pub type ProverTriple<A, P, W> = Result<(A, P, W), ProverError>;
 
 /// Interactive Oracle Reduction. `(stmt, wit, oracles_in) -> (stmt',
 /// oracles_out)`. Implementors write `prove_inner` / `verify_inner` /
@@ -48,14 +52,7 @@ pub trait IOR {
         statement: &Self::Statement<'a>,
         witness: &Self::Witness<'a>,
         inputs: &Self::ProverInputs<'a>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'a;
 
@@ -74,14 +71,7 @@ pub trait IOR {
         statement: &Self::Statement<'a>,
         witness: &Self::Witness<'a>,
         inputs: &Self::ProverInputs<'a>,
-    ) -> Result<
-        (
-            Self::ReducedStatement,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReducedStatement, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'a,
     {

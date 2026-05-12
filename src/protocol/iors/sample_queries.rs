@@ -24,8 +24,8 @@ use ark_ff::Field;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
-use crate::error::{ProverError, VerifierError};
-use crate::protocol::ior::IOR;
+use crate::error::VerifierError;
+use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct SampleQueriesStatement {
@@ -108,14 +108,7 @@ where
         statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         _inputs: &Self::ProverInputs<'b>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'b,
     {

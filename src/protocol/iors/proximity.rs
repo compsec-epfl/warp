@@ -25,9 +25,9 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
-use crate::error::{ProverError, VerifierError};
+use crate::error::VerifierError;
 use crate::protocol::oracles::indexed_merkle::IndexedOracle;
-use crate::protocol::ior::IOR;
+use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
@@ -144,14 +144,7 @@ where
         statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
-    ) -> Result<
-        (
-            Self::ReductionInputs,
-            Self::ProofString,
-            Self::ReducedWitness,
-        ),
-        ProverError,
-    >
+    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         Self: 'b,
         'a: 'b,
