@@ -11,14 +11,19 @@
 //! sumcheck, with the CBBZ23 / HyperPlonk sparse-evaluation optimization
 //! (`accumulate_sparse_evaluations`) folded in.
 //!
-//! IOR ports
-//! ---------
-//! - input (prover): `{ zeta_0, samples_flat, query_eval_points, oracle, s, t, log_n }`
-//! - input (verifier): `{ zeta_0, samples_flat, query_eval_points, nus, acc_mu, s, t, log_n }`
-//! - `reduced`: `{ alpha }` — same on both sides (verifier derives `alpha`
-//!   from the transcript)
-//! - `carry` (prover): `{ mu }` — the prover's reported `\hat f(α)`
-//! - verifier has no carry
+//! IOR signature
+//! -------------
+//! - `Statement`        — `(zetas_prefix, s, t, log_n)` — shared.
+//! - `Witness`          — `()`
+//! - `ProverInputs`     — `&Oracle<F>` (the committed oracle, full data)
+//! - `VerifierInputs`   — `(nus, acc_mu)` — used to compute `σ₂` and the
+//!   final-claim oracle check.
+//! - `ReductionInputs`  — `alpha` (the LSB sumcheck challenges); both sides
+//!   compute and feed it through `reduce_statement`.
+//! - `ReducedStatement` — `alpha` — the new code-eval point (LSB-indexed)
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — `mu` — the prover's reported `\hat f(α)`
+//! - `VerifierOutputs`  — `()`
 
 use ark_ff::{Field, PrimeField};
 use ark_std::log2;
@@ -32,7 +37,8 @@ use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
-use crate::protocol::iors::IOR;
+use crate::protocol::oracle::Oracle;
+use crate::protocol::phases::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
@@ -78,23 +84,24 @@ fn batched_constraint_poly<F: Field>(
     result
 }
 
-// ─── Statement helper ─────────────────────────────────────────────────────
+// ─── IOR signature types ──────────────────────────────────────────────────
 
-/// Internal layout of the `1 + s + t` evaluation points used by the
-/// batching sumcheck. Constructed inside `prove` / `verify` from the
-/// `(zeta_0, samples_flat, query_eval_points, s, t, log_n)` tuple — single
-/// source of truth so the two sides cannot drift.
-struct BatchingStatement<F: Field> {
+pub struct BatchingStatement<F: Field> {
     /// `1 + s + t` evaluation points: `[ζ_0, ood_j…, query_k…]`.
-    zetas_prefix: Vec<Vec<F>>,
-    s: usize,
-    t: usize,
-    log_n: usize,
+    pub zetas_prefix: Vec<Vec<F>>,
+    pub s: usize,
+    pub t: usize,
+    pub log_n: usize,
+    pub _phantom: std::marker::PhantomData<F>,
 }
 
 impl<F: Field> BatchingStatement<F> {
+    /// Single source of truth for the `zetas_prefix` shape — both the
+    /// prover and verifier orchestrators construct their `BatchingStatement`
+    /// through this. Drift between sides becomes structurally impossible.
+    ///
     /// Layout: `[ζ_0, ood_chunk_0, …, ood_chunk_{s-1}, query_0, …, query_{t-1}]`.
-    fn from_ior_outputs(
+    pub fn from_phase_outputs(
         zeta_0: Vec<F>,
         ood_samples_flat: &[F],
         query_eval_points: &[Vec<F>],
@@ -115,59 +122,36 @@ impl<F: Field> BatchingStatement<F> {
             s,
             t,
             log_n,
+            _phantom: std::marker::PhantomData,
         }
     }
 }
 
-// ─── Inputs ───────────────────────────────────────────────────────────────
-
-pub struct BatchingProverInput<'a, F: Field> {
-    pub zeta_0: &'a [F],
-    pub samples_flat: &'a [F],
-    pub query_eval_points: &'a [Vec<F>],
-    pub oracle: &'a crate::protocol::oracle::Oracle<F>,
-    pub s: usize,
-    pub t: usize,
-    pub log_n: usize,
+pub struct BatchingProverInputs<'a, F: Field> {
+    pub oracle: &'a Oracle<F>,
 }
 
-pub struct BatchingVerifierInput<'a, F: Field> {
-    pub zeta_0: &'a [F],
-    pub samples_flat: &'a [F],
-    pub query_eval_points: &'a [Vec<F>],
+pub struct BatchingVerifierInputs<F: Field> {
     /// `1 + s + t` ν values; used to compute `σ₂ = Σ ξ_eq · ν`.
     pub nus: Vec<F>,
     /// Multiplier on the final-claim oracle check.
     pub acc_mu: F,
-    pub s: usize,
-    pub t: usize,
-    pub log_n: usize,
 }
 
-// ─── Output ports ─────────────────────────────────────────────────────────
+pub struct BatchingReductionInputs<F: Field> {
+    /// LSB-indexed sumcheck challenge vector.
+    pub alpha: Vec<F>,
+}
 
-/// Public reduced claim — same on both sides.
-pub struct BatchingReduced<F: Field> {
+pub struct BatchingReducedStatement<F: Field> {
     /// New code-eval point (LSB-indexed).
     pub alpha: Vec<F>,
 }
 
-pub struct BatchingProverCarry<F: Field> {
+pub struct BatchingReducedWitness<F: Field> {
     /// `\hat f(α)` — prover's report.
     pub mu: F,
 }
-
-pub struct BatchingProverOutput<F: Field> {
-    pub reduced: BatchingReduced<F>,
-    pub carry: BatchingProverCarry<F>,
-}
-
-pub struct BatchingVerifierOutput<F: Field> {
-    pub reduced: BatchingReduced<F>,
-    pub carry: (),
-}
-
-// ─── IOR ──────────────────────────────────────────────────────────────────
 
 /// Batching phase configuration.
 pub struct Batching<'a, F: Field> {
@@ -192,47 +176,63 @@ impl<'a, F> IOR for Batching<'a, F>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
-    const NAME: &'static str = "Batching";
+    type Statement = BatchingStatement<F>;
+    type Witness<'b>
+        = ()
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = BatchingProverInputs<'b, F>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = BatchingVerifierInputs<F>
+    where
+        Self: 'b;
+    type ReductionInputs = BatchingReductionInputs<F>;
+    type ReducedStatement = BatchingReducedStatement<F>;
+    type ProofString = ();
+    type ReducedWitness = BatchingReducedWitness<F>;
+    type VerifierOutputs = ();
 
-    type ProverInput<'b>
-        = BatchingProverInput<'b, F>
-    where
-        Self: 'b;
-    type ProverOutput = BatchingProverOutput<F>;
-    type VerifierInput<'b>
-        = BatchingVerifierInput<'b, F>
-    where
-        Self: 'b;
-    type VerifierOutput = BatchingVerifierOutput<F>;
+    fn reduce_statement(
+        &self,
+        _statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        BatchingReducedStatement {
+            alpha: inputs.alpha.clone(),
+        }
+    }
 
     #[tracing::instrument(
         name = "batching",
         skip_all,
-        fields(s = input.s, t = input.t, log_n = input.log_n)
+        fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn prove<'b>(
+    fn prove_inner<'b>(
         &self,
-        transcript: &mut ProverState,
-        input: Self::ProverInput<'b>,
-    ) -> Result<Self::ProverOutput, ProverError>
+        prover_state: &mut ProverState,
+        statement: &Self::Statement,
+        _witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    >
     where
-        Self: 'b,
+        'a: 'b,
     {
-        let statement = BatchingStatement::from_ior_outputs(
-            input.zeta_0.to_vec(),
-            input.samples_flat,
-            input.query_eval_points,
-            input.s,
-            input.t,
-            input.log_n,
-        );
-
-        let n = input.oracle.len();
+        let n = inputs.oracle.len();
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);
 
-        let xis = transcript.verifier_messages_vec::<F>(log_r);
+        let xis = prover_state.verifier_messages_vec::<F>(log_r);
 
         let (xi_eq_evals, ood_evals_vec) = {
             let _s = tracing::info_span!("batching.eq_evals").entered();
@@ -258,67 +258,60 @@ where
             let log_n_bits = ark_std::log2(n) as u64;
             count_ops!(BatchingRounds, log_n_bits);
             let mut ip = InnerProductProver::new(
-                input.oracle.evals().to_vec(),
+                inputs.oracle.evals().to_vec(),
                 batched_constraint_poly(&ood_evals_vec, &id_non_0_eval_sums),
             );
             let mut challenges =
-                sumcheck(&mut ip, log_n_bits as usize, transcript, noop_hook).challenges;
+                sumcheck(&mut ip, log_n_bits as usize, prover_state, noop_hook).challenges;
             challenges.reverse();
             challenges
         };
 
-        let mu = input.oracle.query_at_point(&alpha);
+        let mu = inputs.oracle.query_at_point(&alpha);
 
-        Ok(BatchingProverOutput {
-            reduced: BatchingReduced {
+        Ok((
+            BatchingReductionInputs {
                 alpha: alpha.clone(),
             },
-            carry: BatchingProverCarry { mu },
-        })
+            (),
+            BatchingReducedWitness { mu },
+        ))
     }
 
     #[tracing::instrument(
         name = "batching.verify",
         skip_all,
-        fields(s = input.s, t = input.t, log_n = input.log_n)
+        fields(s = statement.s, t = statement.t, log_n = statement.log_n)
     )]
-    fn verify<'b, 'v>(
+    fn verify_inner<'b, 'c>(
         &self,
-        transcript: &mut VerifierState<'v>,
-        input: Self::VerifierInput<'b>,
-    ) -> Result<Self::VerifierOutput, VerifierError>
+        verifier_state: &mut VerifierState<'b>,
+        statement: &Self::Statement,
+        inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
-        Self: 'b,
+        'a: 'c,
     {
-        let statement = BatchingStatement::from_ior_outputs(
-            input.zeta_0.to_vec(),
-            input.samples_flat,
-            input.query_eval_points,
-            input.s,
-            input.t,
-            input.log_n,
-        );
-
         let r = 1 + statement.s + statement.t;
         let log_r = log2(r) as usize;
         debug_assert_eq!(statement.zetas_prefix.len(), r);
-        debug_assert_eq!(input.nus.len(), r);
+        debug_assert_eq!(inputs.nus.len(), r);
 
         // Squeeze ξ matching the prover.
         let xis: Vec<F> = (0..log_r)
-            .map(|_| transcript.verifier_message::<F>())
+            .map(|_| verifier_state.verifier_message::<F>())
             .collect();
         let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<F>>();
 
         // σ₂ = Σ ξ_eq · ν.
         let sigma_2 = xi_eq_evals
             .iter()
-            .zip(&input.nus)
+            .zip(&inputs.nus)
             .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
 
         // Run sumcheck_verify and check the final-claim oracle check.
         let res = {
-            let mut wrap = EffscVerifierTranscript(transcript);
+            let mut wrap = EffscVerifierTranscript(verifier_state);
             sumcheck_verify(sigma_2, 2, statement.log_n, &mut wrap, |_, _| Ok(()))?
         };
         let alpha_lsb: Vec<F> = res.challenges.iter().rev().copied().collect();
@@ -327,18 +320,13 @@ where
         for zeta in &statement.zetas_prefix {
             zeta_eqs.push(eq_poly_non_binary(zeta, &alpha_lsb));
         }
-        let expected = input.acc_mu
+        let expected = inputs.acc_mu
             * zeta_eqs
                 .into_iter()
                 .zip(&xi_eq_evals)
                 .fold(F::zero(), |acc, (a, b)| acc + a * *b);
-        (expected == res.final_claim)
-            .then_some(())
-            .ok_or(VerifierError::Target)?;
+        (expected == res.final_claim).then_some(()).ok_or(VerifierError::Target)?;
 
-        Ok(BatchingVerifierOutput {
-            reduced: BatchingReduced { alpha: alpha_lsb },
-            carry: (),
-        })
+        Ok((BatchingReductionInputs { alpha: alpha_lsb }, ()))
     }
 }

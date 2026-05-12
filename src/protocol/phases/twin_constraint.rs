@@ -17,23 +17,19 @@
 //!
 //! Each round's round polynomial has the form `h(X) = (f(X) + ω·p(X))·t(X)`.
 //!
-//! IOR ports
-//! ---------
-//! - input (prover): `{ acc_instance, l1_mus, l1_taus, witnesses,
-//!   instances, acc_witness_w, fresh_codewords, acc_codewords,
-//!   log_l, log_m, log_n }`
-//! - input (verifier): `{ parsed_acc, l1_mus, l1_taus, log_l, log_m, log_n }`
-//! - `reduced`: `{ gamma, zeta_0, beta_tau, deferred }` — same on both
-//!   sides; ζ₀ and β_τ are computed from γ via [`compute_reduced`],
-//!   the single source of truth shared by `prove` and `verify`.
-//! - `carry` (prover): `{ f, z }` — new reduced codeword oracle and the
-//!   reduced witness vector `z = (x, w)`, consumed by η evaluation.
-//! - `carry` (verifier): none — the verifier has no oracle data to carry.
-//!
-//! The deferred oracle check `final_claim ≟ eq(τ, γ) · (ν₀ + ω·η)` cannot
-//! complete inside `verify` because ν₀ and η arrive on the transcript
-//! *after* the sumcheck rounds. The obligation is exposed as
-//! [`DeferredOracleCheck`] inside `reduced` and discharged by Bridge.
+//! IOR signature
+//! -------------
+//! - `Statement`        — accumulator instance + `l1_mus` + dimensions
+//! - `Witness`          — fresh witnesses + accumulator witness halves + R1CS
+//! - `ProverInputs`     — full codewords (from PESAT) + accumulated codewords
+//! - `VerifierInputs`   — `()` — the deferred oracle check (final\_claim ≟ eq(τ,γ)·(ν₀+ω·η))
+//!   runs in the orchestrator after ν₀ and η arrive on the transcript
+//! - `ReductionInputs`  — `(ω, τ, γ, final_claim)` — both sides feed these into
+//!   `reduce_statement`, which computes ζ₀ / β_τ via `scale_and_sum` (single source of truth).
+//! - `ReducedStatement` — sumcheck challenges γ + unchecked final_claim + ω, τ + new α (ζ₀) + new β_τ
+//! - `ProofString`      — `()`
+//! - `ReducedWitness`   — the new reduced oracle `f` + the reduced witness vector `z`
+//! - `VerifierOutputs`  — `()` (the new commitment is read from the transcript by the orchestrator)
 
 use ark_ff::{Field, PrimeField};
 use ark_mt::MerkleHasher;
@@ -53,7 +49,7 @@ use std::marker::PhantomData;
 use crate::count_ops;
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::oracle::Oracle;
-use crate::protocol::iors::IOR;
+use crate::protocol::phases::IOR;
 use crate::protocol::transcript::EffscVerifierTranscript;
 use crate::relations::r1cs::R1CSConstraints;
 use crate::types::AccumulatorInstance;
@@ -186,32 +182,29 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
     }
 }
 
-// ─── Inputs ───────────────────────────────────────────────────────────────
+// ─── IOR signature types ──────────────────────────────────────────────────
 
-pub struct TwinConstraintProverInput<'a, F: Field, H: MerkleHasher> {
+pub struct TwinConstraintStatement<F: Field, H: MerkleHasher> {
     pub acc_instance: AccumulatorInstance<F, H>,
-    pub l1_mus: &'a [F],
-    pub l1_taus: &'a [Vec<F>],
-    pub witnesses: &'a [Vec<F>],
-    pub instances: &'a [Vec<F>],
+    pub l1_mus: Vec<F>,
+    pub l1_taus: Vec<Vec<F>>,
+    pub log_l: usize,
+    pub log_m: usize,
+    pub log_n: usize,
+}
+
+pub struct TwinConstraintWitness<'a, F: Field> {
     pub acc_witness_w: &'a [Vec<F>],
+    pub instances: &'a [Vec<F>],
+    pub witnesses: &'a [Vec<F>],
+}
+
+pub struct TwinConstraintProverInputs<'a, F: Field> {
+    /// Fresh codewords emitted by PESAT.
     pub fresh_codewords: &'a [Vec<F>],
+    /// Accumulated codewords (from the accumulator witness).
     pub acc_codewords: &'a [Vec<F>],
-    pub log_l: usize,
-    pub log_m: usize,
-    pub log_n: usize,
 }
-
-pub struct TwinConstraintVerifierInput<'a, F: Field, H: MerkleHasher> {
-    pub parsed_acc: AccumulatorInstance<F, H>,
-    pub l1_mus: &'a [F],
-    pub l1_taus: &'a [Vec<F>],
-    pub log_l: usize,
-    pub log_m: usize,
-    pub log_n: usize,
-}
-
-// ─── Output ports ─────────────────────────────────────────────────────────
 
 /// A typed "you owe me a check" handle.
 ///
@@ -220,8 +213,7 @@ pub struct TwinConstraintVerifierInput<'a, F: Field, H: MerkleHasher> {
 /// completed inside `TwinConstraint::verify` because ν₀ and η arrive on the
 /// transcript *after* the sumcheck rounds. Rather than splitting
 /// TwinConstraint into two IORs (which cascades into other phases having
-/// similar shapes), we expose the obligation as a typed value carried in
-/// `reduced`.
+/// similar shapes), we expose the obligation as a typed value.
 ///
 /// Discharge by calling [`Self::discharge`] with the missing inputs once the
 /// orchestrator has read them from the transcript.
@@ -239,16 +231,15 @@ impl<F: Field> DeferredOracleCheck<F> {
     /// Discharge the deferred check.
     ///
     /// Returns `Ok(())` iff `eq(τ, γ) · (ν₀ + ω·η) == claim`. `γ` arrives via
-    /// the parent [`TwinConstraintReduced`]; `ν₀, η` come from the transcript
-    /// segment immediately following the TwinConstraint sumcheck.
+    /// the parent `TwinConstraintReducedStatement`; `ν₀, η` come from the
+    /// transcript segment immediately following the TwinConstraint sumcheck.
     pub fn discharge(&self, gamma: &[F], nu_0: F, eta: F) -> Result<(), VerifierError> {
         let expected = eq_poly_non_binary(&self.tau, gamma) * (nu_0 + self.omega * eta);
         (expected == self.claim).then_some(()).ok_or(VerifierError::Target)
     }
 }
 
-/// Public reduced claim — same on both sides.
-pub struct TwinConstraintReduced<F: Field> {
+pub struct TwinConstraintReducedStatement<F: Field> {
     /// Sumcheck challenge vector (LSB-indexed).
     pub gamma: Vec<F>,
     /// New code-evaluation point (becomes the new accumulator's α).
@@ -261,69 +252,26 @@ pub struct TwinConstraintReduced<F: Field> {
     pub deferred: DeferredOracleCheck<F>,
 }
 
-pub struct TwinConstraintProverCarry<F: Field> {
+/// Inputs to [`TwinConstraint::reduce_statement`]. Both prover and
+/// verifier produce this struct from their respective machinery and feed
+/// it into the shared reduction. Drift between the two sides is
+/// structurally impossible because ζ₀ / β_τ are computed in exactly one
+/// place — `reduce_statement` — using `scale_and_sum`.
+pub struct TwinConstraintReductionInputs<F: Field> {
+    pub omega: F,
+    pub tau: Vec<F>,
+    /// Sumcheck challenge vector (LSB-indexed).
+    pub gamma: Vec<F>,
+    /// Sumcheck final value (the unchecked claim).
+    pub final_claim: F,
+}
+
+pub struct TwinConstraintReducedWitness<F: Field> {
     /// New reduced codeword oracle.
     pub f: Oracle<F>,
     /// Reduced witness vector `z = (x, w)` — consumed by η evaluation.
     pub z: Vec<F>,
 }
-
-pub struct TwinConstraintProverOutput<F: Field> {
-    pub reduced: TwinConstraintReduced<F>,
-    pub carry: TwinConstraintProverCarry<F>,
-}
-
-pub struct TwinConstraintVerifierOutput<F: Field> {
-    pub reduced: TwinConstraintReduced<F>,
-    pub carry: (),
-}
-
-// ─── Private reduction helper ─────────────────────────────────────────────
-
-/// Single source of truth for ζ₀ / β_τ. Both prover and verifier land
-/// here with `(ω, τ, γ, final_claim)` together with the public statement
-/// pieces; the new accumulator state is computed identically on both
-/// sides.
-fn compute_reduced<F: Field, H: MerkleHasher>(
-    omega: F,
-    tau: Vec<F>,
-    gamma: Vec<F>,
-    final_claim: F,
-    acc_instance: &AccumulatorInstance<F, H>,
-    l1_taus: &[Vec<F>],
-    l1: usize,
-    log_l: usize,
-    log_n: usize,
-) -> TwinConstraintReduced<F> {
-    let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma);
-
-    let alpha_vecs = concat_slices(&acc_instance.alpha, &vec![vec![F::zero(); log_n]; l1]);
-    let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
-
-    // β τ-vectors: accumulated taus first (length l2), then PESAT taus
-    // (length l1). The τ component of the new β = Σ γ_eq(i) · β_i.
-    let beta_taus: Vec<Vec<F>> = acc_instance
-        .beta
-        .0
-        .iter()
-        .cloned()
-        .chain(l1_taus.iter().cloned())
-        .collect();
-    let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
-
-    TwinConstraintReduced {
-        gamma,
-        zeta_0,
-        beta_tau,
-        deferred: DeferredOracleCheck {
-            omega,
-            tau,
-            claim: final_claim,
-        },
-    }
-}
-
-// ─── IOR ──────────────────────────────────────────────────────────────────
 
 /// TwinConstraint phase configuration.
 pub struct TwinConstraint<'a, F, H>
@@ -340,40 +288,100 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     H: MerkleHasher,
 {
-    const NAME: &'static str = "TwinConstraint";
+    type Statement = TwinConstraintStatement<F, H>;
+    type Witness<'b>
+        = TwinConstraintWitness<'b, F>
+    where
+        Self: 'b;
+    type ProverInputs<'b>
+        = TwinConstraintProverInputs<'b, F>
+    where
+        Self: 'b;
+    type VerifierInputs<'b>
+        = ()
+    where
+        Self: 'b;
+    type ReductionInputs = TwinConstraintReductionInputs<F>;
+    type ReducedStatement = TwinConstraintReducedStatement<F>;
+    type ProofString = ();
+    type ReducedWitness = TwinConstraintReducedWitness<F>;
+    type VerifierOutputs = ();
 
-    type ProverInput<'b>
-        = TwinConstraintProverInput<'b, F, H>
-    where
-        Self: 'b;
-    type ProverOutput = TwinConstraintProverOutput<F>;
-    type VerifierInput<'b>
-        = TwinConstraintVerifierInput<'b, F, H>
-    where
-        Self: 'b;
-    type VerifierOutput = TwinConstraintVerifierOutput<F>;
+    /// Single source of truth for ζ₀ / β_τ. Both prover and verifier
+    /// land here with `(ω, τ, γ, final_claim)`; the new accumulator
+    /// state is computed identically on both sides.
+    fn reduce_statement(
+        &self,
+        statement: &Self::Statement,
+        inputs: &Self::ReductionInputs,
+    ) -> Self::ReducedStatement {
+        let log_l = statement.log_l;
+        let log_n = statement.log_n;
+        let l1 = statement.l1_mus.len();
+
+        let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &inputs.gamma);
+
+        let alpha_vecs = concat_slices(
+            &statement.acc_instance.alpha,
+            &vec![vec![F::zero(); log_n]; l1],
+        );
+        let zeta_0 = scale_and_sum(&alpha_vecs, &gamma_eq_evals);
+
+        // β τ-vectors: accumulated taus first (length l2), then PESAT taus
+        // (length l1). The τ component of the new β = Σ γ_eq(i) · β_i.
+        let beta_taus: Vec<Vec<F>> = statement
+            .acc_instance
+            .beta
+            .0
+            .iter()
+            .cloned()
+            .chain(statement.l1_taus.iter().cloned())
+            .collect();
+        let beta_tau = scale_and_sum(&beta_taus, &gamma_eq_evals);
+
+        TwinConstraintReducedStatement {
+            gamma: inputs.gamma.clone(),
+            zeta_0,
+            beta_tau,
+            deferred: DeferredOracleCheck {
+                omega: inputs.omega,
+                tau: inputs.tau.clone(),
+                claim: inputs.final_claim,
+            },
+        }
+    }
 
     #[tracing::instrument(
         name = "twin_constraint",
         skip_all,
-        fields(log_l = input.log_l, log_m = input.log_m, log_n = input.log_n)
+        fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn prove<'b>(
+    fn prove_inner<'b>(
         &self,
-        transcript: &mut ProverState,
-        input: Self::ProverInput<'b>,
-    ) -> Result<Self::ProverOutput, ProverError>
+        prover_state: &mut ProverState,
+        statement: &Self::Statement,
+        witness: &Self::Witness<'b>,
+        inputs: &Self::ProverInputs<'b>,
+    ) -> Result<
+        (
+            Self::ReductionInputs,
+            Self::ProofString,
+            Self::ReducedWitness,
+        ),
+        ProverError,
+    >
     where
-        Self: 'b,
+        'a: 'b,
+        H: 'b,
     {
-        let l1 = input.fresh_codewords.len();
-        let log_l = input.log_l;
-        let log_m = input.log_m;
-        let log_n = input.log_n;
+        let l1 = inputs.fresh_codewords.len();
+        let log_l = statement.log_l;
+        let log_m = statement.log_m;
+        let log_n = statement.log_n;
 
         // a. zero-check randomness
-        let omega: F = transcript.verifier_message();
-        let tau = transcript.verifier_messages_vec::<F>(log_l);
+        let omega: F = prover_state.verifier_message();
+        let tau = prover_state.verifier_messages_vec::<F>(log_l);
 
         // b. assemble sumcheck tables
         let tau_eq_evals = Ascending::new(log_l)
@@ -381,35 +389,35 @@ where
             .collect::<Vec<F>>();
 
         let alpha_vecs = concat_slices(
-            &input.acc_instance.alpha,
+            &statement.acc_instance.alpha,
             &vec![vec![F::zero(); log_n]; l1],
         );
 
-        let z_vecs: Vec<Vec<F>> = input
+        let z_vecs: Vec<Vec<F>> = statement
             .acc_instance
             .beta
             .1
             .iter()
-            .zip(input.acc_witness_w)
-            .chain(input.instances.iter().zip(input.witnesses))
+            .zip(witness.acc_witness_w)
+            .chain(witness.instances.iter().zip(witness.witnesses))
             .map(|(x, w)| concat_slices(x, w))
             .collect();
 
         // β tables: accumulated β-τs first, then PESAT τs.
-        let beta_vecs: Vec<Vec<F>> = input
+        let beta_vecs: Vec<Vec<F>> = statement
             .acc_instance
             .beta
             .0
             .iter()
             .cloned()
-            .chain(input.l1_taus.iter().cloned())
+            .chain(statement.l1_taus.iter().cloned())
             .collect();
 
         let tablewise = vec![
-            concat_slices(input.acc_codewords, input.fresh_codewords), // u
-            z_vecs,                                                    // z
-            alpha_vecs,                                                // a
-            beta_vecs,                                                 // b
+            concat_slices(inputs.acc_codewords, inputs.fresh_codewords), // u
+            z_vecs,                                                      // z
+            alpha_vecs,                                                  // a
+            beta_vecs,                                                   // b
         ];
         let pw = vec![tau_eq_evals]; // tau
 
@@ -425,76 +433,71 @@ where
         let proof = {
             let _s = tracing::info_span!("twin_constraint.sumcheck").entered();
             count_ops!(TwinConstraintRounds, log_l as u64);
-            sumcheck(&mut cc, log_l, transcript, noop_hook)
+            sumcheck(&mut cc, log_l, prover_state, noop_hook)
         };
         debug_assert_eq!(proof.challenges.len(), log_l);
 
         // d. pull only the reduced *witness* halves out of CC. ζ₀ and β_τ
-        // are NOT pulled here — `compute_reduced` recomputes them from
-        // (input, γ) via `scale_and_sum`, which is the single source of
-        // truth that both prover and verifier go through.
-        let reduced_tables = cc.tablewise();
-        debug_assert!(reduced_tables.iter().all(|t| t.len() == 1));
-        let f = reduced_tables[0][0].clone();
-        let z = reduced_tables[1][0].clone();
+        // are NOT pulled here — `reduce_statement` recomputes them from
+        // (statement, γ) via `scale_and_sum`, which is the single source
+        // of truth that both prover and verifier go through.
+        let reduced = cc.tablewise();
+        debug_assert!(reduced.iter().all(|t| t.len() == 1));
+        let f = reduced[0][0].clone();
+        let z = reduced[1][0].clone();
 
-        let reduced = compute_reduced::<F, H>(
-            omega,
-            tau,
-            proof.challenges,
-            proof.final_value,
-            &input.acc_instance,
-            input.l1_taus,
-            l1,
-            log_l,
-            log_n,
-        );
-
-        Ok(TwinConstraintProverOutput {
-            reduced,
-            carry: TwinConstraintProverCarry {
+        Ok((
+            TwinConstraintReductionInputs {
+                omega,
+                tau,
+                gamma: proof.challenges,
+                final_claim: proof.final_value,
+            },
+            (),
+            TwinConstraintReducedWitness {
                 f: Oracle::from_evals(f),
                 z,
             },
-        })
+        ))
     }
 
     #[tracing::instrument(
         name = "twin_constraint.verify",
         skip_all,
-        fields(log_l = input.log_l, log_m = input.log_m, log_n = input.log_n)
+        fields(log_l = statement.log_l, log_m = statement.log_m, log_n = statement.log_n)
     )]
-    fn verify<'b, 'v>(
+    fn verify_inner<'b, 'c>(
         &self,
-        transcript: &mut VerifierState<'v>,
-        input: Self::VerifierInput<'b>,
-    ) -> Result<Self::VerifierOutput, VerifierError>
+        verifier_state: &mut VerifierState<'b>,
+        statement: &Self::Statement,
+        _inputs: &Self::VerifierInputs<'c>,
+    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
-        Self: 'b,
+        'a: 'c,
+        H: 'c,
     {
-        let log_l = input.log_l;
-        let log_m = input.log_m;
-        let log_n = input.log_n;
-        let l1 = input.l1_mus.len();
+        let log_l = statement.log_l;
+        let log_n = statement.log_n;
+        let l1 = statement.l1_mus.len();
 
         // Squeeze ω, τ matching the prover.
-        let omega: F = transcript.verifier_message();
+        let omega: F = verifier_state.verifier_message();
         let tau: Vec<F> = (0..log_l)
-            .map(|_| transcript.verifier_message::<F>())
+            .map(|_| verifier_state.verifier_message::<F>())
             .collect();
 
         // Compute σ₁ = Σ_i τ_eq(i) · (μ_i + ω · η_i).
         let tau_eq_evals = compute_hypercube_eq_evals(log_l, &tau);
-        let etas_l2_first = concat_slices(&input.parsed_acc.eta, &vec![F::zero(); l1]);
+        let etas_l2_first = concat_slices(&statement.acc_instance.eta, &vec![F::zero(); l1]);
         let sigma_1 = tau_eq_evals
             .into_iter()
             .zip(
-                input
-                    .parsed_acc
+                statement
+                    .acc_instance
                     .mu
                     .iter()
                     .copied()
-                    .chain(input.l1_mus.iter().copied())
+                    .chain(statement.l1_mus.iter().copied())
                     .zip(etas_l2_first),
             )
             .fold(F::zero(), |acc, (eq_tau, (mu, eta))| {
@@ -505,25 +508,21 @@ where
         //   final_claim == eq(τ, γ) · (ν₀ + ω · η)
         // is left to the orchestrator because ν₀ and η arrive on the
         // transcript AFTER the sumcheck rounds.
-        let tc_degree = 1 + (log_n + 1).max(log_m + 2);
+        let tc_degree = 1 + (log_n + 1).max(statement.log_m + 2);
         let (gamma, final_claim) = {
-            let mut wrap = EffscVerifierTranscript(transcript);
+            let mut wrap = EffscVerifierTranscript(verifier_state);
             let res = sumcheck_verify(sigma_1, tc_degree, log_l, &mut wrap, |_, _| Ok(()))?;
             (res.challenges, res.final_claim)
         };
 
-        let reduced = compute_reduced::<F, H>(
-            omega,
-            tau,
-            gamma,
-            final_claim,
-            &input.parsed_acc,
-            input.l1_taus,
-            l1,
-            log_l,
-            log_n,
-        );
-
-        Ok(TwinConstraintVerifierOutput { reduced, carry: () })
+        Ok((
+            TwinConstraintReductionInputs {
+                omega,
+                tau,
+                gamma,
+                final_claim,
+            },
+            (),
+        ))
     }
 }
