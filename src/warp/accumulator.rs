@@ -1,7 +1,7 @@
 use ark_ff::Field;
 use ark_vc::mvc::MultiVectorCommitment;
 
-use crate::crypto::merkle::CommittedCodewords;
+use crate::crypto::vc::CommittedCodewords;
 
 /// Per-instance β coordinates absorbed into the accumulator: the `(τ, x)`
 /// twin pair. Replaces the old parallel-`Vec` tuple shape which let callers

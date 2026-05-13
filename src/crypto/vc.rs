@@ -3,8 +3,8 @@
 //! Protocol code is generic over `ark_vc::mvc::MultiVectorCommitment`.
 //! This module's only job is the [`CommittedCodewords`] helper that
 //! pairs `(Commitment, CommitmentState)` from the trait with the
-//! original column-codewords — the trait's `State` exposes leaves as
-//! row-tuples, but warp threads codewords back for proximity opens
+//! original column-codewords — `V::CommitmentState` is opaque per the
+//! trait, so warp keeps codewords beside it for the proximity opens
 //! and the decider's recompute check.
 
 use ark_ff::Field;

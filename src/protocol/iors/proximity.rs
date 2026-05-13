@@ -12,10 +12,10 @@ use spongefish::{Encoding, NargDeserialize, NargSerialize, ProverState, Verifier
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::CommittedCodewords;
+use crate::crypto::vc::CommittedCodewords;
 use crate::error::VerifierError;
 use crate::protocol::ior::{ProverTriple, IOR};
-use crate::protocol::oracles::indexed_merkle::IndexedOracle;
+use crate::protocol::oracles::indexed::IndexedOracle;
 use crate::protocol::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
@@ -89,8 +89,7 @@ where
     where
         Self: 'b;
     type VerifierInputs<'b>
-        =
-        ProximityVerifierInputs<'b, F, crate::protocol::oracles::indexed_merkle::ValidatedOracle<F>>
+        = ProximityVerifierInputs<'b, F, crate::protocol::oracles::indexed::ValidatedOracle<F>>
     where
         Self: 'b;
     type ReductionInputs = ();

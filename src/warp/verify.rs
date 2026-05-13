@@ -18,7 +18,7 @@ use crate::protocol::iors::{
     sample_queries::{SampleQueries, SampleQueriesReducedStatement, SampleQueriesStatement},
     twin_constraint::{TwinConstraint, TwinConstraintReducedStatement, TwinConstraintStatement},
 };
-use crate::protocol::oracles::indexed_merkle::ValidatedOracle;
+use crate::protocol::oracles::indexed::ValidatedOracle;
 use crate::protocol::transcript::parse_statement;
 use crate::relations::PolyPredicate;
 use crate::utils::{concat_slices, scale_and_sum};

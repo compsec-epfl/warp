@@ -12,7 +12,7 @@ use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::CommittedCodewords;
+use crate::crypto::vc::CommittedCodewords;
 use crate::error::VerifierError;
 use crate::protocol::ior::{ProverTriple, IOR};
 
