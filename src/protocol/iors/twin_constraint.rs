@@ -3,8 +3,8 @@
 //! Paired spec: `docs/paper-mods/mod1_oracle.tex`.
 
 use ark_ff::{Field, PrimeField};
-use ark_mt::MerkleHasher;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+use ark_vc::mvc::MultiVectorCommitment;
 use effsc::{
     coefficient_sumcheck::RoundPolyEvaluator,
     folding::protogalaxy,
@@ -153,8 +153,12 @@ impl<'a, F: Field> RoundPolyEvaluator<F> for TwinConstraintEvaluator<'a, F> {
     }
 }
 
-pub struct TwinConstraintStatement<F: Field, H: MerkleHasher> {
-    pub acc_instance: AccumulatorInstance<F, H>,
+pub struct TwinConstraintStatement<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub acc_instance: AccumulatorInstance<F, V>,
     pub l1_mus_codeword_first_coords: Vec<F>,
     pub l1_taus_zero_check_challenges: Vec<Vec<F>>,
     pub log_l: usize,
@@ -236,24 +240,24 @@ pub struct TwinConstraintReducedWitness<F: Field> {
     pub z_witness_assignment: Vec<F>,
 }
 
-pub struct TwinConstraint<'a, F, H>
+pub struct TwinConstraint<'a, F, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    H: MerkleHasher,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub r1cs: &'a R1CSConstraints<F>,
-    pub _phantom: PhantomData<H>,
+    pub _phantom: PhantomData<V>,
 }
 
-impl<'a, F, H> IOR for TwinConstraint<'a, F, H>
+impl<'a, F, V> IOR for TwinConstraint<'a, F, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-    H: MerkleHasher,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     const NAME: &'static str = "TwinConstraint";
 
     type Statement<'b>
-        = TwinConstraintStatement<F, H>
+        = TwinConstraintStatement<F, V>
     where
         Self: 'b;
     type Witness<'b>
@@ -335,7 +339,7 @@ where
     where
         Self: 'b,
         'a: 'b,
-        H: 'b,
+        V: 'b,
     {
         let l1 = inputs.fresh_codewords.len();
         let log_l = statement.log_l;
@@ -449,7 +453,7 @@ where
     where
         Self: 'c,
         'a: 'c,
-        H: 'c,
+        V: 'c,
     {
         let log_l = statement.log_l;
         let log_n = statement.log_n;

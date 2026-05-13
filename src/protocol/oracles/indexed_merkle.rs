@@ -1,12 +1,12 @@
-//! Partial-function view of a Merkle-committed indexed oracle:
-//! `query(i)` returns `Some(value)` iff the opening at `i` validates.
-
-use std::cell::OnceCell;
+//! Pre-validated lookup view of an opened indexed oracle.
+//!
+//! With the trait migration, opening proofs live in the spongefish
+//! transcript and `V::check_multiple` consumes them at a specific
+//! point in the transcript. The orchestrator validates upstream and
+//! hands IORs a `ValidatedOracle` — a sorted (index, value) table the
+//! IOR queries without re-running the BCS check.
 
 use ark_ff::Field;
-use ark_mt::{multi_vector::MultiVectorOpening, MerkleHasher};
-
-use crate::crypto::merkle::{WarpProof, WarpScheme};
 
 pub trait IndexedOracle<A> {
     fn query(&self, i: usize) -> Option<A>;
@@ -15,68 +15,27 @@ pub trait IndexedOracle<A> {
     }
 }
 
-pub struct MerkleIndexedOracle<'a, F, H>
-where
-    F: Field + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    pub scheme: WarpScheme<H, F>,
-    pub root: &'a H::Digest,
-    pub proof: &'a WarpProof<H>,
+pub struct ValidatedOracle<F: Field> {
     pub sorted_indices: Vec<usize>,
     pub values_by_index: Vec<Vec<F>>,
-    validated: OnceCell<bool>,
 }
 
-impl<'a, F, H> MerkleIndexedOracle<'a, F, H>
-where
-    F: Field + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
-    pub fn new(
-        scheme: WarpScheme<H, F>,
-        root: &'a H::Digest,
-        proof: &'a WarpProof<H>,
-        sorted_indices: Vec<usize>,
-        values_by_index: Vec<Vec<F>>,
-    ) -> Self {
+impl<F: Field> ValidatedOracle<F> {
+    pub fn new(sorted_indices: Vec<usize>, values_by_index: Vec<Vec<F>>) -> Self {
         Self {
-            scheme,
-            root,
-            proof,
             sorted_indices,
             values_by_index,
-            validated: OnceCell::new(),
         }
-    }
-
-    fn run_validation(&self) -> bool {
-        let opening = match MultiVectorOpening::new(
-            self.sorted_indices.clone(),
-            self.values_by_index.clone(),
-        ) {
-            Ok(o) => o,
-            Err(_) => return false,
-        };
-        self.scheme.check(self.root, &opening, self.proof)
     }
 }
 
-impl<'a, F, H> IndexedOracle<Vec<F>> for MerkleIndexedOracle<'a, F, H>
-where
-    F: Field + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
-{
+impl<F: Field> IndexedOracle<Vec<F>> for ValidatedOracle<F> {
     fn query(&self, i: usize) -> Option<Vec<F>> {
-        let valid = *self.validated.get_or_init(|| self.run_validation());
-        if !valid {
-            return None;
-        }
         let pos = self.sorted_indices.binary_search(&i).ok()?;
         Some(self.values_by_index[pos].clone())
     }
 
     fn validate(&self) -> bool {
-        *self.validated.get_or_init(|| self.run_validation())
+        true
     }
 }

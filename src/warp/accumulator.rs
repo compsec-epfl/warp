@@ -1,7 +1,7 @@
 use ark_ff::Field;
-use ark_mt::MerkleHasher;
+use ark_vc::mvc::MultiVectorCommitment;
 
-use crate::crypto::merkle::WarpCommitted;
+use crate::crypto::merkle::CommittedCodewords;
 
 /// Per-instance β coordinates absorbed into the accumulator: the `(τ, x)`
 /// twin pair. Replaces the old parallel-`Vec` tuple shape which let callers
@@ -13,19 +13,43 @@ pub struct BetaTwinPair<F: Field> {
 }
 
 /// Public part of an accumulated claim: `(rt, α, μ, (τ, x), η)` in the paper.
-#[derive(Clone)]
-pub struct AccumulatorInstance<F: Field, H: MerkleHasher> {
-    pub rt_merkle_roots: Vec<H::Digest>,
+pub struct AccumulatorInstance<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub rt_commitments: Vec<V::Commitment>,
     pub alpha_fold_vectors: Vec<Vec<F>>,
     pub mu_claimed_evals: Vec<F>,
     pub beta_twin_pairs: Vec<BetaTwinPair<F>>,
     pub eta_predicate_evals: Vec<F>,
 }
 
-impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
+impl<F, V> Clone for AccumulatorInstance<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            rt_commitments: self.rt_commitments.clone(),
+            alpha_fold_vectors: self.alpha_fold_vectors.clone(),
+            mu_claimed_evals: self.mu_claimed_evals.clone(),
+            beta_twin_pairs: self.beta_twin_pairs.clone(),
+            eta_predicate_evals: self.eta_predicate_evals.clone(),
+        }
+    }
+}
+
+impl<F, V> AccumulatorInstance<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
     pub fn empty() -> Self {
         Self {
-            rt_merkle_roots: vec![],
+            rt_commitments: vec![],
             alpha_fold_vectors: vec![],
             mu_claimed_evals: vec![],
             beta_twin_pairs: vec![],
@@ -34,7 +58,7 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
     }
 
     pub fn extend(mut self, other: Self) -> Self {
-        self.rt_merkle_roots.extend(other.rt_merkle_roots);
+        self.rt_commitments.extend(other.rt_commitments);
         self.alpha_fold_vectors.extend(other.alpha_fold_vectors);
         self.mu_claimed_evals.extend(other.mu_claimed_evals);
         self.beta_twin_pairs.extend(other.beta_twin_pairs);
@@ -44,20 +68,21 @@ impl<F: Field, H: MerkleHasher> AccumulatorInstance<F, H> {
 }
 
 /// Private part of an accumulated claim: `(td, w)` in the paper.
-pub struct AccumulatorWitness<F, H>
+pub struct AccumulatorWitness<F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub td_committed_codewords: Vec<WarpCommitted<H, F>>,
+    pub td_committed_codewords: Vec<CommittedCodewords<F, V>>,
     pub w_witnesses: Vec<Vec<F>>,
 }
 
-impl<F, H> Clone for AccumulatorWitness<F, H>
+impl<F, V> Clone for AccumulatorWitness<F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
-    WarpCommitted<H, F>: Clone,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: Clone,
+    V::CommitmentState: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -67,10 +92,10 @@ where
     }
 }
 
-impl<F, H> AccumulatorWitness<F, H>
+impl<F, V> AccumulatorWitness<F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub fn empty() -> Self {
         Self {

@@ -1,12 +1,12 @@
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
-use ark_mt::MerkleHasher;
 use ark_std::log2;
+use ark_vc::mvc::MultiVectorCommitment;
 use effsc::hypercube::compute_hypercube_eq_evals;
+use rand_core::OsRng;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, VerifierState};
 use std::marker::PhantomData;
 
-use crate::crypto::merkle::warp_scheme;
 use crate::error::VerifierError;
 use crate::protocol::ior::{absorb_protocol_map_verifier, IorVerifyResult, IOR};
 use crate::protocol::iors::{
@@ -18,7 +18,7 @@ use crate::protocol::iors::{
     sample_queries::{SampleQueries, SampleQueriesReducedStatement, SampleQueriesStatement},
     twin_constraint::{TwinConstraint, TwinConstraintReducedStatement, TwinConstraintStatement},
 };
-use crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle;
+use crate::protocol::oracles::indexed_merkle::ValidatedOracle;
 use crate::protocol::transcript::parse_statement;
 use crate::relations::PolyPredicate;
 use crate::utils::{concat_slices, scale_and_sum};
@@ -28,20 +28,20 @@ use crate::warp::keys::WARPVerifierKey;
 use crate::warp::proof::WARPProof;
 use crate::warp::scheme::WARP;
 
-impl<F, P, C, H> WARP<F, P, C, H>
+impl<F, P, C, V> WARP<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
 {
     pub fn verify<'a>(
         &self,
         vk: WARPVerifierKey,
         verifier_state: &mut VerifierState<'a>,
-        acc_instance: AccumulatorInstance<F, H>,
-        proof: WARPProof<F, H>,
+        acc_instance: AccumulatorInstance<F, V>,
+        proof: WARPProof<F, V>,
     ) -> Result<(), VerifierError> {
         let log_l = log2(self.params.config.l_total_fold_factor()) as usize;
         let log_m = log2(vk.m_num_constraints) as usize;
@@ -49,21 +49,19 @@ where
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = vk.n_num_variables - vk.k_num_witness_vars;
 
-        // Paired with `WARP::prove`. Catches reorder/swap of FS-affecting
-        // IORs between prover and verifier.
         absorb_protocol_map_verifier(
             verifier_state,
             &[
-                Pesat::<F, C, H>::NAME,
-                TwinConstraint::<F, H>::NAME,
-                Bridge::<F, P, H>::NAME,
+                Pesat::<F, C, V>::NAME,
+                TwinConstraint::<F, V>::NAME,
+                Bridge::<F, P, V>::NAME,
                 Ood::<F>::NAME,
                 SampleQueries::<F>::NAME,
                 Batching::<F>::NAME,
             ],
         );
 
-        let (l1_xs, parsed_acc) = parse_statement::<F, H>(
+        let (l1_xs, parsed_acc) = parse_statement::<F, V>(
             verifier_state,
             self.params.config.l1_first_fold_factor,
             self.params.config.l2_second_fold_factor,
@@ -86,23 +84,23 @@ where
             .iter()
             .map(|p| p.x.clone())
             .collect();
-        let l2_roots = parsed_acc.rt_merkle_roots.clone();
+        let l2_commitments = parsed_acc.rt_commitments.clone();
 
-        let pesat_ior = Pesat::<F, C, H> {
+        let pesat_ior = Pesat::<F, C, V> {
             code: &self.params.code,
-            hasher: &self.params.hasher,
+            ck: &self.params.ck,
             _phantom: PhantomData,
         };
-        let twin_constraint_ior = TwinConstraint::<F, H> {
+        let twin_constraint_ior = TwinConstraint::<F, V> {
             r1cs: self.params.predicate.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_ior = Bridge::<F, P, H>::default();
+        let bridge_ior = Bridge::<F, P, V>::default();
         let ood_ior = Ood::<F>::default();
         let sample_queries_ior = SampleQueries::<F>::default();
         let batching_ior = Batching::<F>::default();
-        let proximity_ior = Proximity::<F, H> {
-            hasher: &self.params.hasher,
+        let proximity_ior = Proximity::<F, V> {
+            ck: &self.params.ck,
             _phantom: PhantomData,
         };
 
@@ -113,7 +111,7 @@ where
                     taus_zero_check_challenges,
                 },
             outputs: PesatVerifierOutputs {
-                rt_0_fresh_merkle_root,
+                rt_0_fresh_commitment,
             },
         } = verify_ior!(
             pesat_ior,
@@ -150,7 +148,7 @@ where
                 BridgeReducedStatement {
                     eta_predicate_eval: _,
                     nu_0_oracle_eval,
-                    td_new_root: _,
+                    td_new_commitment: _,
                 },
             outputs: _,
         } = verify_ior!(
@@ -168,9 +166,6 @@ where
             },
         )?;
 
-        // Composition-safety assertion: any downstream IOR consuming TC's
-        // deferred check must have called discharge(). If this fires the
-        // protocol composition has a soundness gap.
         if !deferred.is_discharged() {
             return Err(VerifierError::Target);
         }
@@ -202,9 +197,6 @@ where
         (proof.shift_query_answers.len() == self.params.config.t_num_queries)
             .then_some(())
             .ok_or(VerifierError::NumShiftQueries)?;
-        (proof.auth_j.len() == self.params.config.l2_second_fold_factor)
-            .then_some(())
-            .ok_or(VerifierError::NumL2Instances)?;
 
         let mut indexed: Vec<(usize, usize)> = queries
             .leaf_positions
@@ -218,53 +210,27 @@ where
         let sorted_unique: Vec<usize> = indexed.iter().map(|&(p, _)| p).collect();
         let row_indices: Vec<usize> = indexed.iter().map(|&(_, r)| r).collect();
 
+        // Column tuples for the fresh PESAT commitment: per query, the
+        // l1 values from `shift_query_answers[row][l2..]`.
         let fresh_values: Vec<Vec<F>> = row_indices
             .iter()
             .map(|&r| {
                 proof.shift_query_answers[r][self.params.config.l2_second_fold_factor..].to_vec()
             })
             .collect();
-        let fresh_handle = MerkleIndexedOracle::new(
-            warp_scheme::<H, F>(self.params.hasher.clone(), n_code_len),
-            &rt_0_fresh_merkle_root,
-            &proof.auth_0,
-            sorted_unique.clone(),
-            fresh_values,
-        );
 
-        let acc_handles: Vec<MerkleIndexedOracle<F, H>> =
-            (0..self.params.config.l2_second_fold_factor)
-                .map(|j| {
-                    let acc_values: Vec<Vec<F>> = row_indices
-                        .iter()
-                        .map(|&r| vec![proof.shift_query_answers[r][j]])
-                        .collect();
-                    MerkleIndexedOracle::new(
-                        warp_scheme::<H, F>(self.params.hasher.clone(), n_code_len),
-                        &l2_roots[j],
-                        &proof.auth_j[j],
-                        sorted_unique.clone(),
-                        acc_values,
-                    )
-                })
-                .collect();
+        // Per-acc column tuples (each acc has m=1 so each tuple is length 1).
+        let acc_values: Vec<Vec<Vec<F>>> = (0..self.params.config.l2_second_fold_factor)
+            .map(|j| {
+                row_indices
+                    .iter()
+                    .map(|&r| vec![proof.shift_query_answers[r][j]])
+                    .collect()
+            })
+            .collect();
 
-        verify_ior!(
-            proximity_ior,
-            verifier_state,
-            statement: ProximityStatement {
-                queries: queries.clone(),
-                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
-                t_num_queries: self.params.config.t_num_queries,
-                n_code_len,
-            },
-            inputs: ProximityVerifierInputs {
-                fresh: &fresh_handle,
-                acc: &acc_handles,
-                _f: PhantomData,
-            },
-        )?;
-
+        // Batching consumes its transcript bytes BEFORE the proximity
+        // opens (matches the prover's order: ...→Batching→Proximity opens).
         let gamma_eq_evals = compute_hypercube_eq_evals(log_l, &gamma_sumcheck_challenges);
         let mut nu_i_oracle_evals = Vec::with_capacity(
             1 + self.params.config.s_num_ood_samples + self.params.config.t_num_queries,
@@ -299,6 +265,54 @@ where
             inputs: BatchingVerifierInputs {
                 nus_claimed_evals: nu_i_oracle_evals,
                 acc_mu: acc_mu_first,
+            },
+        )?;
+
+        // Now consume opening proofs from the transcript (in the same
+        // order the prover wrote them: fresh first, then each acc).
+        let mut rng = OsRng;
+        V::check_multiple(
+            &self.params.vk,
+            &rt_0_fresh_commitment,
+            sorted_unique.iter().copied(),
+            fresh_values.iter().cloned(),
+            &mut rng,
+            verifier_state,
+        )
+        .map_err(|_| VerifierError::ShiftQuery)?;
+
+        for (j, commitment) in l2_commitments.iter().enumerate() {
+            V::check_multiple(
+                &self.params.vk,
+                commitment,
+                sorted_unique.iter().copied(),
+                acc_values[j].iter().cloned(),
+                &mut rng,
+                verifier_state,
+            )
+            .map_err(|_| VerifierError::ShiftQuery)?;
+        }
+
+        // Hand pre-validated lookup handles to the proximity IOR.
+        let fresh_handle = ValidatedOracle::new(sorted_unique.clone(), fresh_values);
+        let acc_handles: Vec<ValidatedOracle<F>> = acc_values
+            .into_iter()
+            .map(|vals| ValidatedOracle::new(sorted_unique.clone(), vals))
+            .collect();
+
+        verify_ior!(
+            proximity_ior,
+            verifier_state,
+            statement: ProximityStatement {
+                queries: queries.clone(),
+                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
+                t_num_queries: self.params.config.t_num_queries,
+                n_code_len,
+            },
+            inputs: ProximityVerifierInputs {
+                fresh: &fresh_handle,
+                acc: &acc_handles,
+                _f: PhantomData,
             },
         )?;
 

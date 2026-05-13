@@ -2,8 +2,12 @@ use ark_codes::reed_solomon::config::ReedSolomonConfig;
 use ark_codes::reed_solomon::ReedSolomon;
 use ark_codes::traits::LinearCode;
 
-use ark_mt::blake3::Blake3FieldHasher;
+use ark_mt::{
+    blake3::Blake3FieldHasher, hash_region::HashRegion, scheme::MerkleCommitment,
+    shape::PerfectBinary,
+};
 use ark_std::rand::thread_rng;
+use ark_vc::mvc::MultiVectorCommitment;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
@@ -32,15 +36,17 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
     let s = 2;
     let t = 125;
 
+    type V = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
+
     for l in [32, 64, 128, 256, 512] {
         let warp_config = WARPConfig::new(l, 0, s, t, r1cs.config(), code.code_len());
 
-        let hash_chain_warp = WARP::<_, _, _, Blake3FieldHasher<F>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            Blake3FieldHasher::<F>::new(),
-        );
+        let pp = <V as MultiVectorCommitment>::setup_multiple(0, code.code_len(), t, &mut rng)
+            .expect("setup_multiple");
+        let (ck, vk) = <V as MultiVectorCommitment>::trim_multiple(&pp, 0, code.code_len(), t)
+            .expect("trim_multiple");
+        let hash_chain_warp =
+            WARP::<_, _, _, V>::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
 
         let instances_witnesses =
             get_hashchain_instance_witness_pairs(l, &poseidon_config, HASHCHAIN_SIZE, &mut rng);

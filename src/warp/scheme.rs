@@ -1,6 +1,6 @@
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
-use ark_mt::MerkleHasher;
+use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{
     Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerificationResult,
 };
@@ -11,36 +11,49 @@ use crate::relations::PolyPredicate;
 use crate::warp::keys::{WARPProverKey, WARPVerifierKey};
 use crate::warp::params::WARPParams;
 
-pub struct WARP<F: Field, P: PolyPredicate<F>, C: LinearCode<F> + Clone, H: MerkleHasher> {
-    pub params: WARPParams<F, P, C, H>,
+pub struct WARP<F, P, C, V>
+where
+    F: Field,
+    P: PolyPredicate<F>,
+    C: LinearCode<F> + Clone,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub params: WARPParams<F, P, C, V>,
 }
 
-impl<F, P, C, H> WARP<F, P, C, H>
+impl<F, P, C, V> WARP<F, P, C, V>
 where
     F: Field,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub fn new(config: WARPConfig<F, P>, code: C, predicate: P, hasher: H) -> WARP<F, P, C, H> {
+    pub fn new(
+        config: WARPConfig<F, P>,
+        code: C,
+        predicate: P,
+        ck: V::CommitterKey,
+        vk: V::VerifierKey,
+    ) -> WARP<F, P, C, V> {
         Self {
             params: WARPParams {
                 _phantom_f: PhantomData,
                 config,
                 code,
                 predicate,
-                hasher,
+                ck,
+                vk,
             },
         }
     }
 }
 
-impl<F, P, C, H> WARP<F, P, C, H>
+impl<F, P, C, V> WARP<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub fn index(
         prover_state: &mut ProverState,

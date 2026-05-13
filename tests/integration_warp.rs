@@ -19,9 +19,13 @@ use ark_codes::{
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_ff::UniformRand;
-use ark_mt::blake3::Blake3FieldHasher;
+use ark_mt::{
+    blake3::Blake3FieldHasher, hash_region::HashRegion, scheme::MerkleCommitment,
+    shape::PerfectBinary,
+};
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::thread_rng;
+use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
 
 use warp::config::WARPConfig;
 use warp::relations::{
@@ -35,6 +39,29 @@ use warp::serialize::acc_witness_size;
 use warp::utils::poseidon;
 use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
 use warp::WARP;
+
+/// Concrete Merkle scheme used by the tests below. Plain perfect-binary
+/// tree with a Blake3 field-symbol hasher — no caps, no multi-region.
+type MerkleVc<F> = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
+
+fn build_keys<F>(
+    code_len: usize,
+    num_queries: usize,
+) -> (
+    <MerkleVc<F> as VectorCommitment>::CommitterKey,
+    <MerkleVc<F> as VectorCommitment>::VerifierKey,
+)
+where
+    F: ark_ff::PrimeField,
+    Blake3FieldHasher<F>: Default + Clone + 'static,
+{
+    let mut rng = thread_rng();
+    let pp =
+        <MerkleVc<F> as MultiVectorCommitment>::setup_multiple(0, code_len, num_queries, &mut rng)
+            .expect("setup_multiple");
+    <MerkleVc<F> as MultiVectorCommitment>::trim_multiple(&pp, 0, code_len, num_queries)
+        .expect("trim_multiple")
+}
 
 #[test]
 fn warp_test() {
@@ -82,11 +109,13 @@ fn warp_test() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
+    let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, MerkleVc<BLS12_381>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
-        Blake3FieldHasher::<BLS12_381>::new(),
+        ck,
+        vk,
     );
 
     let mut acc_x = AccumulatorInstance::empty();
@@ -118,11 +147,13 @@ fn warp_test() {
     let warp_config =
         WARPConfig::<_, R1CS<BLS12_381>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
+    let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
+    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, MerkleVc<BLS12_381>>::new(
         warp_config.clone(),
         code.clone(),
         r1cs.clone(),
-        Blake3FieldHasher::<BLS12_381>::new(),
+        ck,
+        vk,
     );
 
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
@@ -218,13 +249,14 @@ fn warp_test_goldilocks() {
     .unwrap();
 
     let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            Blake3FieldHasher::<Goldilocks>::new(),
-        );
+    let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, MerkleVc<Goldilocks>>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+        ck,
+        vk,
+    );
 
     let mut acc_x = AccumulatorInstance::empty();
     let mut acc_w = AccumulatorWitness::empty();
@@ -256,13 +288,14 @@ fn warp_test_goldilocks() {
     let warp_config =
         WARPConfig::<_, R1CS<Goldilocks>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
 
-    let hash_chain_warp =
-        WARP::<Goldilocks, R1CS<Goldilocks>, _, Blake3FieldHasher<Goldilocks>>::new(
-            warp_config.clone(),
-            code.clone(),
-            r1cs.clone(),
-            Blake3FieldHasher::<Goldilocks>::new(),
-        );
+    let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
+    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, MerkleVc<Goldilocks>>::new(
+        warp_config.clone(),
+        code.clone(),
+        r1cs.clone(),
+        ck,
+        vk,
+    );
 
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp

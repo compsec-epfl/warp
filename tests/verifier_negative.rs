@@ -26,9 +26,13 @@ use ark_codes::{
     traits::LinearCode,
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-use ark_mt::blake3::Blake3FieldHasher;
+use ark_mt::{
+    blake3::Blake3FieldHasher, hash_region::HashRegion, scheme::MerkleCommitment,
+    shape::PerfectBinary,
+};
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
+use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
 
 use warp::config::WARPConfig;
 use warp::error::VerifierError;
@@ -46,24 +50,38 @@ use warp::warp::{
 use warp::WARP;
 
 type F = BLS12_381;
-type H = Blake3FieldHasher<F>;
-type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, H>;
+type V = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
+type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, V>;
+
+fn build_keys(
+    code_len: usize,
+    num_queries: usize,
+) -> (
+    <V as VectorCommitment>::CommitterKey,
+    <V as VectorCommitment>::VerifierKey,
+) {
+    let mut rng = thread_rng();
+    let pp = <V as MultiVectorCommitment>::setup_multiple(0, code_len, num_queries, &mut rng)
+        .expect("setup_multiple");
+    <V as MultiVectorCommitment>::trim_multiple(&pp, 0, code_len, num_queries)
+        .expect("trim_multiple")
+}
 
 /// Everything the verifier needs to re-check, plus enough dimensions
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
     vk: WARPVerifierKey,
-    acc_x: AccumulatorInstance<F, H>,
-    proof: WARPProof<F, H>,
+    acc_x: AccumulatorInstance<F, V>,
+    proof: WARPProof<F, V>,
     narg_str: Vec<u8>,
 }
 
 impl Fixture {
     fn verify(
         &self,
-        acc_x: AccumulatorInstance<F, H>,
-        proof: WARPProof<F, H>,
+        acc_x: AccumulatorInstance<F, V>,
+        proof: WARPProof<F, V>,
     ) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v
@@ -117,12 +135,8 @@ fn make_fixture() -> Fixture {
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
     let warp_cfg1 = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let w1 = WARP::<F, R1CS<F>, _, H>::new(
-        warp_cfg1,
-        code.clone(),
-        r1cs.clone(),
-        Blake3FieldHasher::<F>::new(),
-    );
+    let (ck1, vk1) = build_keys(code.code_len(), t);
+    let w1 = WARP::<F, R1CS<F>, _, V>::new(warp_cfg1, code.clone(), r1cs.clone(), ck1, vk1);
 
     let mut acc_x = AccumulatorInstance::empty();
     let mut acc_w = AccumulatorWitness::empty();
@@ -151,8 +165,8 @@ fn make_fixture() -> Fixture {
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
     let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
-    let warp =
-        WARP::<F, R1CS<F>, _, H>::new(warp_cfg2, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
+    let (ck2, vk2) = build_keys(code.code_len(), t);
+    let warp = WARP::<F, R1CS<F>, _, V>::new(warp_cfg2, code, r1cs.clone(), ck2, vk2);
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
@@ -242,23 +256,24 @@ fn truncated_shift_query_answers_raises_num_shift_queries() {
 }
 
 #[test]
-fn tampered_shift_query_answer_raises_shift_query() {
+fn tampered_shift_query_answer_raises_target() {
     let fix = make_fixture();
     let mut proof = fix.proof.clone();
-    // Each row of shift_query_answers has l2 + l1 entries; tampering any
-    // of them makes path.verify fail because the leaf hash no longer
-    // matches the committed root.
+    // Tampering a `shift_query_answer` is caught at two distinct points:
+    // (a) Batching's sumcheck consumes the answer to compute `nu_i` and
+    // its final-claim check fails (`Target`), and (b) the trait's
+    // `check_multiple` would also fail because the leaf no longer
+    // hashes to the committed root (`ShiftQuery`). With the verify
+    // ordering Batching → check_multiple, (a) fires first.
     proof.shift_query_answers[0][0] += F::from(1u64);
-    assert_err(fix.verify(fix.acc_x.clone(), proof), "ShiftQuery");
+    assert_err(fix.verify(fix.acc_x.clone(), proof), "Target");
 }
 
-#[test]
-fn truncated_auth_j_raises_num_l2_instances() {
-    let fix = make_fixture();
-    let mut proof = fix.proof.clone();
-    proof.auth_j.pop();
-    assert_err(fix.verify(fix.acc_x.clone(), proof), "NumL2Instances");
-}
+// `truncated_auth_j_raises_num_l2_instances` removed: opening proofs now
+// live in the spongefish transcript (written by `V::open_multiple`), so
+// there are no longer separate `auth_j` fields on `WARPProof` to truncate.
+// Equivalent coverage would require transcript-byte tampering, which is a
+// spongefish-layer concern, not warp's.
 
 #[test]
 fn tampered_mu_raises_target() {
@@ -310,8 +325,8 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
         .unzip();
 
     let warp_cfg = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let warp =
-        WARP::<F, R1CS<F>, _, H>::new(warp_cfg, code, r1cs.clone(), Blake3FieldHasher::<F>::new());
+    let (ck, vk) = build_keys(code.code_len(), t);
+    let warp = WARP::<F, R1CS<F>, _, V>::new(warp_cfg, code, r1cs.clone(), ck, vk);
 
     let mut witnesses_short = witnesses;
     witnesses_short.pop();

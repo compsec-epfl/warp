@@ -1,17 +1,18 @@
 //! PESAT Reduction IOR.
 //!
-//! Encodes fresh witnesses into codewords, commits via a multi-vector
-//! Merkle tree (one root over all l1 codewords), absorbs commitment +
-//! code evaluations, and derives the τ zero-check challenges.
+//! Encodes fresh witnesses into codewords, commits via the trait's
+//! joint-commit path (one commitment over all l1 codewords), absorbs
+//! that commitment + code evaluations, and derives the τ zero-check
+//! challenges.
 //!
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
-use ark_mt::MerkleHasher;
+use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::{encode_codewords, warp_scheme, WarpCommitted};
+use crate::crypto::merkle::CommittedCodewords;
 use crate::error::VerifierError;
 use crate::protocol::ior::{ProverTriple, IOR};
 
@@ -34,37 +35,42 @@ pub struct PesatReducedStatement<F: Field> {
     pub taus_zero_check_challenges: Vec<Vec<F>>,
 }
 
-pub struct PesatReducedWitness<F, H>
+pub struct PesatReducedWitness<F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub codewords: Vec<Vec<F>>,
-    pub td_0_committed_codeword: WarpCommitted<H, F>,
+    pub td_0_committed_codeword: CommittedCodewords<F, V>,
 }
 
-pub struct PesatVerifierOutputs<H: MerkleHasher> {
-    pub rt_0_fresh_merkle_root: H::Digest,
+pub struct PesatVerifierOutputs<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub rt_0_fresh_commitment: V::Commitment,
 }
 
-/// PESAT IOR configuration.
-pub struct Pesat<'a, F, C, H>
+/// PESAT IOR configuration. Holds borrowed code + the trait CK; the
+/// IOR is generic over any `MultiVectorCommitment` over `F`.
+pub struct Pesat<'a, F, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     C: LinearCode<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub code: &'a C,
-    pub hasher: &'a H,
-    pub _phantom: PhantomData<(F, H)>,
+    pub ck: &'a V::CommitterKey,
+    pub _phantom: PhantomData<F>,
 }
 
-impl<'a, F, C, H> IOR for Pesat<'a, F, C, H>
+impl<'a, F, C, V> IOR for Pesat<'a, F, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     C: LinearCode<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
 {
     const NAME: &'static str = "PESAT";
     type Statement<'b>
@@ -86,8 +92,8 @@ where
     type ReductionInputs = PesatReductionInputs<F>;
     type ReducedStatement = PesatReducedStatement<F>;
     type ProofString = ();
-    type ReducedWitness = PesatReducedWitness<F, H>;
-    type VerifierOutputs = PesatVerifierOutputs<H>;
+    type ReducedWitness = PesatReducedWitness<F, V>;
+    type VerifierOutputs = PesatVerifierOutputs<F, V>;
 
     fn reduce_statement<'b>(
         &self,
@@ -117,12 +123,16 @@ where
     ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
     where
         'a: 'b,
-        H: 'b,
+        V: 'b,
     {
-        let codewords = {
+        let codewords: Vec<Vec<F>> = {
             let _s = tracing::info_span!("pesat.encode").entered();
             count_ops!(EncodeCalls, witness.witnesses.len() as u64);
-            encode_codewords(self.code, witness.witnesses)
+            witness
+                .witnesses
+                .iter()
+                .map(|w| self.code.encode(w))
+                .collect()
         };
 
         let mus = codewords.iter().map(|f| f[0]).collect::<Vec<F>>();
@@ -130,13 +140,19 @@ where
         let td_0 = {
             let _s = tracing::info_span!("pesat.merkle_commit").entered();
             count_ops!(MerkleTreeBuilds);
-            let scheme = warp_scheme(self.hasher.clone(), self.code.code_len());
-            scheme.commit(&codewords)
+            let (commitment, state) =
+                V::commit_multiple(self.ck, codewords.iter().map(|c| c.iter()))
+                    .expect("pesat: commit_multiple failed");
+            CommittedCodewords {
+                commitment,
+                state,
+                codewords: codewords.clone(),
+            }
         };
 
         let taus = {
             let _s = tracing::info_span!("pesat.absorb_and_derive").entered();
-            prover_state.prover_message(td_0.root());
+            prover_state.prover_message(&td_0.commitment);
             prover_state.prover_messages(&mus);
 
             (0..statement.l1_first_fold_factor)
@@ -170,9 +186,9 @@ where
     ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
     where
         'a: 'c,
-        H: 'c,
+        V: 'c,
     {
-        let rt_0: H::Digest = verifier_state.prover_message()?;
+        let rt_0: V::Commitment = verifier_state.prover_message()?;
         let mus: Vec<F> = verifier_state.prover_messages_vec(statement.l1_first_fold_factor)?;
         let taus: Vec<Vec<F>> = (0..statement.l1_first_fold_factor)
             .map(|_| {
@@ -188,7 +204,7 @@ where
                 taus_zero_check_challenges: taus,
             },
             PesatVerifierOutputs {
-                rt_0_fresh_merkle_root: rt_0,
+                rt_0_fresh_commitment: rt_0,
             },
         ))
     }

@@ -1,17 +1,18 @@
 //! Proximity / shift-query IOR.
 //!
 //! Index queries on the committed oracles. Opens both the fresh PESAT
-//! commitment and each accumulated commitment at the query positions,
-//! producing one multi-opening proof per commitment and a flat table of
-//! the codeword values at those positions.
+//! commitment and each accumulated commitment at the query positions.
+//! With the trait migration, opening proofs (auth paths + sibling
+//! digests) are written into the spongefish transcript by
+//! `V::open_multiple` rather than carried as separate proof fields.
 //!
 use ark_ff::Field;
-use ark_mt::MerkleHasher;
-use spongefish::{ProverState, VerifierState};
+use ark_vc::mvc::MultiVectorCommitment;
+use spongefish::{Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::{warp_scheme, WarpCommitted, WarpProof};
+use crate::crypto::merkle::CommittedCodewords;
 use crate::error::VerifierError;
 use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::oracles::indexed_merkle::IndexedOracle;
@@ -22,62 +23,56 @@ pub struct ProximityStatement<F: Field> {
     pub l2_second_fold_factor: usize,
     pub t_num_queries: usize,
     /// Codeword length (`code.code_len()`), needed by both prover and
-    /// verifier to construct the `WarpScheme` used for open/check.
+    /// verifier.
     pub n_code_len: usize,
 }
 
-pub struct ProximityProverInputs<'a, F, H>
+pub struct ProximityProverInputs<'a, F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub td_0_committed_codeword: &'a WarpCommitted<H, F>,
-    pub acc_td_committed_codewords: &'a [WarpCommitted<H, F>],
+    pub ck: &'a V::CommitterKey,
+    pub td_0_committed_codeword: &'a CommittedCodewords<F, V>,
+    pub acc_td_committed_codewords: &'a [CommittedCodewords<F, V>],
 }
 
 /// Verifier-side inputs. The IOR sees [`IndexedOracle`] handles, not
-/// raw roots / opening proofs — IORs stay BCS-agnostic.
+/// raw commitments / opening proofs — IORs stay BCS-agnostic.
 pub struct ProximityVerifierInputs<'a, F, O>
 where
     F: Field,
     O: IndexedOracle<Vec<F>>,
 {
-    /// Handle for the fresh PESAT multi-vector commitment (m = l1).
     pub fresh: &'a O,
-    /// One handle per accumulated commitment (each with m = 1).
     pub acc: &'a [O],
     pub _f: PhantomData<F>,
 }
 
-pub struct ProximityProofString<F, H>
-where
-    F: Field,
-    H: MerkleHasher,
-{
-    /// Single multi-opening proof for the fresh PESAT commitment.
-    pub auth_0: WarpProof<H>,
-    /// One multi-opening proof per accumulated commitment.
-    pub auth_j: Vec<WarpProof<H>>,
-    /// Shift query answers: per-query × per-codeword.
-    /// Outer length = t (queries). Inner length = (l2 acc + l1 fresh).
+/// Wire-format proof string. Auth paths + sibling digests now live in
+/// the spongefish transcript (written by `V::open_multiple`); only the
+/// shift-query answers remain as out-of-band data.
+pub struct ProximityProofString<F: Field> {
+    /// Per-query × per-codeword. Outer length = t (queries). Inner
+    /// length = (l2 acc + l1 fresh).
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-/// Proximity IOR configuration. Holds the hasher value used by both
-/// `open` (prover side) and `check` (verifier side).
-pub struct Proximity<'a, F, H>
+/// Proximity IOR configuration. Holds the trait CK used by `open_multiple`.
+pub struct Proximity<'a, F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub hasher: &'a H,
+    pub ck: &'a V::CommitterKey,
     pub _phantom: PhantomData<F>,
 }
 
-impl<'a, F, H> IOR for Proximity<'a, F, H>
+impl<'a, F, V> IOR for Proximity<'a, F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
 {
     const NAME: &'static str = "Proximity";
 
@@ -90,20 +85,17 @@ where
     where
         Self: 'b;
     type ProverInputs<'b>
-        = ProximityProverInputs<'b, F, H>
+        = ProximityProverInputs<'b, F, V>
     where
         Self: 'b;
     type VerifierInputs<'b>
-        = ProximityVerifierInputs<
-        'b,
-        F,
-        crate::protocol::oracles::indexed_merkle::MerkleIndexedOracle<'b, F, H>,
-    >
+        =
+        ProximityVerifierInputs<'b, F, crate::protocol::oracles::indexed_merkle::ValidatedOracle<F>>
     where
         Self: 'b;
     type ReductionInputs = ();
     type ReducedStatement = ();
-    type ProofString = ProximityProofString<F, H>;
+    type ProofString = ProximityProofString<F>;
     type ReducedWitness = ();
     type VerifierOutputs = ();
 
@@ -127,7 +119,7 @@ where
     )]
     fn prove_inner<'b>(
         &self,
-        _prover_state: &mut ProverState,
+        prover_state: &mut ProverState,
         statement: &Self::Statement<'b>,
         _witness: &Self::Witness<'b>,
         inputs: &Self::ProverInputs<'b>,
@@ -135,38 +127,64 @@ where
     where
         Self: 'b,
         'a: 'b,
-        H: 'b,
+        V: 'b,
     {
         let leaf_positions = &statement.queries.leaf_positions;
 
-        // ark-mt's `open()` requires strictly-sorted, unique indices. Query
-        // positions can repeat or arrive unsorted; deduplicate for the
-        // merkle opening, but keep `shift_query_answers` in original query
-        // order so Batching can index by query.
+        // Trait `open_multiple` requires sorted unique indices.
         let mut sorted_unique = leaf_positions.clone();
         sorted_unique.sort_unstable();
         sorted_unique.dedup();
 
-        let scheme = warp_scheme(self.hasher.clone(), statement.n_code_len);
-
-        let auth_0 = {
-            let _s = tracing::info_span!("proximity.auth_0").entered();
-            count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
-            scheme.open(inputs.td_0_committed_codeword, &sorted_unique)
+        // Helper: column-tuple values at the sorted positions for one
+        // commitment's codewords.
+        let column_tuples = |codewords: &[Vec<F>]| -> Vec<Vec<F>> {
+            sorted_unique
+                .iter()
+                .map(|&i| codewords.iter().map(|c| c[i]).collect())
+                .collect()
         };
 
-        let auth_j: Vec<WarpProof<H>> = {
+        {
+            let _s = tracing::info_span!("proximity.auth_0").entered();
+            count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
+            let values = column_tuples(&inputs.td_0_committed_codeword.codewords);
+            V::open_multiple(
+                inputs.ck,
+                inputs
+                    .td_0_committed_codeword
+                    .codewords
+                    .iter()
+                    .map(|c| c.iter()),
+                &inputs.td_0_committed_codeword.commitment,
+                sorted_unique.iter().copied(),
+                values.into_iter(),
+                &inputs.td_0_committed_codeword.state,
+                prover_state,
+            )
+            .expect("proximity: open_multiple (fresh) failed");
+        }
+
+        {
             let _s = tracing::info_span!("proximity.auth_j").entered();
             count_ops!(
                 MerklePathsGenerated,
                 (inputs.acc_td_committed_codewords.len() * sorted_unique.len()) as u64
             );
-            inputs
-                .acc_td_committed_codewords
-                .iter()
-                .map(|td| scheme.open(td, &sorted_unique))
-                .collect()
-        };
+            for td in inputs.acc_td_committed_codewords.iter() {
+                let values = column_tuples(&td.codewords);
+                V::open_multiple(
+                    inputs.ck,
+                    td.codewords.iter().map(|c| c.iter()),
+                    &td.commitment,
+                    sorted_unique.iter().copied(),
+                    values.into_iter(),
+                    &td.state,
+                    prover_state,
+                )
+                .expect("proximity: open_multiple (acc) failed");
+            }
+        }
 
         // Shift query answers: per query position, values across
         // (acc_codewords ++ fresh_codewords).
@@ -175,19 +193,19 @@ where
             let total_codewords = inputs
                 .acc_td_committed_codewords
                 .iter()
-                .map(|td| td.num_codewords())
+                .map(|td| td.codewords.len())
                 .sum::<usize>()
-                + inputs.td_0_committed_codeword.num_codewords();
+                + inputs.td_0_committed_codeword.codewords.len();
             let mut answers = vec![vec![F::default(); total_codewords]; leaf_positions.len()];
             for (qi, idx) in leaf_positions.iter().enumerate() {
                 let mut col = 0usize;
                 for td in inputs.acc_td_committed_codewords.iter() {
-                    for cw in td.codewords() {
+                    for cw in &td.codewords {
                         answers[qi][col] = cw[*idx];
                         col += 1;
                     }
                 }
-                for cw in inputs.td_0_committed_codeword.codewords() {
+                for cw in &inputs.td_0_committed_codeword.codewords {
                     answers[qi][col] = cw[*idx];
                     col += 1;
                 }
@@ -198,8 +216,6 @@ where
         Ok((
             (),
             ProximityProofString {
-                auth_0,
-                auth_j,
                 shift_query_answers,
             },
             (),
@@ -220,16 +236,16 @@ where
     where
         Self: 'c,
         'a: 'c,
-        H: 'c,
+        V: 'c,
     {
-        // Arity check: number of accumulator openings must match l2.
+        // Arity check.
         (inputs.acc.len() == statement.l2_second_fold_factor)
             .then_some(())
             .ok_or(VerifierError::NumL2Instances)?;
 
-        // Validate each oracle handle. The handle is a partial function:
-        // validate() runs the (lazy, memoized) BCS check internally —
-        // this IOR stays BCS-agnostic.
+        // Validation already happened upstream (orchestrator called
+        // V::check_multiple before invoking this IOR). Handles are
+        // pre-validated; this IOR is BCS-agnostic.
         inputs
             .fresh
             .validate()

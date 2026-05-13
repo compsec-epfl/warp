@@ -1,7 +1,7 @@
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
-use ark_mt::MerkleHasher;
 use ark_std::log2;
+use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 use std::marker::PhantomData;
 
@@ -33,21 +33,21 @@ use crate::warp::keys::WARPProverKey;
 use crate::warp::proof::{ProveResult, WARPProof};
 use crate::warp::scheme::WARP;
 
-impl<F, P, C, H> WARP<F, P, C, H>
+impl<F, P, C, V> WARP<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
-    H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
 {
     fn validate_prover_inputs(
         &self,
         pk: &WARPProverKey<P>,
         instances: &[Vec<F>],
         witnesses: &[Vec<F>],
-        acc_instance: &AccumulatorInstance<F, H>,
-        acc_witness: &AccumulatorWitness<F, H>,
+        acc_instance: &AccumulatorInstance<F, V>,
+        acc_witness: &AccumulatorWitness<F, V>,
     ) -> Result<(), ProverError> {
         if instances.len() < 2 {
             return Err(ProverError::InsufficientInstances {
@@ -60,9 +60,9 @@ where
                 witnesses: witnesses.len(),
             });
         }
-        if acc_witness.td_committed_codewords.len() != acc_instance.rt_merkle_roots.len() {
+        if acc_witness.td_committed_codewords.len() != acc_instance.rt_commitments.len() {
             return Err(ProverError::AccumulatorShapeMismatch {
-                instances: acc_instance.rt_merkle_roots.len(),
+                instances: acc_instance.rt_commitments.len(),
                 roots: acc_witness.td_committed_codewords.len(),
             });
         }
@@ -107,9 +107,9 @@ where
         prover_state: &mut ProverState,
         witnesses: Vec<Vec<F>>,
         instances: Vec<Vec<F>>,
-        acc_instance: AccumulatorInstance<F, H>,
-        acc_witness: AccumulatorWitness<F, H>,
-    ) -> ProveResult<F, H> {
+        acc_instance: AccumulatorInstance<F, V>,
+        acc_witness: AccumulatorWitness<F, V>,
+    ) -> ProveResult<F, V> {
         self.validate_prover_inputs(&pk, &instances, &witnesses, &acc_instance, &acc_witness)?;
 
         let log_l = log2(self.params.config.l_total_fold_factor()) as usize;
@@ -118,16 +118,12 @@ where
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = pk.n_num_variables - pk.k_num_witness_vars;
 
-        // Domain-separation for the FS-affecting IOR sequence. Order here
-        // must match `WARP::verify`. (Proximity is FS-transparent and
-        // intentionally omitted; its position is allowed to differ between
-        // prover and verifier without affecting soundness.)
         absorb_protocol_map_prover(
             prover_state,
             &[
-                Pesat::<F, C, H>::NAME,
-                TwinConstraint::<F, H>::NAME,
-                Bridge::<F, P, H>::NAME,
+                Pesat::<F, C, V>::NAME,
+                TwinConstraint::<F, V>::NAME,
+                Bridge::<F, P, V>::NAME,
                 Ood::<F>::NAME,
                 SampleQueries::<F>::NAME,
                 Batching::<F>::NAME,
@@ -141,23 +137,23 @@ where
             td_committed_codewords: acc_tds,
             w_witnesses: acc_ws,
         } = acc_witness;
-        let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords()[0].clone()).collect();
+        let acc_fs: Vec<Vec<F>> = acc_tds.iter().map(|td| td.codewords[0].clone()).collect();
 
-        let pesat_ior = Pesat::<F, C, H> {
+        let pesat_ior = Pesat::<F, C, V> {
             code: &self.params.code,
-            hasher: &self.params.hasher,
+            ck: &self.params.ck,
             _phantom: PhantomData,
         };
-        let twin_constraint_ior = TwinConstraint::<F, H> {
+        let twin_constraint_ior = TwinConstraint::<F, V> {
             r1cs: self.params.predicate.constraints(),
             _phantom: PhantomData,
         };
-        let bridge_ior = Bridge::<F, P, H>::default();
+        let bridge_ior = Bridge::<F, P, V>::default();
         let ood_ior = Ood::<F>::default();
         let sample_queries_ior = SampleQueries::<F>::default();
         let batching_ior = Batching::<F>::default();
-        let proximity_ior = Proximity::<F, H> {
-            hasher: &self.params.hasher,
+        let proximity_ior = Proximity::<F, V> {
+            ck: &self.params.ck,
             _phantom: PhantomData,
         };
 
@@ -225,7 +221,7 @@ where
                 BridgeReducedStatement {
                     eta_predicate_eval,
                     nu_0_oracle_eval,
-                    td_new_root: _,
+                    td_new_commitment: _,
                 },
             proof: _,
             witness:
@@ -249,8 +245,7 @@ where
             },
             inputs: BridgeProverInputs {
                 predicate: &self.params.predicate,
-                hasher: &self.params.hasher,
-                code_len: n_code_len,
+                ck: &self.params.ck,
                 _f: PhantomData,
             },
         )?;
@@ -307,12 +302,9 @@ where
 
         let IorProveResult {
             reduced: _,
-            proof:
-                ProximityProofString {
-                    auth_0,
-                    auth_j,
-                    shift_query_answers,
-                },
+            proof: ProximityProofString {
+                shift_query_answers,
+            },
             witness: _,
         } = prove_ior!(
             proximity_ior,
@@ -325,6 +317,7 @@ where
             },
             witness: (),
             inputs: ProximityProverInputs {
+                ck: &self.params.ck,
                 td_0_committed_codeword: &td_0_committed_codeword,
                 acc_td_committed_codewords: &acc_tds,
             },
@@ -335,7 +328,7 @@ where
         nu_i_oracle_evals.extend(answers);
 
         let new_acc_instance = AccumulatorInstance {
-            rt_merkle_roots: vec![td_new.root().clone()],
+            rt_commitments: vec![td_new.commitment.clone()],
             alpha_fold_vectors: vec![alpha_sumcheck_challenges],
             mu_claimed_evals: vec![mu_claimed_eval],
             beta_twin_pairs: vec![BetaTwinPair {
@@ -349,12 +342,10 @@ where
             w_witnesses: vec![new_w],
         };
         let proof = WARPProof {
-            rt_0_fresh_merkle_root: td_0_committed_codeword.root().clone(),
+            rt_0_fresh_commitment: td_0_committed_codeword.commitment.clone(),
             mu_i_first_codeword_coords: mus_codeword_first_coords,
             nu_0_oracle_eval,
             nu_i_oracle_evals,
-            auth_0,
-            auth_j,
             shift_query_answers,
         };
 

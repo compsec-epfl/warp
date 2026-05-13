@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use ark_mt::MerkleHasher;
+use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Encoding, ProverState};
 
 use crate::warp::AccumulatorInstance;
@@ -17,15 +17,15 @@ pub fn absorb_instances<F: Field + Encoding<[u8]>>(
 }
 
 // absorb an AccumulatorInstance into the transcript
-impl<F, H> AccumulatorInstance<F, H>
+impl<F, V> AccumulatorInstance<F, V>
 where
     F: Field + Encoding<[u8]>,
-    H: MerkleHasher,
-    H::Digest: Encoding<[u8]>,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: Encoding<[u8]> + spongefish::NargSerialize,
 {
     pub fn absorb_into(&self, prover_state: &mut ProverState) {
-        for digest in &self.rt_merkle_roots {
-            prover_state.prover_message(digest);
+        for commitment in &self.rt_commitments {
+            prover_state.prover_message(commitment);
         }
 
         for alpha in &self.alpha_fold_vectors {

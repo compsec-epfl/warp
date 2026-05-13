@@ -1,13 +1,14 @@
 //! TC → OOD bridge IOR. Publishes `(td_new, η, ν₀)` and discharges
 //! TwinConstraint's deferred oracle check `eq(τ,γ)·(ν₀ + ω·η) ≟ final_claim`.
 use ark_ff::Field;
-use ark_mt::MerkleHasher;
+use ark_vc::mvc::MultiVectorCommitment;
+use ark_vc::vc::VectorCommitment;
 use effsc::hypercube::compute_hypercube_eq_evals;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::crypto::merkle::{warp_scheme, WarpCommitted};
+use crate::crypto::merkle::CommittedCodewords;
 use crate::error::{ProverError, VerifierError};
 use crate::protocol::ior::{ProverTriple, IOR};
 use crate::protocol::iors::twin_constraint::DeferredOracleCheck;
@@ -26,15 +27,14 @@ pub struct BridgeWitness<'a, F: Field> {
     pub f_oracle: &'a Oracle<F>,
 }
 
-pub struct BridgeProverInputs<'a, F, P, H>
+pub struct BridgeProverInputs<'a, F, P, V>
 where
     F: Field,
     P: PolyPredicate<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
     pub predicate: &'a P,
-    pub hasher: &'a H,
-    pub code_len: usize,
+    pub ck: &'a V::CommitterKey,
     pub _f: PhantomData<F>,
 }
 
@@ -43,42 +43,50 @@ pub struct BridgeVerifierInputs<'a, F: Field> {
     pub gamma_twin_constraint_challenges: &'a [F],
 }
 
-pub struct BridgeReductionInputs<F: Field, H: MerkleHasher> {
-    pub eta_predicate_eval: F,
-    pub nu_0_oracle_eval: F,
-    pub td_new_root: H::Digest,
-}
-
-pub struct BridgeReducedStatement<F: Field, H: MerkleHasher> {
-    pub eta_predicate_eval: F,
-    pub nu_0_oracle_eval: F,
-    pub td_new_root: H::Digest,
-}
-
-pub struct BridgeReducedWitness<F, H>
+pub struct BridgeReductionInputs<F, V>
 where
     F: Field,
-    H: MerkleHasher<Symbol = Vec<F>>,
+    V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub td_new: WarpCommitted<H, F>,
+    pub eta_predicate_eval: F,
+    pub nu_0_oracle_eval: F,
+    pub td_new_commitment: V::Commitment,
+}
+
+pub struct BridgeReducedStatement<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub eta_predicate_eval: F,
+    pub nu_0_oracle_eval: F,
+    pub td_new_commitment: V::Commitment,
+}
+
+pub struct BridgeReducedWitness<F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub td_new: CommittedCodewords<F, V>,
     pub new_x: Vec<F>,
     pub new_w: Vec<F>,
 }
 
-pub struct Bridge<F, P, H>(PhantomData<F>, PhantomData<P>, PhantomData<H>);
+pub struct Bridge<F, P, V>(PhantomData<F>, PhantomData<P>, PhantomData<V>);
 
-impl<F, P, H> Default for Bridge<F, P, H> {
+impl<F, P, V> Default for Bridge<F, P, V> {
     fn default() -> Self {
         Self(PhantomData, PhantomData, PhantomData)
     }
 }
 
-impl<F, P, H> IOR for Bridge<F, P, H>
+impl<F, P, V> IOR for Bridge<F, P, V>
 where
     F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: PolyPredicate<F>,
-    H: MerkleHasher<Symbol = Vec<F>>,
-    H::Digest: Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize + Clone,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
 {
     const NAME: &'static str = "Bridge";
 
@@ -91,17 +99,17 @@ where
     where
         Self: 'b;
     type ProverInputs<'b>
-        = BridgeProverInputs<'b, F, P, H>
+        = BridgeProverInputs<'b, F, P, V>
     where
         Self: 'b;
     type VerifierInputs<'b>
         = BridgeVerifierInputs<'b, F>
     where
         Self: 'b;
-    type ReductionInputs = BridgeReductionInputs<F, H>;
-    type ReducedStatement = BridgeReducedStatement<F, H>;
+    type ReductionInputs = BridgeReductionInputs<F, V>;
+    type ReducedStatement = BridgeReducedStatement<F, V>;
     type ProofString = ();
-    type ReducedWitness = BridgeReducedWitness<F, H>;
+    type ReducedWitness = BridgeReducedWitness<F, V>;
     type VerifierOutputs = ();
 
     fn reduce_statement<'a>(
@@ -115,7 +123,7 @@ where
         BridgeReducedStatement {
             eta_predicate_eval: inputs.eta_predicate_eval,
             nu_0_oracle_eval: inputs.nu_0_oracle_eval,
-            td_new_root: inputs.td_new_root.clone(),
+            td_new_commitment: inputs.td_new_commitment.clone(),
         }
     }
 
@@ -149,17 +157,23 @@ where
         let new_x = new_x_slice.to_vec();
         let new_w = new_w_slice.to_vec();
 
-        // td_new ← Merkle.commit(f.evals())
+        // td_new ← V.commit(f.evals())
         let td_new = {
             let _s = tracing::info_span!("bridge.commit_new_oracle").entered();
             count_ops!(MerkleTreeBuilds);
-            let scheme = warp_scheme::<H, F>(inputs.hasher.clone(), inputs.code_len);
-            scheme.commit(&[witness.f_oracle.evals().to_vec()])
+            let codeword = witness.f_oracle.evals().to_vec();
+            let (commitment, state) = <V as VectorCommitment>::commit(inputs.ck, codeword.iter())
+                .map_err(|_| ProverError::SpongeFish)?;
+            CommittedCodewords::<F, V> {
+                commitment,
+                state,
+                codewords: vec![codeword],
+            }
         };
-        let td_new_root = td_new.root().clone();
+        let td_new_commitment: V::Commitment = td_new.commitment.clone();
 
-        // Absorb (td_new.root, η, ν₀)
-        prover_state.prover_message(&td_new_root);
+        // Absorb (td_new.commitment, η, ν₀)
+        prover_state.prover_message(&td_new_commitment);
         prover_state.prover_message(&eta);
         prover_state.prover_message(&nu_0);
 
@@ -167,7 +181,7 @@ where
             BridgeReductionInputs {
                 eta_predicate_eval: eta,
                 nu_0_oracle_eval: nu_0,
-                td_new_root,
+                td_new_commitment,
             },
             (),
             BridgeReducedWitness {
@@ -188,8 +202,8 @@ where
     where
         Self: 'b,
     {
-        // Read (td_digest, η, ν₀) from the transcript.
-        let td_new_root: H::Digest = verifier_state.prover_message()?;
+        // Read (commitment, η, ν₀) from the transcript.
+        let td_new_commitment: V::Commitment = verifier_state.prover_message()?;
         let eta: F = verifier_state.prover_message()?;
         let nu_0: F = verifier_state.prover_message()?;
 
@@ -202,7 +216,7 @@ where
             BridgeReductionInputs {
                 eta_predicate_eval: eta,
                 nu_0_oracle_eval: nu_0,
-                td_new_root,
+                td_new_commitment,
             },
             (),
         ))
