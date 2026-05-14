@@ -5,9 +5,16 @@ use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState};
 use std::marker::PhantomData;
 
+use crate::accumulation_scheme::accumulator::{
+    AccumulatorInstance, AccumulatorWitness, BetaTwinPair,
+};
+use crate::accumulation_scheme::keys::WarpProverKey;
+use crate::accumulation_scheme::proof::{ProveResult, WarpProof};
+use crate::accumulation_scheme::scheme::WarpAccumulationScheme;
+use crate::accumulation_scheme::transcript::absorb_instances;
+use crate::accumulation_scheme::AccumulationScheme;
 use crate::error::ProverError;
-use crate::protocol::ior::{absorb_protocol_map_prover, IorProveResult, IOR};
-use crate::protocol::iors::{
+use crate::iop::iors::{
     batching::{
         Batching, BatchingProverInputs, BatchingReducedStatement, BatchingReducedWitness,
         BatchingStatement,
@@ -25,25 +32,19 @@ use crate::protocol::iors::{
         TwinConstraintReducedWitness, TwinConstraintStatement, TwinConstraintWitness,
     },
 };
-use crate::protocol::transcript::absorb_instances;
-use crate::prove_ior;
 use crate::relations::PolyPredicate;
-use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness, BetaTwinPair};
-use crate::warp::keys::WARPProverKey;
-use crate::warp::proof::{ProveResult, WARPProof};
-use crate::warp::scheme::WARP;
 
-impl<F, P, C, V> WARP<F, P, C, V>
+impl<F, P, C, V> WarpAccumulationScheme<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     V: MultiVectorCommitment<Alphabet = F, Index = usize>,
-    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
     fn validate_prover_inputs(
         &self,
-        pk: &WARPProverKey<P>,
+        pk: &WarpProverKey<P>,
         instances: &[Vec<F>],
         witnesses: &[Vec<F>],
         acc_instance: &AccumulatorInstance<F, V>,
@@ -103,7 +104,7 @@ where
     #[tracing::instrument(name = "warp.prove", skip_all)]
     pub fn prove(
         &self,
-        pk: WARPProverKey<P>,
+        pk: WarpProverKey<P>,
         prover_state: &mut ProverState,
         witnesses: Vec<Vec<F>>,
         instances: Vec<Vec<F>>,
@@ -118,17 +119,7 @@ where
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = pk.n_num_variables - pk.k_num_witness_vars;
 
-        absorb_protocol_map_prover(
-            prover_state,
-            &[
-                Pesat::<F, C, V>::NAME,
-                TwinConstraint::<F, V>::NAME,
-                Bridge::<F, P, V>::NAME,
-                Ood::<F>::NAME,
-                SampleQueries::<F>::NAME,
-                Batching::<F>::NAME,
-            ],
-        );
+        self.absorb_scheme_prologue_prover(prover_state);
 
         absorb_instances(prover_state, &instances);
         acc_instance.absorb_into(prover_state);
@@ -157,7 +148,7 @@ where
             _phantom: PhantomData,
         };
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced:
                 PesatReducedStatement {
                     mus_codeword_first_coords,
@@ -169,7 +160,7 @@ where
                     codewords,
                     td_0_committed_codeword,
                 },
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             pesat_ior,
             prover_state,
             statement: PesatStatement {
@@ -180,7 +171,7 @@ where
             inputs: (),
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced:
                 TwinConstraintReducedStatement {
                     gamma_sumcheck_challenges: _,
@@ -194,7 +185,7 @@ where
                     f_oracle,
                     z_witness_assignment,
                 },
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             twin_constraint_ior,
             prover_state,
             statement: TwinConstraintStatement {
@@ -216,7 +207,7 @@ where
             },
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced:
                 BridgeReducedStatement {
                     eta_predicate_eval,
@@ -230,7 +221,7 @@ where
                     new_x,
                     new_w,
                 },
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             bridge_ior,
             prover_state,
             statement: BridgeStatement {
@@ -250,7 +241,7 @@ where
             },
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced:
                 OodReducedStatement {
                     samples_flat,
@@ -258,7 +249,7 @@ where
                 },
             proof: _,
             witness: _,
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             ood_ior,
             prover_state,
             statement: OodStatement { s_num_ood_samples: self.params.config.s_num_ood_samples, log_n },
@@ -266,11 +257,11 @@ where
             inputs: OodProverInputs { oracle: &f_oracle },
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced: SampleQueriesReducedStatement { queries },
             proof: _,
             witness: _,
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             sample_queries_ior,
             prover_state,
             statement: SampleQueriesStatement { log_n, t_num_queries: self.params.config.t_num_queries },
@@ -278,14 +269,14 @@ where
             inputs: (),
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced:
                 BatchingReducedStatement {
                     alpha_sumcheck_challenges,
                 },
             proof: _,
             witness: BatchingReducedWitness { mu_claimed_eval },
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             batching_ior,
             prover_state,
             statement: BatchingStatement::from_ior_outputs(
@@ -300,13 +291,13 @@ where
             inputs: BatchingProverInputs { oracle: &f_oracle },
         )?;
 
-        let IorProveResult {
+        let ark_iop::IorProveResult {
             reduced: _,
             proof: ProximityProofString {
                 shift_query_answers,
             },
             witness: _,
-        } = prove_ior!(
+        } = ark_iop::prove_ior!(
             proximity_ior,
             prover_state,
             statement: ProximityStatement {
@@ -341,7 +332,7 @@ where
             td_committed_codewords: vec![td_new],
             w_witnesses: vec![new_w],
         };
-        let proof = WARPProof {
+        let proof = WarpProof {
             rt_0_fresh_commitment: td_0_committed_codeword.commitment.clone(),
             mu_i_first_codeword_coords: mus_codeword_first_coords,
             nu_0_oracle_eval,

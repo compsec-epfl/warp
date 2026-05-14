@@ -2,9 +2,9 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Valid, Write};
 use ark_vc::mvc::MultiVectorCommitment;
 
-use crate::warp::{AccumulatorInstance, AccumulatorWitness, WARPProof};
+use crate::accumulation_scheme::{AccumulatorInstance, AccumulatorWitness, WarpProof};
 
-// `AccumulatorInstance` and `WARPProof` carry generic associated types
+// `AccumulatorInstance` and `WarpProof` carry generic associated types
 // (`V::Commitment`) whose serializability isn't implied by the trait
 // itself. Putting the bound in a separate `impl` block (rather than on
 // the struct) keeps the bulk of the IOR / orchestrator code free of that
@@ -59,7 +59,7 @@ where
     }
 }
 
-impl<F, V> CanonicalSerialize for WARPProof<F, V>
+impl<F, V> CanonicalSerialize for WarpProof<F, V>
 where
     F: Field + CanonicalSerialize,
     V: MultiVectorCommitment<Alphabet = F>,
@@ -92,7 +92,7 @@ where
     }
 }
 
-impl<F, V> Valid for WARPProof<F, V>
+impl<F, V> Valid for WarpProof<F, V>
 where
     F: Field + CanonicalSerialize,
     V: MultiVectorCommitment<Alphabet = F>,

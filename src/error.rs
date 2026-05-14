@@ -2,7 +2,7 @@ use ark_crypto_primitives::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum WARPError {
+pub enum WarpError {
     #[error(transparent)]
     ProverError(#[from] ProverError),
     #[error(transparent)]
@@ -51,6 +51,24 @@ impl From<spongefish::VerificationError> for ProverError {
     }
 }
 
+impl From<ark_iop::IorProverError> for ProverError {
+    fn from(e: ark_iop::IorProverError) -> Self {
+        match e {
+            ark_iop::IorProverError::StatementShape {
+                what,
+                expected,
+                got,
+            } => Self::StatementShape {
+                what,
+                expected,
+                got,
+            },
+            ark_iop::IorProverError::Transcript(_) => Self::SpongeFish,
+            ark_iop::IorProverError::Custom(msg) => Self::ConfigParameterInvalid { reason: msg },
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum VerifierError {
     #[error(transparent)]
@@ -86,6 +104,25 @@ pub enum VerifierError {
 impl From<spongefish::VerificationError> for VerifierError {
     fn from(_: spongefish::VerificationError) -> Self {
         Self::SpongeFish
+    }
+}
+
+impl From<ark_iop::IorVerifierError> for VerifierError {
+    fn from(e: ark_iop::IorVerifierError) -> Self {
+        match e {
+            ark_iop::IorVerifierError::StatementShape {
+                what,
+                expected,
+                got,
+            } => Self::StatementShape {
+                what,
+                expected,
+                got,
+            },
+            ark_iop::IorVerifierError::Target => Self::Target,
+            ark_iop::IorVerifierError::Transcript(_) => Self::SpongeFish,
+            ark_iop::IorVerifierError::Custom(_) => Self::Target,
+        }
     }
 }
 

@@ -7,9 +7,14 @@ use rand_core::OsRng;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, VerifierState};
 use std::marker::PhantomData;
 
+use crate::accumulation_scheme::accumulator::AccumulatorInstance;
+use crate::accumulation_scheme::keys::WarpVerifierKey;
+use crate::accumulation_scheme::proof::WarpProof;
+use crate::accumulation_scheme::scheme::WarpAccumulationScheme;
+use crate::accumulation_scheme::transcript::parse_statement;
+use crate::accumulation_scheme::AccumulationScheme;
 use crate::error::VerifierError;
-use crate::protocol::ior::{absorb_protocol_map_verifier, IorVerifyResult, IOR};
-use crate::protocol::iors::{
+use crate::iop::iors::{
     batching::{Batching, BatchingReducedStatement, BatchingStatement, BatchingVerifierInputs},
     bridge::{Bridge, BridgeReducedStatement, BridgeStatement, BridgeVerifierInputs},
     ood::{Ood, OodReducedStatement, OodStatement},
@@ -18,30 +23,24 @@ use crate::protocol::iors::{
     sample_queries::{SampleQueries, SampleQueriesReducedStatement, SampleQueriesStatement},
     twin_constraint::{TwinConstraint, TwinConstraintReducedStatement, TwinConstraintStatement},
 };
-use crate::protocol::oracles::indexed::ValidatedOracle;
-use crate::protocol::transcript::parse_statement;
+use crate::iop::oracles::indexed::ValidatedOracle;
 use crate::relations::PolyPredicate;
 use crate::utils::{concat_slices, scale_and_sum};
-use crate::verify_ior;
-use crate::warp::accumulator::AccumulatorInstance;
-use crate::warp::keys::WARPVerifierKey;
-use crate::warp::proof::WARPProof;
-use crate::warp::scheme::WARP;
 
-impl<F, P, C, V> WARP<F, P, C, V>
+impl<F, P, C, V> WarpAccumulationScheme<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
     C: LinearCode<F> + Clone,
     V: MultiVectorCommitment<Alphabet = F, Index = usize>,
-    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone + Eq,
 {
     pub fn verify<'a>(
         &self,
-        vk: WARPVerifierKey,
+        vk: WarpVerifierKey,
         verifier_state: &mut VerifierState<'a>,
         acc_instance: AccumulatorInstance<F, V>,
-        proof: WARPProof<F, V>,
+        proof: WarpProof<F, V>,
     ) -> Result<(), VerifierError> {
         let log_l = log2(self.params.config.l_total_fold_factor()) as usize;
         let log_m = log2(vk.m_num_constraints) as usize;
@@ -49,17 +48,7 @@ where
         let log_n = log2(n_code_len) as usize;
         let n_minus_k = vk.n_num_variables - vk.k_num_witness_vars;
 
-        absorb_protocol_map_verifier(
-            verifier_state,
-            &[
-                Pesat::<F, C, V>::NAME,
-                TwinConstraint::<F, V>::NAME,
-                Bridge::<F, P, V>::NAME,
-                Ood::<F>::NAME,
-                SampleQueries::<F>::NAME,
-                Batching::<F>::NAME,
-            ],
-        );
+        self.absorb_scheme_prologue_verifier(verifier_state);
 
         let (l1_xs, parsed_acc) = parse_statement::<F, V>(
             verifier_state,
@@ -104,7 +93,7 @@ where
             _phantom: PhantomData,
         };
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced:
                 PesatReducedStatement {
                     mus_codeword_first_coords,
@@ -113,14 +102,14 @@ where
             outputs: PesatVerifierOutputs {
                 rt_0_fresh_commitment,
             },
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             pesat_ior,
             verifier_state,
             statement: PesatStatement { l1_first_fold_factor: self.params.config.l1_first_fold_factor, log_m },
             inputs: (),
         )?;
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced:
                 TwinConstraintReducedStatement {
                     gamma_sumcheck_challenges,
@@ -129,7 +118,7 @@ where
                     deferred,
                 },
             outputs: _,
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             twin_constraint_ior,
             verifier_state,
             statement: TwinConstraintStatement {
@@ -143,7 +132,7 @@ where
             inputs: (),
         )?;
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced:
                 BridgeReducedStatement {
                     eta_predicate_eval: _,
@@ -151,7 +140,7 @@ where
                     td_new_commitment: _,
                 },
             outputs: _,
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             bridge_ior,
             verifier_state,
             statement: BridgeStatement {
@@ -170,24 +159,24 @@ where
             return Err(VerifierError::Target);
         }
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced:
                 OodReducedStatement {
                     samples_flat,
                     answers,
                 },
             outputs: _,
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             ood_ior,
             verifier_state,
             statement: OodStatement { s_num_ood_samples: self.params.config.s_num_ood_samples, log_n },
             inputs: (),
         )?;
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced: SampleQueriesReducedStatement { queries },
             outputs: _,
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             sample_queries_ior,
             verifier_state,
             statement: SampleQueriesStatement { log_n, t_num_queries: self.params.config.t_num_queries },
@@ -245,13 +234,13 @@ where
             nu_i_oracle_evals.push(nu_st);
         }
 
-        let IorVerifyResult {
+        let ark_iop::IorVerifyResult {
             reduced:
                 BatchingReducedStatement {
                     alpha_sumcheck_challenges,
                 },
             outputs: _,
-        } = verify_ior!(
+        } = ark_iop::verify_ior!(
             batching_ior,
             verifier_state,
             statement: BatchingStatement::from_ior_outputs(
@@ -300,7 +289,7 @@ where
             .map(|vals| ValidatedOracle::new(sorted_unique.clone(), vals))
             .collect();
 
-        verify_ior!(
+        ark_iop::verify_ior!(
             proximity_ior,
             verifier_state,
             statement: ProximityStatement {

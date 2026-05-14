@@ -4,17 +4,18 @@
 //! joint-commit path (one commitment over all l1 codewords), absorbs
 //! that commitment + code evaluations, and derives the τ zero-check
 //! challenges.
-//!
+
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
+use ark_iop::{
+    IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple, IOR,
+};
 use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::crypto::vc::CommittedCodewords;
-use crate::error::VerifierError;
-use crate::protocol::ior::{ProverTriple, IOR};
 
 pub struct PesatStatement {
     pub l1_first_fold_factor: usize,
@@ -73,6 +74,8 @@ where
     V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
 {
     const NAME: &'static str = "PESAT";
+    const MESSAGE_TAGS: &'static [&'static str] =
+        &["send:rt_0_commitment", "send:mus", "squeeze:taus"];
     type Statement<'b>
         = PesatStatement
     where
@@ -108,23 +111,26 @@ where
             taus_zero_check_challenges: inputs.taus_zero_check_challenges.clone(),
         }
     }
+}
 
+impl<'a, F, C, V> Pesat<'a, F, C, V>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    C: LinearCode<F>,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
+{
     #[tracing::instrument(
         name = "pesat",
         skip_all,
         fields(l1 = statement.l1_first_fold_factor, log_m = statement.log_m, n_witnesses = witness.witnesses.len())
     )]
-    fn prove_inner<'b>(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement<'b>,
-        witness: &Self::Witness<'b>,
-        _inputs: &Self::ProverInputs<'b>,
-    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
-    where
-        'a: 'b,
-        V: 'b,
-    {
+        statement: &PesatStatement,
+        witness: &PesatWitness<'_, F>,
+    ) -> ProverTriple<PesatReductionInputs<F>, (), PesatReducedWitness<F, V>> {
         let codewords: Vec<Vec<F>> = {
             let _s = tracing::info_span!("pesat.encode").entered();
             count_ops!(EncodeCalls, witness.witnesses.len() as u64);
@@ -178,18 +184,17 @@ where
         skip_all,
         fields(l1 = statement.l1_first_fold_factor, log_m = statement.log_m)
     )]
-    fn verify_inner<'b, 'c>(
+    fn verify_inner(
         &self,
-        verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement<'c>,
-        _inputs: &Self::VerifierInputs<'c>,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
-    where
-        'a: 'c,
-        V: 'c,
-    {
-        let rt_0: V::Commitment = verifier_state.prover_message()?;
-        let mus: Vec<F> = verifier_state.prover_messages_vec(statement.l1_first_fold_factor)?;
+        verifier_state: &mut VerifierState<'_>,
+        statement: &PesatStatement,
+    ) -> Result<(PesatReductionInputs<F>, PesatVerifierOutputs<F, V>), IorVerifierError> {
+        let rt_0: V::Commitment = verifier_state
+            .prover_message()
+            .map_err(|e| IorVerifierError::Transcript(e.to_string()))?;
+        let mus: Vec<F> = verifier_state
+            .prover_messages_vec(statement.l1_first_fold_factor)
+            .map_err(|e| IorVerifierError::Transcript(e.to_string()))?;
         let taus: Vec<Vec<F>> = (0..statement.l1_first_fold_factor)
             .map(|_| {
                 (0..statement.log_m)
@@ -207,5 +212,35 @@ where
                 rt_0_fresh_commitment: rt_0,
             },
         ))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn prove(
+        &self,
+        prover_state: &mut ProverState,
+        statement: &PesatStatement,
+        witness: &PesatWitness<'_, F>,
+        _inputs: &(),
+    ) -> Result<
+        IorProveResult<PesatReducedStatement<F>, (), PesatReducedWitness<F, V>>,
+        IorProverError,
+    > {
+        self.compose_prove(prover_state, statement, |t| {
+            self.prove_inner(t, statement, witness)
+        })
+    }
+
+    pub fn verify(
+        &self,
+        verifier_state: &mut VerifierState<'_>,
+        statement: &PesatStatement,
+        _inputs: &(),
+    ) -> Result<
+        IorVerifyResult<PesatReducedStatement<F>, PesatVerifierOutputs<F, V>>,
+        IorVerifierError,
+    > {
+        self.compose_verify(verifier_state, statement, |t| {
+            self.verify_inner(t, statement)
+        })
     }
 }

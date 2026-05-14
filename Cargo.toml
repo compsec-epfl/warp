@@ -30,6 +30,7 @@ tracing = { version = "0.1", default-features = false, features = ["std", "attri
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry"], optional = true }
 libc = { version = "0.2", optional = true }
 ark-codes = { git = "https://github.com/z-tech/ark-codes.git", branch = "z-tech/arkworks-0.6.0" }
+ark-iop = { git = "https://github.com/arkworks-rs/z.git", branch = "z-tech/ark-iop" }
 ark-vc = { git = "https://github.com/arkworks-rs/ark-vc.git", branch = "z-tech/hash-regions" }
 ark-mt = { git = "https://github.com/arkworks-rs/ark-vc.git", branch = "z-tech/hash-regions", features = ["blake3", "blake3-field", "vc"] }
 

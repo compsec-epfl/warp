@@ -34,7 +34,10 @@ use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
 use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
 
-use warp::config::WARPConfig;
+use warp::accumulation_scheme::{
+    AccumulatorInstance, AccumulatorWitness, WarpProof, WarpProverKey, WarpVerifierKey,
+};
+use warp::config::WarpConfig;
 use warp::error::VerifierError;
 use warp::relations::{
     r1cs::{
@@ -44,14 +47,11 @@ use warp::relations::{
     Arithmetize, PolyPredicate, Relation,
 };
 use warp::utils::poseidon;
-use warp::warp::{
-    AccumulatorInstance, AccumulatorWitness, WARPProof, WARPProverKey, WARPVerifierKey,
-};
-use warp::WARP;
+use warp::WarpAccumulationScheme;
 
 type F = BLS12_381;
 type V = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
-type WarpT = WARP<F, R1CS<F>, ReedSolomon<F>, V>;
+type WarpT = WarpAccumulationScheme<F, R1CS<F>, ReedSolomon<F>, V>;
 
 fn build_keys(
     code_len: usize,
@@ -71,9 +71,9 @@ fn build_keys(
 /// to re-derive the verifier state.
 struct Fixture {
     warp: WarpT,
-    vk: WARPVerifierKey,
+    vk: WarpVerifierKey,
     acc_x: AccumulatorInstance<F, V>,
-    proof: WARPProof<F, V>,
+    proof: WarpProof<F, V>,
     narg_str: Vec<u8>,
 }
 
@@ -81,7 +81,7 @@ impl Fixture {
     fn verify(
         &self,
         acc_x: AccumulatorInstance<F, V>,
-        proof: WARPProof<F, V>,
+        proof: WarpProof<F, V>,
     ) -> Result<(), VerifierError> {
         let domainsep_v = spongefish::domain_separator!("test::warp::negative");
         let mut verifier_state = domainsep_v
@@ -134,9 +134,15 @@ fn make_fixture() -> Fixture {
 
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
-    let warp_cfg1 = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_cfg1 = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let (ck1, vk1) = build_keys(code.code_len(), t);
-    let w1 = WARP::<F, R1CS<F>, _, V>::new(warp_cfg1, code.clone(), r1cs.clone(), ck1, vk1);
+    let w1 = WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(
+        warp_cfg1,
+        code.clone(),
+        r1cs.clone(),
+        ck1,
+        vk1,
+    );
 
     let mut acc_x = AccumulatorInstance::empty();
     let mut acc_w = AccumulatorWitness::empty();
@@ -146,7 +152,7 @@ fn make_fixture() -> Fixture {
         let mut ps = ds.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _) = w1
             .prove(
-                WARPProverKey {
+                WarpProverKey {
                     index: r1cs.clone(),
                     m_num_constraints: r1cs.m_num_constraints,
                     n_num_variables: r1cs.n_num_variables,
@@ -164,15 +170,16 @@ fn make_fixture() -> Fixture {
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
-    let warp_cfg2 = WARPConfig::<_, R1CS<F>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+    let warp_cfg2 = WarpConfig::<_, R1CS<F>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
     let (ck2, vk2) = build_keys(code.code_len(), t);
-    let warp = WARP::<F, R1CS<F>, _, V>::new(warp_cfg2, code, r1cs.clone(), ck2, vk2);
+    let warp =
+        WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(warp_cfg2, code, r1cs.clone(), ck2, vk2);
 
     let ds = spongefish::domain_separator!("test::warp::negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
     let ((acc_x, _acc_w), proof) = warp
         .prove(
-            WARPProverKey {
+            WarpProverKey {
                 index: r1cs.clone(),
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,
@@ -188,7 +195,7 @@ fn make_fixture() -> Fixture {
 
     Fixture {
         warp,
-        vk: WARPVerifierKey {
+        vk: WarpVerifierKey {
             m_num_constraints: r1cs.m_num_constraints,
             n_num_variables: r1cs.n_num_variables,
             k_num_witness_vars: r1cs.k_num_witness_vars,
@@ -271,7 +278,7 @@ fn tampered_shift_query_answer_raises_target() {
 
 // `truncated_auth_j_raises_num_l2_instances` removed: opening proofs now
 // live in the spongefish transcript (written by `V::open_multiple`), so
-// there are no longer separate `auth_j` fields on `WARPProof` to truncate.
+// there are no longer separate `auth_j` fields on `WarpProof` to truncate.
 // Equivalent coverage would require transcript-byte tampering, which is a
 // spongefish-layer concern, not warp's.
 
@@ -324,9 +331,10 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
         })
         .unzip();
 
-    let warp_cfg = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_cfg = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let (ck, vk) = build_keys(code.code_len(), t);
-    let warp = WARP::<F, R1CS<F>, _, V>::new(warp_cfg, code, r1cs.clone(), ck, vk);
+    let warp =
+        WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(warp_cfg, code, r1cs.clone(), ck, vk);
 
     let mut witnesses_short = witnesses;
     witnesses_short.pop();
@@ -334,7 +342,7 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
     let ds = spongefish::domain_separator!("test::warp::prove_negative");
     let mut ps = ds.without_session().instance(&0u32).std_prover();
     let result = warp.prove(
-        WARPProverKey {
+        WarpProverKey {
             index: r1cs.clone(),
             m_num_constraints: r1cs.m_num_constraints,
             n_num_variables: r1cs.n_num_variables,

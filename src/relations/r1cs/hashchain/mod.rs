@@ -21,7 +21,7 @@ pub use synthesizer::HashChainSynthesizer;
 pub use witness::HashChainWitness;
 
 use super::R1CS;
-use crate::error::WARPError;
+use crate::error::WarpError;
 use crate::relations::Arithmetize;
 
 impl<
@@ -33,7 +33,7 @@ impl<
     type Config = (H::Parameters, usize);
     type Predicate = R1CS<F>;
 
-    fn arithmetize(config: &Self::Config) -> Result<R1CS<F>, WARPError> {
+    fn arithmetize(config: &Self::Config) -> Result<R1CS<F>, WarpError> {
         let (params, hash_chain_size) = config;
         let preimage = vec![F::ZERO];
         let digest = compute_hash_chain::<F, H>(params, &preimage, *hash_chain_size);

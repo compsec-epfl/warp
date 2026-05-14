@@ -3,18 +3,16 @@
 //! Between OOD and Batching, the verifier draws `t · log_n` random
 //! bits and decodes them into `t` shift-query positions over
 //! `{0, 1}^log_n`, plus their corresponding evaluation-point vectors.
-//!
-//! This is the simplest possible IOR — one round of pure verifier
-//! randomness, no prover messages, no oracles. Modeled as an IOR for
-//! uniformity with the rest of the choreography.
-//!
+
 use ark_ff::Field;
-use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
+use ark_iop::{
+    IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple,
+    VerifierTranscript, IOR,
+};
+use spongefish::{ProverState, VerifierState};
 use std::marker::PhantomData;
 
-use crate::error::VerifierError;
-use crate::protocol::ior::{ProverTriple, IOR};
-use crate::protocol::oracles::query_indices::QueryIndices;
+use crate::iop::oracles::query_indices::QueryIndices;
 
 pub struct SampleQueriesStatement {
     pub log_n: usize,
@@ -32,11 +30,9 @@ pub struct SampleQueriesReducedStatement<F: Field> {
 #[derive(Default)]
 pub struct SampleQueries<F: Field>(PhantomData<F>);
 
-impl<F> IOR for SampleQueries<F>
-where
-    F: Field + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
-{
+impl<F: Field> IOR for SampleQueries<F> {
     const NAME: &'static str = "SampleQueries";
+    const MESSAGE_TAGS: &'static [&'static str] = &["squeeze:queries"];
 
     type Statement<'b>
         = SampleQueriesStatement
@@ -72,39 +68,51 @@ where
             queries: inputs.queries.clone(),
         }
     }
+}
 
+impl<F: Field> SampleQueries<F> {
     #[tracing::instrument(name = "sample_queries", skip_all, fields(t = statement.t_num_queries, log_n = statement.log_n))]
-    fn prove_inner<'b>(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement<'b>,
-        _witness: &Self::Witness<'b>,
-        _inputs: &Self::ProverInputs<'b>,
-    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
-    where
-        Self: 'b,
-    {
+        statement: &SampleQueriesStatement,
+    ) -> ProverTriple<SampleQueriesReductionInputs<F>, (), ()> {
         let queries =
             QueryIndices::<F>::sample(prover_state, statement.log_n, statement.t_num_queries);
         Ok((SampleQueriesReductionInputs { queries }, (), ()))
     }
 
     #[tracing::instrument(name = "sample_queries.verify", skip_all)]
-    fn verify_inner<'b, 'c>(
+    fn verify_inner(
         &self,
-        verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement<'c>,
-        _inputs: &Self::VerifierInputs<'c>,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
-    where
-        Self: 'c,
-    {
+        verifier_state: &mut VerifierState<'_>,
+        statement: &SampleQueriesStatement,
+    ) -> Result<(SampleQueriesReductionInputs<F>, ()), IorVerifierError> {
         let n_bytes = (statement.t_num_queries * statement.log_n).div_ceil(8);
-        let bytes: Vec<u8> = (0..n_bytes)
-            .map(|_| verifier_state.verifier_message::<[u8; 1]>()[0])
-            .collect();
+        let bytes = verifier_state.squeeze_bytes(n_bytes);
         let queries =
             QueryIndices::from_squeezed_bytes(&bytes, statement.log_n, statement.t_num_queries);
         Ok((SampleQueriesReductionInputs { queries }, ()))
+    }
+
+    pub fn prove(
+        &self,
+        prover_state: &mut ProverState,
+        statement: &SampleQueriesStatement,
+        _witness: &(),
+        _inputs: &(),
+    ) -> Result<IorProveResult<SampleQueriesReducedStatement<F>, (), ()>, IorProverError> {
+        self.compose_prove(prover_state, statement, |t| self.prove_inner(t, statement))
+    }
+
+    pub fn verify(
+        &self,
+        verifier_state: &mut VerifierState<'_>,
+        statement: &SampleQueriesStatement,
+        _inputs: &(),
+    ) -> Result<IorVerifyResult<SampleQueriesReducedStatement<F>, ()>, IorVerifierError> {
+        self.compose_verify(verifier_state, statement, |t| {
+            self.verify_inner(t, statement)
+        })
     }
 }

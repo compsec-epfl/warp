@@ -5,7 +5,7 @@ pub use description::SerializableConstraintMatrices;
 
 use ark_ff::Field;
 
-use crate::error::WARPError;
+use crate::error::WarpError;
 
 pub trait Relation<F: Field> {
     type Instance;
@@ -24,7 +24,7 @@ pub trait Relation<F: Field> {
 
 pub trait PolyPredicate<F: Field> {
     type Config;
-    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError>;
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WarpError>;
     fn config(&self) -> Self::Config;
     fn description(&self) -> Vec<u8>;
     fn constraints(&self) -> &r1cs::R1CSConstraints<F>;
@@ -33,5 +33,5 @@ pub trait PolyPredicate<F: Field> {
 pub trait Arithmetize<F: Field> {
     type Config;
     type Predicate;
-    fn arithmetize(config: &Self::Config) -> Result<Self::Predicate, WARPError>;
+    fn arithmetize(config: &Self::Config) -> Result<Self::Predicate, WarpError>;
 }

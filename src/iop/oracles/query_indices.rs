@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use spongefish::ProverState;
+use ark_iop::ProverTranscript;
 
 #[derive(Clone)]
 pub struct QueryIndices<F: Field> {
@@ -8,17 +8,13 @@ pub struct QueryIndices<F: Field> {
 }
 
 impl<F: Field> QueryIndices<F> {
-    pub fn sample(
-        prover_state: &mut ProverState,
+    pub fn sample<P: ProverTranscript>(
+        transcript: &mut P,
         log_codeword_len: usize,
         num_queries: usize,
     ) -> Self {
         let num_bytes = (num_queries * log_codeword_len).div_ceil(8);
-        let squeezed_bytes: Vec<u8> = prover_state
-            .verifier_messages_vec::<[u8; 1]>(num_bytes)
-            .into_iter()
-            .map(|[b]| b)
-            .collect();
+        let squeezed_bytes = transcript.squeeze_bytes(num_bytes);
         Self::from_squeezed_bytes(&squeezed_bytes, log_codeword_len, num_queries)
     }
 

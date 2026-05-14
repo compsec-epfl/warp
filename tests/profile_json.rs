@@ -19,7 +19,8 @@ use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
 use ark_mt::blake3::Blake3FieldHasher;
 use ark_std::rand::thread_rng;
 use ark_std::UniformRand;
-use warp::config::WARPConfig;
+use warp::accumulation_scheme::{AccumulatorInstance, AccumulatorWitness, WarpProverKey};
+use warp::config::WarpConfig;
 use warp::relations::{
     r1cs::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
@@ -28,8 +29,7 @@ use warp::relations::{
     Arithmetize, PolyPredicate, Relation,
 };
 use warp::utils::poseidon;
-use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey};
-use warp::WARP;
+use warp::WarpAccumulationScheme;
 
 /// `Arc<Mutex<Vec<u8>>>` wrapped so it implements `io::Write`.
 #[derive(Clone)]
@@ -92,20 +92,21 @@ fn json_layer_emits_phase_records() {
         })
         .unzip();
 
-    let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
-        warp_config,
-        code,
-        r1cs.clone(),
-        Blake3FieldHasher::<BLS12_381>::new(),
-    );
+    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let hash_chain_warp =
+        WarpAccumulationScheme::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
+            warp_config,
+            code,
+            r1cs.clone(),
+            Blake3FieldHasher::<BLS12_381>::new(),
+        );
 
     let domainsep = spongefish::domain_separator!("test::profile_json");
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
 
     hash_chain_warp
         .prove(
-            WARPProverKey {
+            WarpProverKey {
                 index: r1cs.clone(),
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,

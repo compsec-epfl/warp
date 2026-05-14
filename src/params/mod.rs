@@ -1,4 +1,4 @@
-//! Soundness-driven `(s, t)` selection for WARP.
+//! Soundness-driven `(s, t)` selection for WarpAccumulationScheme.
 //! Paired spec: `docs/paper-mods/mod4_parameter_selection.tex`.
 
 pub mod presets;

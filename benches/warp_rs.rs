@@ -11,9 +11,9 @@ use ark_vc::mvc::MultiVectorCommitment;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
-use warp::config::WARPConfig;
-use warp::warp::WARPProverKey;
-use warp::WARP;
+use warp::config::WarpConfig;
+use warp::warp::WarpProverKey;
+use warp::WarpAccumulationScheme;
 
 mod utils;
 use utils::poseidon;
@@ -39,14 +39,19 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
     type V = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
 
     for l in [32, 64, 128, 256, 512] {
-        let warp_config = WARPConfig::new(l, 0, s, t, r1cs.config(), code.code_len());
+        let warp_config = WarpConfig::new(l, 0, s, t, r1cs.config(), code.code_len());
 
         let pp = <V as MultiVectorCommitment>::setup_multiple(0, code.code_len(), t, &mut rng)
             .expect("setup_multiple");
         let (ck, vk) = <V as MultiVectorCommitment>::trim_multiple(&pp, 0, code.code_len(), t)
             .expect("trim_multiple");
-        let hash_chain_warp =
-            WARP::<_, _, _, V>::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
+        let hash_chain_warp = WarpAccumulationScheme::<_, _, _, V>::new(
+            warp_config.clone(),
+            code.clone(),
+            r1cs.clone(),
+            ck,
+            vk,
+        );
 
         let instances_witnesses =
             get_hashchain_instance_witness_pairs(l, &poseidon_config, HASHCHAIN_SIZE, &mut rng);
@@ -65,7 +70,7 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
                     |(mut prover_state, _x_w)| {
                         let _ = hash_chain_warp
                             .prove(
-                                WARPProverKey {
+                                WarpProverKey {
                                     index: r1cs.clone(),
                                     m_num_constraints: r1cs.m_num_constraints,
                                     n_num_variables: r1cs.n_num_variables,

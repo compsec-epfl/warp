@@ -4,7 +4,7 @@ use crate::params::{validate, ParamError, Params, Regime, SecurityLevel, Soundne
 use crate::relations::PolyPredicate;
 
 #[derive(Clone)]
-pub struct WARPConfig<F: Field, P: PolyPredicate<F>> {
+pub struct WarpConfig<F: Field, P: PolyPredicate<F>> {
     pub l1_first_fold_factor: usize,
     pub l2_second_fold_factor: usize,
     pub s_num_ood_samples: usize,
@@ -13,7 +13,7 @@ pub struct WARPConfig<F: Field, P: PolyPredicate<F>> {
     pub n_code_len: usize,
 }
 
-impl<F: Field, P: PolyPredicate<F>> WARPConfig<F, P> {
+impl<F: Field, P: PolyPredicate<F>> WarpConfig<F, P> {
     pub fn new(
         l1_first_fold_factor: usize,
         l2_second_fold_factor: usize,
@@ -39,7 +39,7 @@ impl<F: Field, P: PolyPredicate<F>> WARPConfig<F, P> {
 
     /// Fail-closed soundness check on `(s, t)`. Returns `Ok(bound)` only when
     /// every admissibility flag passes and proximity soundness meets the
-    /// target. `WARPConfig::new` itself does not call this (it cannot, the
+    /// target. `WarpConfig::new` itself does not call this (it cannot, the
     /// security target / field-size / rate / regime live outside the config);
     /// callers building a config for production use **must** call this before
     /// invoking the prover. See `docs/paper-mods/mod4_parameter_selection.tex`.

@@ -3,6 +3,9 @@
 //! sparse-evaluation optimization.
 
 use ark_ff::{Field, PrimeField};
+use ark_iop::{
+    IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple, IOR,
+};
 use ark_std::log2;
 use effsc::{
     noop_hook, provers::inner_product::InnerProductProver, runner::sumcheck,
@@ -13,10 +16,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::count_ops;
-use crate::error::{ProverError, VerifierError};
-use crate::protocol::ior::{ProverTriple, IOR};
-use crate::protocol::oracles::evaluation::Oracle;
-use crate::protocol::transcript::EffscVerifierTranscript;
+use crate::iop::oracles::evaluation::Oracle;
 use crate::utils::poly::{eq_poly, eq_poly_non_binary};
 
 /// Sparse-eval optimization (CBBZ23 / HyperPlonk): shift-query zetas at
@@ -125,6 +125,7 @@ where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
 {
     const NAME: &'static str = "Batching";
+    const MESSAGE_TAGS: &'static [&'static str] = &["squeeze:xis", "delegate:effsc.sumcheck"];
 
     type Statement<'b>
         = BatchingStatement<F>
@@ -160,27 +161,28 @@ where
             alpha_sumcheck_challenges: inputs.alpha_sumcheck_challenges.clone(),
         }
     }
+}
 
+impl<F> Batching<F>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+{
     #[tracing::instrument(
         name = "batching",
         skip_all,
         fields(s = statement.s_num_ood_samples, t = statement.t_num_queries, log_n = statement.log_n)
     )]
-    fn prove_inner<'b>(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement<'b>,
-        _witness: &Self::Witness<'b>,
-        inputs: &Self::ProverInputs<'b>,
-    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
-    where
-        Self: 'b,
-    {
+        statement: &BatchingStatement<F>,
+        inputs: &BatchingProverInputs<'_, F>,
+    ) -> ProverTriple<BatchingReductionInputs<F>, (), BatchingReducedWitness<F>> {
         let n = inputs.oracle.len();
         let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
         if statement.zetas_prefix.len() != r {
-            return Err(ProverError::StatementShape {
+            return Err(IorProverError::StatementShape {
                 what: "zetas_prefix",
                 expected: r,
                 got: statement.zetas_prefix.len(),
@@ -212,7 +214,7 @@ where
             )
         };
 
-        // Run the inner-product sumcheck. MSB half-split → reverse once.
+        // Inner-product sumcheck. MSB half-split → reverse once.
         let alpha = {
             let _s = tracing::info_span!("batching.sumcheck").entered();
             let log_n_bits = ark_std::log2(n) as u64;
@@ -245,49 +247,41 @@ where
         skip_all,
         fields(s = statement.s_num_ood_samples, t = statement.t_num_queries, log_n = statement.log_n)
     )]
-    fn verify_inner<'b, 'c>(
+    fn verify_inner(
         &self,
-        verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement<'c>,
-        inputs: &Self::VerifierInputs<'c>,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
-    where
-        Self: 'c,
-    {
+        verifier_state: &mut VerifierState<'_>,
+        statement: &BatchingStatement<F>,
+        inputs: &BatchingVerifierInputs<F>,
+    ) -> Result<(BatchingReductionInputs<F>, ()), IorVerifierError> {
         let r = 1 + statement.s_num_ood_samples + statement.t_num_queries;
         let log_r = log2(r) as usize;
         if statement.zetas_prefix.len() != r {
-            return Err(VerifierError::StatementShape {
+            return Err(IorVerifierError::StatementShape {
                 what: "zetas_prefix",
                 expected: r,
                 got: statement.zetas_prefix.len(),
             });
         }
         if inputs.nus_claimed_evals.len() != r {
-            return Err(VerifierError::StatementShape {
+            return Err(IorVerifierError::StatementShape {
                 what: "nus_claimed_evals",
                 expected: r,
                 got: inputs.nus_claimed_evals.len(),
             });
         }
 
-        // Squeeze ξ matching the prover.
         let xis: Vec<F> = (0..log_r)
             .map(|_| verifier_state.verifier_message::<F>())
             .collect();
         let xi_eq_evals = (0..r).map(|i| eq_poly(&xis, i)).collect::<Vec<F>>();
 
-        // σ₂ = Σ ξ_eq · ν.
         let sigma_2 = xi_eq_evals
             .iter()
             .zip(&inputs.nus_claimed_evals)
             .fold(F::zero(), |acc, (xi_eq, nu)| acc + *xi_eq * nu);
 
-        // Run sumcheck_verify and check the final-claim oracle check.
-        let res = {
-            let mut wrap = EffscVerifierTranscript(verifier_state);
-            sumcheck_verify(sigma_2, 2, statement.log_n, &mut wrap, |_, _| Ok(()))?
-        };
+        let res = sumcheck_verify(sigma_2, 2, statement.log_n, verifier_state, |_, _| Ok(()))
+            .map_err(|e| IorVerifierError::Transcript(format!("sumcheck: {e:?}")))?;
         let alpha_lsb: Vec<F> = res.challenges.iter().rev().copied().collect();
 
         let mut zeta_eqs = Vec::with_capacity(r);
@@ -301,7 +295,7 @@ where
                 .fold(F::zero(), |acc, (a, b)| acc + a * *b);
         (expected == res.final_claim)
             .then_some(())
-            .ok_or(VerifierError::Target)?;
+            .ok_or(IorVerifierError::Target)?;
 
         Ok((
             BatchingReductionInputs {
@@ -309,5 +303,31 @@ where
             },
             (),
         ))
+    }
+
+    pub fn prove(
+        &self,
+        prover_state: &mut ProverState,
+        statement: &BatchingStatement<F>,
+        _witness: &(),
+        inputs: &BatchingProverInputs<'_, F>,
+    ) -> Result<
+        IorProveResult<BatchingReducedStatement<F>, (), BatchingReducedWitness<F>>,
+        IorProverError,
+    > {
+        self.compose_prove(prover_state, statement, |t| {
+            self.prove_inner(t, statement, inputs)
+        })
+    }
+
+    pub fn verify(
+        &self,
+        verifier_state: &mut VerifierState<'_>,
+        statement: &BatchingStatement<F>,
+        inputs: &BatchingVerifierInputs<F>,
+    ) -> Result<IorVerifyResult<BatchingReducedStatement<F>, ()>, IorVerifierError> {
+        self.compose_verify(verifier_state, statement, |t| {
+            self.verify_inner(t, statement, inputs)
+        })
     }
 }

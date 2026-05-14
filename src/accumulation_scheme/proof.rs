@@ -1,14 +1,14 @@
 use ark_ff::Field;
 use ark_vc::mvc::MultiVectorCommitment;
 
+use crate::accumulation_scheme::accumulator::{AccumulatorInstance, AccumulatorWitness};
 use crate::error::ProverError;
-use crate::warp::accumulator::{AccumulatorInstance, AccumulatorWitness};
 
-/// Proof produced by the WARP accumulation prover. Auth paths and
+/// Proof produced by the WarpAccumulationScheme accumulation prover. Auth paths and
 /// sibling digests now live in the spongefish transcript (the trait's
 /// `open_multiple` writes them via `prover_state.prover_message`), so
 /// they no longer appear here as separate fields.
-pub struct WARPProof<F, V>
+pub struct WarpProof<F, V>
 where
     F: Field,
     V: MultiVectorCommitment<Alphabet = F>,
@@ -20,7 +20,7 @@ where
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-impl<F, V> Clone for WARPProof<F, V>
+impl<F, V> Clone for WarpProof<F, V>
 where
     F: Field,
     V: MultiVectorCommitment<Alphabet = F>,
@@ -40,7 +40,7 @@ where
 pub type ProveResult<F, V> = Result<
     (
         (AccumulatorInstance<F, V>, AccumulatorWitness<F, V>),
-        WARPProof<F, V>,
+        WarpProof<F, V>,
     ),
     ProverError,
 >;

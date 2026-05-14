@@ -25,7 +25,7 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     eprintln!(
-        "warp-params — pick soundness-driven WARP parameters.\n\
+        "warp-params — pick soundness-driven WarpAccumulationScheme parameters.\n\
          \n\
          Usage:\n\
              warp-params select   --lambda N --rate NUM/DEN|FLOAT --field-bits N --regime provable|conjectured\n\

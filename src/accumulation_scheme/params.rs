@@ -3,11 +3,11 @@ use ark_ff::Field;
 use ark_vc::mvc::MultiVectorCommitment;
 use std::marker::PhantomData;
 
-use crate::config::WARPConfig;
+use crate::config::WarpConfig;
 use crate::relations::PolyPredicate;
 
 /// Shared configuration used by all IORs.
-pub struct WARPParams<F, P, C, V>
+pub struct WarpParams<F, P, C, V>
 where
     F: Field,
     P: PolyPredicate<F>,
@@ -15,7 +15,7 @@ where
     V: MultiVectorCommitment<Alphabet = F>,
 {
     pub(crate) _phantom_f: PhantomData<F>,
-    pub config: WARPConfig<F, P>,
+    pub config: WarpConfig<F, P>,
     pub code: C,
     pub predicate: P,
     pub ck: V::CommitterKey,

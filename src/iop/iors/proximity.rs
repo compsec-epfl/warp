@@ -2,28 +2,27 @@
 //!
 //! Index queries on the committed oracles. Opens both the fresh PESAT
 //! commitment and each accumulated commitment at the query positions.
-//! With the trait migration, opening proofs (auth paths + sibling
-//! digests) are written into the spongefish transcript by
-//! `V::open_multiple` rather than carried as separate proof fields.
-//!
+//! Opening proofs (auth paths + sibling digests) are written into the
+//! spongefish transcript by `V::open_multiple` rather than carried as
+//! separate proof fields.
+
 use ark_ff::Field;
+use ark_iop::{
+    IndexedOracle, IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple,
+    IOR,
+};
 use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
 use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::crypto::vc::CommittedCodewords;
-use crate::error::VerifierError;
-use crate::protocol::ior::{ProverTriple, IOR};
-use crate::protocol::oracles::indexed::IndexedOracle;
-use crate::protocol::oracles::query_indices::QueryIndices;
+use crate::iop::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
     pub queries: QueryIndices<F>,
     pub l2_second_fold_factor: usize,
     pub t_num_queries: usize,
-    /// Codeword length (`code.code_len()`), needed by both prover and
-    /// verifier.
     pub n_code_len: usize,
 }
 
@@ -50,15 +49,14 @@ where
 }
 
 /// Wire-format proof string. Auth paths + sibling digests now live in
-/// the spongefish transcript (written by `V::open_multiple`); only the
-/// shift-query answers remain as out-of-band data.
+/// the spongefish transcript; only the shift-query answers remain
+/// out-of-band.
 pub struct ProximityProofString<F: Field> {
     /// Per-query × per-codeword. Outer length = t (queries). Inner
     /// length = (l2 acc + l1 fresh).
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-/// Proximity IOR configuration. Holds the trait CK used by `open_multiple`.
 pub struct Proximity<'a, F, V>
 where
     F: Field,
@@ -75,6 +73,7 @@ where
     V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
 {
     const NAME: &'static str = "Proximity";
+    const MESSAGE_TAGS: &'static [&'static str] = &["delegate:vc.open_multiple"];
 
     type Statement<'b>
         = ProximityStatement<F>
@@ -89,7 +88,7 @@ where
     where
         Self: 'b;
     type VerifierInputs<'b>
-        = ProximityVerifierInputs<'b, F, crate::protocol::oracles::indexed::ValidatedOracle<F>>
+        = ProximityVerifierInputs<'b, F, ark_iop::ValidatedOracle<F>>
     where
         Self: 'b;
     type ReductionInputs = ();
@@ -107,7 +106,14 @@ where
         Self: 'b,
     {
     }
+}
 
+impl<'a, F, V> Proximity<'a, F, V>
+where
+    F: Field,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
+{
     #[tracing::instrument(
         name = "proximity",
         skip_all,
@@ -116,27 +122,18 @@ where
             n_accumulators = inputs.acc_td_committed_codewords.len(),
         )
     )]
-    fn prove_inner<'b>(
+    fn prove_inner(
         &self,
         prover_state: &mut ProverState,
-        statement: &Self::Statement<'b>,
-        _witness: &Self::Witness<'b>,
-        inputs: &Self::ProverInputs<'b>,
-    ) -> ProverTriple<Self::ReductionInputs, Self::ProofString, Self::ReducedWitness>
-    where
-        Self: 'b,
-        'a: 'b,
-        V: 'b,
-    {
+        statement: &ProximityStatement<F>,
+        inputs: &ProximityProverInputs<'_, F, V>,
+    ) -> ProverTriple<(), ProximityProofString<F>, ()> {
         let leaf_positions = &statement.queries.leaf_positions;
 
-        // Trait `open_multiple` requires sorted unique indices.
         let mut sorted_unique = leaf_positions.clone();
         sorted_unique.sort_unstable();
         sorted_unique.dedup();
 
-        // Helper: column-tuple values at the sorted positions for one
-        // commitment's codewords.
         let column_tuples = |codewords: &[Vec<F>]| -> Vec<Vec<F>> {
             sorted_unique
                 .iter()
@@ -185,8 +182,6 @@ where
             }
         }
 
-        // Shift query answers: per query position, values across
-        // (acc_codewords ++ fresh_codewords).
         let shift_query_answers = {
             let _s = tracing::info_span!("proximity.shift_queries").entered();
             let total_codewords = inputs
@@ -226,39 +221,30 @@ where
         skip_all,
         fields(t = statement.t_num_queries, l2 = statement.l2_second_fold_factor)
     )]
-    fn verify_inner<'b, 'c>(
+    fn verify_inner(
         &self,
-        _verifier_state: &mut VerifierState<'b>,
-        statement: &Self::Statement<'c>,
-        inputs: &Self::VerifierInputs<'c>,
-    ) -> Result<(Self::ReductionInputs, Self::VerifierOutputs), VerifierError>
-    where
-        Self: 'c,
-        'a: 'c,
-        V: 'c,
-    {
-        // Arity check.
+        _verifier_state: &mut VerifierState<'_>,
+        statement: &ProximityStatement<F>,
+        inputs: &ProximityVerifierInputs<'_, F, ark_iop::ValidatedOracle<F>>,
+    ) -> Result<((), ()), IorVerifierError> {
         (inputs.acc.len() == statement.l2_second_fold_factor)
             .then_some(())
-            .ok_or(VerifierError::NumL2Instances)?;
+            .ok_or_else(|| {
+                IorVerifierError::Custom(format!(
+                    "Proximity: NumL2Instances mismatch (got {}, expected {})",
+                    inputs.acc.len(),
+                    statement.l2_second_fold_factor
+                ))
+            })?;
 
-        // Validation already happened upstream (orchestrator called
-        // V::check_multiple before invoking this IOR). Handles are
-        // pre-validated; this IOR is BCS-agnostic.
-        inputs
-            .fresh
-            .validate()
-            .then_some(())
-            .ok_or(VerifierError::ShiftQuery)?;
+        // Validation by construction: ValidatedOracle's existence
+        // already attests the orchestrator ran V::check_multiple
+        // upstream. No runtime validate() call needed.
         count_ops!(
             MerklePathsVerified,
             statement.queries.leaf_positions.len() as u64
         );
-        for handle in inputs.acc.iter() {
-            handle
-                .validate()
-                .then_some(())
-                .ok_or(VerifierError::ShiftQuery)?;
+        for _ in inputs.acc.iter() {
             count_ops!(
                 MerklePathsVerified,
                 statement.queries.leaf_positions.len() as u64
@@ -266,5 +252,28 @@ where
         }
 
         Ok(((), ()))
+    }
+
+    pub fn prove(
+        &self,
+        prover_state: &mut ProverState,
+        statement: &ProximityStatement<F>,
+        _witness: &(),
+        inputs: &ProximityProverInputs<'_, F, V>,
+    ) -> Result<IorProveResult<(), ProximityProofString<F>, ()>, IorProverError> {
+        self.compose_prove(prover_state, statement, |t| {
+            self.prove_inner(t, statement, inputs)
+        })
+    }
+
+    pub fn verify(
+        &self,
+        verifier_state: &mut VerifierState<'_>,
+        statement: &ProximityStatement<F>,
+        inputs: &ProximityVerifierInputs<'_, F, ark_iop::ValidatedOracle<F>>,
+    ) -> Result<IorVerifyResult<(), ()>, IorVerifierError> {
+        self.compose_verify(verifier_state, statement, |t| {
+            self.verify_inner(t, statement, inputs)
+        })
     }
 }

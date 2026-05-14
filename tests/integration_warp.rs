@@ -1,4 +1,4 @@
-//! End-to-end integration tests for the full WARP prove / verify / decide
+//! End-to-end integration tests for the full WarpAccumulationScheme prove / verify / decide
 //! cycle. Previously lived in `src/lib.rs` as an inline `#[cfg(test)]`
 //! module; moved here so `src/lib.rs` stays focused on the orchestrator.
 //!
@@ -27,7 +27,11 @@ use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::thread_rng;
 use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
 
-use warp::config::WARPConfig;
+use warp::accumulation_scheme::AccumulationScheme;
+use warp::accumulation_scheme::{
+    AccumulatorInstance, AccumulatorWitness, WarpProverKey, WarpVerifierKey,
+};
+use warp::config::WarpConfig;
 use warp::relations::{
     r1cs::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
@@ -37,8 +41,7 @@ use warp::relations::{
 };
 use warp::serialize::acc_witness_size;
 use warp::utils::poseidon;
-use warp::warp::{AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARPVerifierKey};
-use warp::WARP;
+use warp::WarpAccumulationScheme;
 
 /// Concrete Merkle scheme used by the tests below. Plain perfect-binary
 /// tree with a Blake3 field-symbol hasher — no caps, no multi-region.
@@ -108,15 +111,14 @@ fn warp_test() {
     ))
     .unwrap();
 
-    let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, MerkleVc<BLS12_381>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        ck,
-        vk,
-    );
+    let hash_chain_warp = WarpAccumulationScheme::<
+        BLS12_381,
+        R1CS<BLS12_381>,
+        _,
+        MerkleVc<BLS12_381>,
+    >::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
 
     let mut acc_x = AccumulatorInstance::empty();
     let mut acc_w = AccumulatorWitness::empty();
@@ -126,7 +128,7 @@ fn warp_test() {
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
-                WARPProverKey {
+                WarpProverKey {
                     index: r1cs.clone(),
                     m_num_constraints: r1cs.m_num_constraints,
                     n_num_variables: r1cs.n_num_variables,
@@ -145,21 +147,20 @@ fn warp_test() {
 
     let domainsep = spongefish::domain_separator!("test::warp");
     let warp_config =
-        WARPConfig::<_, R1CS<BLS12_381>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+        WarpConfig::<_, R1CS<BLS12_381>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
 
     let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
-    let hash_chain_warp = WARP::<BLS12_381, R1CS<BLS12_381>, _, MerkleVc<BLS12_381>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        ck,
-        vk,
-    );
+    let hash_chain_warp = WarpAccumulationScheme::<
+        BLS12_381,
+        R1CS<BLS12_381>,
+        _,
+        MerkleVc<BLS12_381>,
+    >::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
 
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
-            WARPProverKey {
+            WarpProverKey {
                 index: r1cs.clone(),
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,
@@ -181,7 +182,7 @@ fn warp_test() {
         .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
-            WARPVerifierKey {
+            WarpVerifierKey {
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,
                 k_num_witness_vars: r1cs.k_num_witness_vars,
@@ -191,9 +192,7 @@ fn warp_test() {
             pf.clone(),
         )
         .unwrap();
-    hash_chain_warp
-        .decide(acc_w.clone(), acc_x.clone())
-        .unwrap();
+    hash_chain_warp.decide(&acc_x, &acc_w).unwrap();
 
     println!("acc_x size: {}", acc_x.serialized_size(Compress::Yes));
     println!("acc_w size: {}", acc_witness_size(&acc_w, Compress::Yes));
@@ -248,15 +247,14 @@ fn warp_test_goldilocks() {
     ))
     .unwrap();
 
-    let warp_config = WARPConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
     let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, MerkleVc<Goldilocks>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        ck,
-        vk,
-    );
+    let hash_chain_warp = WarpAccumulationScheme::<
+        Goldilocks,
+        R1CS<Goldilocks>,
+        _,
+        MerkleVc<Goldilocks>,
+    >::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
 
     let mut acc_x = AccumulatorInstance::empty();
     let mut acc_w = AccumulatorWitness::empty();
@@ -266,7 +264,7 @@ fn warp_test_goldilocks() {
         let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
         let ((new_x, new_w), _pf) = hash_chain_warp
             .prove(
-                WARPProverKey {
+                WarpProverKey {
                     index: r1cs.clone(),
                     m_num_constraints: r1cs.m_num_constraints,
                     n_num_variables: r1cs.n_num_variables,
@@ -286,21 +284,20 @@ fn warp_test_goldilocks() {
     let domainsep = spongefish::domain_separator!("test::warp");
     // Use 8 (2*l1) for the total accumulation size to test multi-instance accumulation
     let warp_config =
-        WARPConfig::<_, R1CS<Goldilocks>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+        WarpConfig::<_, R1CS<Goldilocks>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
 
     let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
-    let hash_chain_warp = WARP::<Goldilocks, R1CS<Goldilocks>, _, MerkleVc<Goldilocks>>::new(
-        warp_config.clone(),
-        code.clone(),
-        r1cs.clone(),
-        ck,
-        vk,
-    );
+    let hash_chain_warp = WarpAccumulationScheme::<
+        Goldilocks,
+        R1CS<Goldilocks>,
+        _,
+        MerkleVc<Goldilocks>,
+    >::new(warp_config.clone(), code.clone(), r1cs.clone(), ck, vk);
 
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
     let ((acc_x, acc_w), pf) = hash_chain_warp
         .prove(
-            WARPProverKey {
+            WarpProverKey {
                 index: r1cs.clone(),
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,
@@ -322,7 +319,7 @@ fn warp_test_goldilocks() {
         .std_verifier(&narg_str);
     hash_chain_warp
         .verify(
-            WARPVerifierKey {
+            WarpVerifierKey {
                 m_num_constraints: r1cs.m_num_constraints,
                 n_num_variables: r1cs.n_num_variables,
                 k_num_witness_vars: r1cs.k_num_witness_vars,
@@ -332,9 +329,7 @@ fn warp_test_goldilocks() {
             pf.clone(),
         )
         .unwrap();
-    hash_chain_warp
-        .decide(acc_w.clone(), acc_x.clone())
-        .unwrap();
+    hash_chain_warp.decide(&acc_x, &acc_w).unwrap();
 
     println!(
         "Goldilocks acc_x size: {}",

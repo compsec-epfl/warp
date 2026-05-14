@@ -1,6 +1,6 @@
 /// Prover key — relation index plus dimensions `(M, N, k)`.
 #[derive(Clone)]
-pub struct WARPProverKey<P> {
+pub struct WarpProverKey<P> {
     pub index: P,
     pub m_num_constraints: usize,
     pub n_num_variables: usize,
@@ -9,7 +9,7 @@ pub struct WARPProverKey<P> {
 
 /// Verifier key — dimensions only `(M, N, k)`.
 #[derive(Clone, Copy)]
-pub struct WARPVerifierKey {
+pub struct WarpVerifierKey {
     pub m_num_constraints: usize,
     pub n_num_variables: usize,
     pub k_num_witness_vars: usize,

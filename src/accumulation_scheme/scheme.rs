@@ -6,22 +6,22 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-use crate::config::WARPConfig;
+use crate::accumulation_scheme::keys::{WarpProverKey, WarpVerifierKey};
+use crate::accumulation_scheme::params::WarpParams;
+use crate::config::WarpConfig;
 use crate::relations::PolyPredicate;
-use crate::warp::keys::{WARPProverKey, WARPVerifierKey};
-use crate::warp::params::WARPParams;
 
-pub struct WARP<F, P, C, V>
+pub struct WarpAccumulationScheme<F, P, C, V>
 where
     F: Field,
     P: PolyPredicate<F>,
     C: LinearCode<F> + Clone,
     V: MultiVectorCommitment<Alphabet = F>,
 {
-    pub params: WARPParams<F, P, C, V>,
+    pub params: WarpParams<F, P, C, V>,
 }
 
-impl<F, P, C, V> WARP<F, P, C, V>
+impl<F, P, C, V> WarpAccumulationScheme<F, P, C, V>
 where
     F: Field,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
@@ -29,14 +29,14 @@ where
     V: MultiVectorCommitment<Alphabet = F>,
 {
     pub fn new(
-        config: WARPConfig<F, P>,
+        config: WarpConfig<F, P>,
         code: C,
         predicate: P,
         ck: V::CommitterKey,
         vk: V::VerifierKey,
-    ) -> WARP<F, P, C, V> {
+    ) -> WarpAccumulationScheme<F, P, C, V> {
         Self {
-            params: WARPParams {
+            params: WarpParams {
                 _phantom_f: PhantomData,
                 config,
                 code,
@@ -48,7 +48,7 @@ where
     }
 }
 
-impl<F, P, C, V> WARP<F, P, C, V>
+impl<F, P, C, V> WarpAccumulationScheme<F, P, C, V>
 where
     F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
     P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
@@ -58,20 +58,20 @@ where
     pub fn index(
         prover_state: &mut ProverState,
         index: P,
-    ) -> VerificationResult<(WARPProverKey<P>, WARPVerifierKey)> {
+    ) -> VerificationResult<(WarpProverKey<P>, WarpVerifierKey)> {
         let (m, n, k) = index.config();
         prover_state.public_message(&index.description());
         prover_state.prover_message(&F::from(m as u32));
         prover_state.prover_message(&F::from(n as u32));
         prover_state.prover_message(&F::from(k as u32));
         Ok((
-            WARPProverKey {
+            WarpProverKey {
                 index,
                 m_num_constraints: m,
                 n_num_variables: n,
                 k_num_witness_vars: k,
             },
-            WARPVerifierKey {
+            WarpVerifierKey {
                 m_num_constraints: m,
                 n_num_variables: n,
                 k_num_witness_vars: k,

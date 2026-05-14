@@ -4,7 +4,7 @@ use ark_ff::Field;
 use ark_relations::gr1cs::ConstraintSystemRef;
 use rayon::prelude::*;
 
-use crate::error::WARPError;
+use crate::error::WarpError;
 use crate::relations::SerializableConstraintMatrices;
 
 use super::PolyPredicate;
@@ -25,23 +25,23 @@ pub struct R1CS<F: Field> {
 }
 
 impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
-    type Error = WARPError;
+    type Error = WarpError;
 
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
         use ark_relations::gr1cs::R1CS_PREDICATE_LABEL;
 
-        let inner = cs.into_inner().ok_or(WARPError::R1CSConstruction {
+        let inner = cs.into_inner().ok_or(WarpError::R1CSConstruction {
             reason: "constraint system has outstanding borrows",
         })?;
         let all_matrices = inner
             .to_matrices()
-            .map_err(|_| WARPError::R1CSConstruction {
+            .map_err(|_| WarpError::R1CSConstruction {
                 reason: "constraint system not finalized or matrices unavailable",
             })?;
         let r1cs_matrices =
             all_matrices
                 .get(R1CS_PREDICATE_LABEL)
-                .ok_or(WARPError::R1CSConstruction {
+                .ok_or(WarpError::R1CSConstruction {
                     reason: "R1CS predicate not present in constraint system",
                 })?;
 
@@ -54,7 +54,7 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         let n = inner.num_instance_variables() + inner.num_witness_variables();
         let k = inner.num_witness_variables();
         if n == 0 {
-            return Err(WARPError::R1CSConstruction {
+            return Err(WarpError::R1CSConstruction {
                 reason: "n = num_instance_variables + num_witness_variables must be > 0",
             });
         }
@@ -89,22 +89,22 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
 
 impl<F: Field> R1CS<F> {
     // evaluate the given sparse linear combination over the provided z vector
-    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WARPError> {
+    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WarpError> {
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
             acc += *coeff
                 * z.get(*var)
-                    .ok_or(WARPError::R1CSWitnessSize(z.len(), *var))?;
+                    .ok_or(WarpError::R1CSWitnessSize(z.len(), *var))?;
         }
         Ok(acc)
     }
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
-    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WARPError> {
+    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WarpError> {
         let (a_i, b_i, c_i) = self
             .constraints_vec
             .get(i)
-            .ok_or(WARPError::R1CSNonExistingLC)?;
+            .ok_or(WarpError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
@@ -115,16 +115,16 @@ impl<F: Field> R1CS<F> {
 impl<F: Field> PolyPredicate<F> for R1CS<F> {
     type Config = (usize, usize, usize);
 
-    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WarpError> {
         if zero_evader_evals.len() < self.m_num_constraints {
-            return Err(WARPError::ZeroEvaderSize(
+            return Err(WarpError::ZeroEvaderSize(
                 zero_evader_evals.len(),
                 self.m_num_constraints - 1,
             ));
         }
         (0..self.m_num_constraints)
             .into_par_iter()
-            .map(|i| -> Result<F, WARPError> {
+            .map(|i| -> Result<F, WarpError> {
                 let p_i = self.eval_p_i(z, i)?;
                 Ok(zero_evader_evals[i] * p_i)
             })
@@ -143,7 +143,7 @@ impl<F: Field> PolyPredicate<F> for R1CS<F> {
         // Serializes the *concrete matrix triple* so two R1CS systems with
         // identical (m, n, k) but different constraints absorb to different
         // bytes (and therefore distinct transcripts). Without this,
-        // `WARP::index` would only commit to dimensions — a soundness hole
+        // `WarpAccumulationScheme::index` would only commit to dimensions — a soundness hole
         // in any downstream protocol that trusts `index()` to bind the
         // relation.
         let a: Vec<Vec<(F, usize)>> = self
