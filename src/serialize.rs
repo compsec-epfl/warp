@@ -1,115 +1,116 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, Path};
-use ark_ff::{Field, PrimeField};
-use ark_serialize::CanonicalSerialize;
+use ark_ff::Field;
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Valid, Write};
+use ark_vc::mvc::MultiVectorCommitment;
 
-pub type AccWitnessTuple<F, MT> = (Vec<MerkleTree<MT>>, Vec<Vec<F>>, Vec<Vec<F>>);
+use crate::accumulation_scheme::{AccumulatorInstance, AccumulatorWitness, WarpProof};
 
-#[allow(clippy::type_complexity)]
-pub type AccInstanceTuple<F, MT> = (
-    Vec<<MT as Config>::InnerDigest>,
-    Vec<Vec<F>>,
-    Vec<F>,
-    (Vec<Vec<F>>, Vec<Vec<F>>),
-    Vec<F>,
-);
+// `AccumulatorInstance` and `WarpProof` carry generic associated types
+// (`V::Commitment`) whose serializability isn't implied by the trait
+// itself. Putting the bound in a separate `impl` block (rather than on
+// the struct) keeps the bulk of the IOR / orchestrator code free of that
+// dep — only the size-printing path pulls it in.
 
-#[allow(clippy::type_complexity)]
-pub type ProofTuple<F, MT> = (
-    <MT as Config>::InnerDigest,
-    Vec<F>,
-    F,
-    Vec<F>,
-    Vec<Path<MT>>,
-    Vec<Vec<Path<MT>>>,
-    Vec<Vec<F>>,
-);
-
-#[derive(CanonicalSerialize)]
-pub struct AccWitnessSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt: MT::InnerDigest,
-    pub f: Vec<F>,
-    pub w: Vec<F>,
-}
-
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccWitnessSerializer<F, MT>
+impl<F, V> CanonicalSerialize for AccumulatorInstance<F, V>
+where
+    F: Field + CanonicalSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: CanonicalSerialize,
 {
-    pub fn new(acc_witness: AccWitnessTuple<F, MT>) -> Self {
-        assert_eq!(acc_witness.0.len(), 1);
-        assert_eq!(acc_witness.1.len(), 1);
-        assert_eq!(acc_witness.2.len(), 1);
-        let f = acc_witness.1[0].clone();
-        let w = acc_witness.2[0].clone();
-        Self {
-            rt: acc_witness.0[0].root(),
-            f,
-            w,
-        }
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.rt_commitments
+            .serialize_with_mode(&mut writer, compress)?;
+        self.alpha_fold_vectors
+            .serialize_with_mode(&mut writer, compress)?;
+        self.mu_claimed_evals
+            .serialize_with_mode(&mut writer, compress)?;
+        let taus: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.tau).collect();
+        let xs: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.x).collect();
+        taus.serialize_with_mode(&mut writer, compress)?;
+        xs.serialize_with_mode(&mut writer, compress)?;
+        self.eta_predicate_evals
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let taus: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.tau).collect();
+        let xs: Vec<&Vec<F>> = self.beta_twin_pairs.iter().map(|p| &p.x).collect();
+        self.rt_commitments.serialized_size(compress)
+            + self.alpha_fold_vectors.serialized_size(compress)
+            + self.mu_claimed_evals.serialized_size(compress)
+            + taus.serialized_size(compress)
+            + xs.serialized_size(compress)
+            + self.eta_predicate_evals.serialized_size(compress)
     }
 }
 
-#[derive(CanonicalSerialize)]
-pub struct AccInstanceSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt: MT::InnerDigest,
-    pub alpha: Vec<F>,
-    pub mu: F,
-    pub beta: (Vec<F>, Vec<F>),
-    pub eta: F,
-}
-
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    AccInstanceSerializer<F, MT>
+impl<F, V> Valid for AccumulatorInstance<F, V>
+where
+    F: Field + CanonicalSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: CanonicalSerialize,
 {
-    pub fn new(acc_instance: AccInstanceTuple<F, MT>) -> Self {
-        assert_eq!(acc_instance.0.len(), 1);
-        assert_eq!(acc_instance.1.len(), 1);
-        assert_eq!(acc_instance.2.len(), 1);
-        assert_eq!(acc_instance.3 .0.len(), 1);
-        assert_eq!(acc_instance.3 .1.len(), 1);
-        assert_eq!(acc_instance.4.len(), 1);
-        let beta = (acc_instance.3 .0[0].clone(), acc_instance.3 .1[0].clone());
-        Self {
-            rt: acc_instance.0[0].clone(),
-            alpha: acc_instance.1[0].clone(),
-            mu: acc_instance.2[0],
-            beta,
-            eta: acc_instance.4[0],
-        }
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
     }
 }
 
-#[derive(CanonicalSerialize)]
-pub struct ProofSerializer<
-    F: Field + PrimeField,
-    MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>,
-> {
-    pub rt_0: MT::InnerDigest,
-    pub mu_i: Vec<F>,
-    pub nu_0: F,
-    pub nu_i: Vec<F>,
-    pub auth_0: Vec<Path<MT>>,
-    pub auth_j: Vec<Vec<Path<MT>>>,
-    pub f_i_x_j: Vec<Vec<F>>,
+impl<F, V> CanonicalSerialize for WarpProof<F, V>
+where
+    F: Field + CanonicalSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.rt_0_fresh_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.mu_i_first_codeword_coords
+            .serialize_with_mode(&mut writer, compress)?;
+        self.nu_0_oracle_eval
+            .serialize_with_mode(&mut writer, compress)?;
+        self.nu_i_oracle_evals
+            .serialize_with_mode(&mut writer, compress)?;
+        self.shift_query_answers
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.rt_0_fresh_commitment.serialized_size(compress)
+            + self.mu_i_first_codeword_coords.serialized_size(compress)
+            + self.nu_0_oracle_eval.serialized_size(compress)
+            + self.nu_i_oracle_evals.serialized_size(compress)
+            + self.shift_query_answers.serialized_size(compress)
+    }
 }
 
-impl<F: Field + PrimeField, MT: Config<Leaf = [F], InnerDigest: AsRef<[u8]> + From<[u8; 32]>>>
-    ProofSerializer<F, MT>
+impl<F, V> Valid for WarpProof<F, V>
+where
+    F: Field + CanonicalSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+    V::Commitment: CanonicalSerialize,
 {
-    pub fn new(proof: ProofTuple<F, MT>) -> Self {
-        Self {
-            rt_0: proof.0,
-            mu_i: proof.1,
-            nu_0: proof.2,
-            nu_i: proof.3,
-            auth_0: proof.4,
-            auth_j: proof.5,
-            f_i_x_j: proof.6,
-        }
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
     }
+}
+
+/// `AccumulatorWitness` deliberately drops `td` (the full Merkle tree)
+/// from the serialized form: only `w` ships across the wire — the tree
+/// is reconstructable by re-encoding `w`. Used for proof-size reporting,
+/// not on-the-wire serialization.
+pub fn acc_witness_size<F, V>(acc_witness: &AccumulatorWitness<F, V>, compress: Compress) -> usize
+where
+    F: Field + CanonicalSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    acc_witness.w_witnesses.serialized_size(compress)
 }

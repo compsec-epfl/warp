@@ -1,0 +1,34 @@
+\documentclass{article}
+\input{notation.tex}
+
+\title{Modification 2: \\ Structured-sumcheck primitive (stub)}
+\author{Warp paper-mods}
+\date{}
+
+\begin{document}
+\maketitle
+
+\paragraph{Status.} Stub. Full spec deferred to Plan B' in the multi-plan
+roadmap. Paired code: refactor of
+\codemod{src/protocol/phases/twin_constraint.rs} once authored.
+
+\section*{Abstract}
+
+Warp's twin-constraint sumcheck reduces the claim
+\(\sum_i \tau(i) \cdot (f(i) + \omega \cdot p(i)) = 0\)
+where \(f\) and \(p\) are themselves defined as protogalaxy folds over
+\(\alpha\) and \(\beta\), respectively. At the paper level this is presented
+as a single \Sumcheck{} IOR; at the code level, the prover fuses the folds
+across rounds to share passes over tables, which is what lets the phase
+dominate only \(\sim 55\%\) of prover time rather than \(\sim 4\times\)
+that under the naive sequencing.
+
+Modification 2 promotes the structure \emph{sum of products of linear
+folds} to a first-class IOR primitive in the paper, in the style of
+HyperPlonk's \emph{ZeroCheck}. Both Warp's twin-constraint sumcheck and
+the batching sumcheck become instances. The primitive justifies the
+fusion at the paper level; the code then exposes a
+\texttt{StructuredSumcheck} trait whose instances correspond to the
+paper's variants. See Plan B' for the full treatment.
+
+\end{document}

@@ -56,7 +56,7 @@ where
         self.constraint_system.num_constraints()
     }
 
-    fn description(config: &Self::Config) -> Vec<u8> {
+    fn describe_from_config(config: &Self::Config) -> Vec<u8> {
         let (hash_config, hash_chain_size) = (config.0.clone(), config.1);
         let zero_witness = HashChainWitness::<F, H> {
             preimage: vec![F::zero()],
@@ -94,11 +94,17 @@ where
             .unwrap();
         constraint_system.finalize();
 
-        let cs = constraint_system.into_inner().unwrap();
-        let x = cs.instance_assignment().unwrap().to_vec();
-        let w = cs.witness_assignment().unwrap().to_vec();
+        // Extract assignments via the ref (borrow the inner CS)
+        let x = constraint_system
+            .borrow()
+            .map(|cs| cs.instance_assignment().unwrap().to_vec())
+            .unwrap();
+        let w = constraint_system
+            .borrow()
+            .map(|cs| cs.witness_assignment().unwrap().to_vec())
+            .unwrap();
         Self {
-            constraint_system: ConstraintSystemRef::new(cs),
+            constraint_system,
             config: hash_config,
             instance,
             witness,
@@ -202,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn description() {
+    fn describe_from_config() {
         let hash_chain_size = 1;
         let zero_witness = HashChainWitness::<BLS12_381, TestCRHScheme> {
             preimage: vec![BLS12_381::zero()],
@@ -223,7 +229,7 @@ mod tests {
         );
         assert!(relation.verify());
         let description: Vec<u8> =
-            HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::description(&(
+            HashChainRelation::<BLS12_381, TestCRHScheme, TestCRHSchemeGadget>::describe_from_config(&(
                 initialize_poseidon_config(),
                 hash_chain_size,
             ));

@@ -21,16 +21,19 @@ pub use synthesizer::HashChainSynthesizer;
 pub use witness::HashChainWitness;
 
 use super::R1CS;
-use crate::error::WARPError;
-use crate::relations::ToPolySystem;
+use crate::error::WarpError;
+use crate::relations::Arithmetize;
 
 impl<
         F: PrimeField + Absorb,
         H: CRHScheme<Input = [F], Output = F>,
         HG: CRHSchemeGadget<H, F, InputVar = [FpVar<F>], OutputVar = FpVar<F>>,
-    > ToPolySystem<F> for HashChainRelation<F, H, HG>
+    > Arithmetize<F> for HashChainRelation<F, H, HG>
 {
-    fn into_r1cs(config: &Self::Config) -> Result<R1CS<F>, WARPError> {
+    type Config = (H::Parameters, usize);
+    type Predicate = R1CS<F>;
+
+    fn arithmetize(config: &Self::Config) -> Result<R1CS<F>, WarpError> {
         let (params, hash_chain_size) = config;
         let preimage = vec![F::ZERO];
         let digest = compute_hash_chain::<F, H>(params, &preimage, *hash_chain_size);

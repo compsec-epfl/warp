@@ -19,12 +19,20 @@ ark-relations = "0.6.0"
 ark-serialize = "0.6.0"
 ark-std = "0.6.0"
 blake3 = "1.5.0"
+rayon = "1"
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { version = "0.7.0", features = ["ark-ff"] }
+rand_core = { version = "0.6", default-features = false }
 effsc = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git" }
 thiserror = "2.0.16"
+tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry"], optional = true }
+libc = { version = "0.2", optional = true }
 ark-codes = { git = "https://github.com/z-tech/ark-codes.git", branch = "z-tech/arkworks-0.6.0" }
+ark-iop = { git = "https://github.com/arkworks-rs/ark-vc.git", branch = "z-tech/ark-iop" }
+ark-vc = { git = "https://github.com/arkworks-rs/ark-vc.git", branch = "z-tech/hash-regions" }
+ark-mt = { git = "https://github.com/arkworks-rs/ark-vc.git", branch = "z-tech/hash-regions", features = ["blake3", "blake3-field", "vc"] }
 
 [dev-dependencies]
 ark-bls12-381 = "0.6.0"
@@ -35,6 +43,8 @@ criterion = "0.8"
 default = ["asm"]
 
 asm = ["ark-ff/asm"]
+
+profile = ["dep:tracing-subscriber", "dep:libc"]
 
 [[bench]]
 name = "warp_rs"

@@ -1,6 +1,7 @@
 use ark_ff::{Field, PrimeField};
 
 pub mod fields;
+pub mod poly;
 pub mod poseidon;
 
 pub const fn chunk_size_bytes(modulus_bit_size: u32) -> usize {
@@ -9,30 +10,6 @@ pub const fn chunk_size_bytes(modulus_bit_size: u32) -> usize {
 
 pub fn chunk_size<F: PrimeField>() -> usize {
     chunk_size_bytes(F::MODULUS_BIT_SIZE)
-}
-
-pub fn bytes_to_vec_f<F: Field + PrimeField>(bytes: &[u8]) -> Vec<F> {
-    bytes
-        .chunks(chunk_size::<F>())
-        .map(|chunk| F::from_le_bytes_mod_order(chunk))
-        .collect()
-}
-
-pub fn byte_to_binary_field_array<F: Field>(byte: &u8) -> Vec<F> {
-    (0..8)
-        .map(|i| {
-            let val = (byte >> i) & 1 == 1;
-            // return in field element and in binary
-            F::from(val)
-        })
-        .collect::<Vec<_>>()
-}
-
-pub fn binary_field_elements_to_usize<F: Field>(elements: &[F]) -> usize {
-    elements
-        .iter()
-        .rev()
-        .fold(0, |acc, &b| (acc << 1) | b.is_one() as usize)
 }
 
 pub fn concat_slices<F: Clone>(a: &[F], b: &[F]) -> Vec<F> {

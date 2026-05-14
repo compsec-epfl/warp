@@ -1,12 +1,13 @@
 pub mod hashchain;
 
 use ark_ff::Field;
-use ark_relations::gr1cs::{ConstraintSystemRef, R1CS_PREDICATE_LABEL};
-use effsc::hypercube::Ascending;
+use ark_relations::gr1cs::ConstraintSystemRef;
+use rayon::prelude::*;
 
-use crate::error::WARPError;
+use crate::error::WarpError;
+use crate::relations::SerializableConstraintMatrices;
 
-use super::BundledPESAT;
+use super::PolyPredicate;
 
 pub type R1CSConstraints<F> = Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)>;
 
@@ -15,42 +16,57 @@ pub struct R1CS<F: Field> {
     // we access linear combinations using binary hypercube points
     // point -> (a_i, b_i, c_i)
     // point is encoded via the n least significant bits of a usize
-    pub p: R1CSConstraints<F>,
-    pub m: usize,
-    pub n: usize,
-    pub k: usize,
+    pub constraints_vec: R1CSConstraints<F>,
+    pub m_num_constraints: usize,
+    pub n_num_variables: usize,
+    pub k_num_witness_vars: usize,
     pub log_m: usize,
     pub log_n: usize,
 }
 
 impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
-    type Error = WARPError;
+    type Error = WarpError;
 
     fn try_from(cs: ConstraintSystemRef<F>) -> Result<Self, Self::Error> {
-        let mut matrices = cs.to_matrices().unwrap();
-        let mut r1cs = matrices.remove(R1CS_PREDICATE_LABEL).unwrap();
-        let mut r1cs_iter = r1cs.drain(..);
-        let a_mat = r1cs_iter.next().unwrap();
-        let b_mat = r1cs_iter.next().unwrap();
-        let c_mat = r1cs_iter.next().unwrap();
+        use ark_relations::gr1cs::R1CS_PREDICATE_LABEL;
 
-        let num_constraints = cs.num_constraints();
-        let num_instance_variables = cs.num_instance_variables();
-        let num_witness_variables = cs.num_witness_variables();
+        let inner = cs.into_inner().ok_or(WarpError::R1CSConstruction {
+            reason: "constraint system has outstanding borrows",
+        })?;
+        let all_matrices = inner
+            .to_matrices()
+            .map_err(|_| WarpError::R1CSConstruction {
+                reason: "constraint system not finalized or matrices unavailable",
+            })?;
+        let r1cs_matrices =
+            all_matrices
+                .get(R1CS_PREDICATE_LABEL)
+                .ok_or(WarpError::R1CSConstruction {
+                    reason: "R1CS predicate not present in constraint system",
+                })?;
+
+        let num_constraints = inner
+            .get_predicate_num_constraints(R1CS_PREDICATE_LABEL)
+            .unwrap_or(0);
 
         // number of constraints should be to be power of 2
         let m = num_constraints.next_power_of_two();
-        let n = num_instance_variables + num_witness_variables;
-        let k = num_witness_variables;
+        let n = inner.num_instance_variables() + inner.num_witness_variables();
+        let k = inner.num_witness_variables();
+        if n == 0 {
+            return Err(WarpError::R1CSConstruction {
+                reason: "n = num_instance_variables + num_witness_variables must be > 0",
+            });
+        }
 
-        // both `unwrap()` calls below are safe since warp/lib.rs forbids compiling on platforms
-        // with 16-bits pointers width
+        // Safe: `m` is always ≥ 1 (next_power_of_two of any usize is ≥ 1) and `n > 0`
+        // checked above. usize→u32 cast is safe on ≥32-bit platforms per lib.rs.
         let log_m = m.ilog2().try_into().unwrap();
         let log_n = n.ilog2().try_into().unwrap();
 
-        let mut a = a_mat.into_iter();
-        let mut b = b_mat.into_iter();
-        let mut c = c_mat.into_iter();
+        let mut a = r1cs_matrices[0].clone().into_iter();
+        let mut b = r1cs_matrices[1].clone().into_iter();
+        let mut c = r1cs_matrices[2].clone().into_iter();
         let mut p = vec![];
         for _ in 0..m {
             // when there are no constraints left, we store an empty one
@@ -61,10 +77,10 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
         }
 
         Ok(R1CS {
-            p,
-            m,
-            n,
-            k,
+            constraints_vec: p,
+            m_num_constraints: m,
+            n_num_variables: n,
+            k_num_witness_vars: k,
             log_m,
             log_n,
         })
@@ -73,19 +89,22 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
 
 impl<F: Field> R1CS<F> {
     // evaluate the given sparse linear combination over the provided z vector
-    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WARPError> {
+    fn eval_lc(lc: &[(F, usize)], z: &[F]) -> Result<F, WarpError> {
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
             acc += *coeff
                 * z.get(*var)
-                    .ok_or(WARPError::R1CSWitnessSize(z.len(), *var))?;
+                    .ok_or(WarpError::R1CSWitnessSize(z.len(), *var))?;
         }
         Ok(acc)
     }
 
     // eval the R1CS i-th linear combination, where i is represented as an hypercube point
-    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WARPError> {
-        let (a_i, b_i, c_i) = self.p.get(i).ok_or(WARPError::R1CSNonExistingLC)?;
+    pub fn eval_p_i(&self, z: &[F], i: usize) -> Result<F, WarpError> {
+        let (a_i, b_i, c_i) = self
+            .constraints_vec
+            .get(i)
+            .ok_or(WarpError::R1CSNonExistingLC)?;
         let eval_a_i = Self::eval_lc(a_i, z)?;
         let eval_b_i = Self::eval_lc(b_i, z)?;
         let eval_c_i = Self::eval_lc(c_i, z)?;
@@ -93,31 +112,69 @@ impl<F: Field> R1CS<F> {
     }
 }
 
-impl<F: Field> BundledPESAT<F> for R1CS<F> {
+impl<F: Field> PolyPredicate<F> for R1CS<F> {
     type Config = (usize, usize, usize);
-    type Constraints = R1CSConstraints<F>;
 
-    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WARPError> {
-        // TODO: multithread this
-        Ascending::new(self.log_m).try_fold(F::ZERO, |acc, p| {
-            let index = p.index;
-            let eq_tau_i = *zero_evader_evals
-                .get(index)
-                .ok_or(WARPError::ZeroEvaderSize(zero_evader_evals.len(), index))?;
-            let p_i = self.eval_p_i(z, index)?;
-            Ok(acc + eq_tau_i * p_i)
-        })
+    fn evaluate_bundled(&self, zero_evader_evals: &[F], z: &[F]) -> Result<F, WarpError> {
+        if zero_evader_evals.len() < self.m_num_constraints {
+            return Err(WarpError::ZeroEvaderSize(
+                zero_evader_evals.len(),
+                self.m_num_constraints - 1,
+            ));
+        }
+        (0..self.m_num_constraints)
+            .into_par_iter()
+            .map(|i| -> Result<F, WarpError> {
+                let p_i = self.eval_p_i(z, i)?;
+                Ok(zero_evader_evals[i] * p_i)
+            })
+            .try_reduce(|| F::ZERO, |acc, x| Ok(acc + x))
     }
 
     fn config(&self) -> Self::Config {
-        (self.m, self.n, self.k)
+        (
+            self.m_num_constraints,
+            self.n_num_variables,
+            self.k_num_witness_vars,
+        )
     }
 
     fn description(&self) -> Vec<u8> {
-        todo!()
+        // Serializes the *concrete matrix triple* so two R1CS systems with
+        // identical (m, n, k) but different constraints absorb to different
+        // bytes (and therefore distinct transcripts). Without this,
+        // `WarpAccumulationScheme::index` would only commit to dimensions — a soundness hole
+        // in any downstream protocol that trusts `index()` to bind the
+        // relation.
+        let a: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(a, _, _)| a.clone())
+            .collect();
+        let b: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(_, b, _)| b.clone())
+            .collect();
+        let c: Vec<Vec<(F, usize)>> = self
+            .constraints_vec
+            .iter()
+            .map(|(_, _, c)| c.clone())
+            .collect();
+        let serializable = SerializableConstraintMatrices {
+            num_instance_variables: self.n_num_variables - self.k_num_witness_vars,
+            num_witness_variables: self.k_num_witness_vars,
+            num_constraints: self.m_num_constraints,
+            a: SerializableConstraintMatrices::serialize_nested_field(a),
+            b: SerializableConstraintMatrices::serialize_nested_field(b),
+            c: SerializableConstraintMatrices::serialize_nested_field(c),
+        };
+        serde_json::to_string(&serializable)
+            .expect("matrix serialization is infallible")
+            .into_bytes()
     }
 
-    fn constraints(&self) -> &Self::Constraints {
-        &self.p
+    fn constraints(&self) -> &R1CSConstraints<F> {
+        &self.constraints_vec
     }
 }

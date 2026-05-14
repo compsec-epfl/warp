@@ -1,0 +1,129 @@
+\documentclass{article}
+\input{notation.tex}
+
+\title{Modification 1: \\ Oracle as first-class IOR output}
+\author{Warp paper-mods}
+\date{}
+
+\begin{document}
+\maketitle
+
+\paragraph{Paired Rust module.} \codemod{src/protocol/oracle.rs}, consumed
+throughout \codemod{src/protocol/phases/}.
+
+\section{Motivation}
+
+The Warp paper decomposes its construction as a sequence of interactive
+oracle reductions (IORs). In the pure IOR formalism, each IOR's prover is an
+abstract Turing machine that recomputes anything it needs; there is no notion
+of ``shared state'' across IORs beyond the transcript. This abstraction is
+sound but imposes an unpleasant cost on any implementation: several distinct
+IORs in Warp --- the twin-constraint sumcheck, OOD sampling, the batching
+sumcheck, and the proximity-query phase --- all operate on \emph{the same
+codeword} \(f\), its multilinear extension \(\MLE{f}\), and its Merkle
+commitment. A literal reading of the paper forces the code either to
+rematerialise these objects phase by phase (wasteful) or to smuggle them
+across phase boundaries as ambient state (unprincipled).
+
+The BCS formalism already provides the right object to legitimise the
+sharing: an \emph{oracle message}. BCS treats prover oracles as typed,
+persistent objects that can be queried in any subsequent round. What the
+paper presently leaves implicit is that \emph{composed} IORs can export and
+import these oracles as typed inputs and outputs.
+
+This modification promotes Oracle to a first-class input/output type of every
+Warp IOR. No new soundness argument is required; the BCS compiler already
+handles the Merkle-commitment bookkeeping. What changes is the presentation,
+which in turn legitimises a direct Rust implementation in
+\codemod{src/protocol/oracle.rs}.
+
+\section{Definition}
+
+An \emph{oracle} \(\Oracle{f}\) carries the following views of a single
+object:
+\begin{itemize}
+  \item \(f : \idx{n} \to \F\) is an evaluation table (the \emph{BCS-native}
+        view);
+  \item \(\MLE{f} : \F^{\log n} \to \F\) is the unique multilinear polynomial
+        over \(\bool{\log n}\) agreeing with \(f\) after identifying
+        \(\idx{n} \leftrightarrow \bool{\log n}\) by binary expansion;
+  \item under BCS compilation, \(f\) is committed via a Merkle root
+        \(\Commit{f}\); this commitment is produced by a separate
+        \emph{commit} operation and is not a field of \(\Oracle{f}\).
+\end{itemize}
+
+\(\MLE{f}\) is \emph{implied} by \(f\); the prover materialises it lazily and
+caches. See \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_point}.
+
+\paragraph{Implementation note: commitments and oracles are not 1:1.} Warp's
+\Pesat{} phase interleaves \(l_1\) codewords into a single Merkle tree
+(\codemod{src/crypto/merkle/mod.rs}, \texttt{build\_codeword\_leaves}), so one
+commitment covers many oracles. The Rust \codemod{Oracle} struct therefore
+stores only \(f\) and the lazy \(\MLE{f}\); the Merkle tree implementing
+\(\Commit{f}\) is tracked by the enclosing data structure
+(\codemod{src/types.rs} --- \texttt{PesatOutput}, \texttt{AccumulatorWitness}).
+This is an orthogonal implementation choice; the IOR composition rule in
+\S4 is unchanged.
+
+\section{Query interfaces}
+
+Two legal query operations on \(\Oracle{f}\):
+
+\begin{description}
+  \item[Index query.] \(f[i]\) for \(i \in \idx{n}\). BCS-native.
+        The verifier receives \(f[i]\) alongside a Merkle opening against
+        \(\Commit{f}\); the BCS compiler makes this non-interactive via
+        Fiat--Shamir. Corresponds to
+        \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_leaf}.
+  \item[Point query.] \(\MLE{f}(\zeta)\) for \(\zeta \in \F^{\log n}\).
+        The prover answers directly; the verifier's check that the answer is
+        consistent with \(\Commit{f}\) is deferred to a downstream IOR (in
+        Warp, the batching sumcheck). Corresponds to
+        \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_point}.
+\end{description}
+
+Both operations act on \emph{the same} oracle; a downstream IOR is free to
+mix query kinds.
+
+\section{Composition rule}
+
+If IOR \(A\) has signature
+\(\; (\text{stmt}_A, \text{wit}_A) \;\mapsto\; (\text{stmt}_A', \Oracle{f})\)
+and IOR \(B\) has signature
+\(\; (\text{stmt}_B, \Oracle{f}) \;\mapsto\; \text{stmt}_B'\),
+then the sequential composition \(A; B\) has signature
+\(\; (\text{stmt}_A, \text{stmt}_B, \text{wit}_A) \;\mapsto\; (\text{stmt}_A', \text{stmt}_B') \).
+Soundness follows from the BCS composition theorem for oracle messages: the
+Merkle commitment \(\Commit{f}\) is produced once by \(A\) and reused by any
+number of downstream IORs.
+
+\section{Application to Warp}
+
+Every Warp phase can be restated in terms of oracles:
+
+\begin{center}
+\begin{tabular}{l l}
+\toprule
+Phase & Oracle role \\
+\midrule
+Encode-and-commit   & emits \(\Oracle{f}\) per fresh witness \\
+\Pesat              & emits \(\Oracle{u}\) for accumulated + fresh codewords \\
+\TwinConstraint     & consumes \(\Oracle{u}\), emits reduced claim \\
+\OOD                & point queries on \(\Oracle{f}\) \\
+\Batching           & consumes \(\Oracle{f}\); emits new \(\Oracle{f}'\) via fold \\
+\Proximity          & index queries on \(\Oracle{f}\) with auth paths \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The same object carries the codeword, the multilinear extension, and the
+Merkle tree; downstream phases access whichever view the operation requires.
+In Rust this is literally one struct (\codemod{src/protocol/oracle.rs}).
+
+\section{What this does not change}
+
+Soundness proofs, parameter choices, and the transcript layout are unchanged.
+Modification 1 is presentational: it makes the existing data flow type-check
+in a paper that stays inside BCS rather than retreating to AHP.
+
+\end{document}

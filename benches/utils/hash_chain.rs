@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use ark_crypto_primitives::{
     crh::poseidon::{constraints::CRHGadget, CRH},
     sponge::{poseidon::PoseidonConfig, Absorb},
@@ -11,7 +9,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Relation, ToPolySystem,
+    Arithmetize, Relation,
 };
 
 // utilities for the hashchain benchmark
@@ -19,7 +17,7 @@ pub fn get_hashchain_r1cs<F: PrimeField + Absorb>(
     poseidon_config: &PoseidonConfig<F>,
     hashchain_size: usize,
 ) -> R1CS<F> {
-    HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(
+    HashChainRelation::<F, CRH<_>, CRHGadget<_>>::arithmetize(&(
         poseidon_config.clone(),
         hashchain_size,
     ))
@@ -37,10 +35,7 @@ pub fn get_hashchain_instance_witness_pairs<F: PrimeField + Absorb>(
             let instance = HashChainInstance {
                 digest: compute_hash_chain::<F, CRH<_>>(poseidon_config, &preimage, hashchain_size),
             };
-            let witness = HashChainWitness {
-                preimage,
-                _crhs_scheme: PhantomData::<CRH<F>>,
-            };
+            let witness = HashChainWitness::<F, CRH<F>>::new(preimage);
             let relation = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::new(
                 instance,
                 witness,

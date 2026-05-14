@@ -23,6 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Load ark-vc deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ARK_VC_DEPLOY_KEY }}
+
+      - name: Rewrite ark-vc HTTPS URL to SSH
+        run: git config --global url."ssh://git@github.com/arkworks-rs/ark-vc.git".insteadOf "https://github.com/arkworks-rs/ark-vc.git"
+
       - name: Install stable toolchain with clippy
         uses: actions-rs/toolchain@v1
         with:
@@ -47,6 +55,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Load ark-vc deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ARK_VC_DEPLOY_KEY }}
+
+      - name: Rewrite ark-vc HTTPS URL to SSH
+        run: git config --global url."ssh://git@github.com/arkworks-rs/ark-vc.git".insteadOf "https://github.com/arkworks-rs/ark-vc.git"
+
       - name: Run tests
         run: cargo test --verbose
 
@@ -54,6 +70,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
+      - name: Load ark-vc deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ARK_VC_DEPLOY_KEY }}
+
+      - name: Rewrite ark-vc HTTPS URL to SSH
+        run: git config --global url."ssh://git@github.com/arkworks-rs/ark-vc.git".insteadOf "https://github.com/arkworks-rs/ark-vc.git"
 
       - name: Run tests
         run: cargo test --verbose --no-default-features

@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Consolidated error types.** Reduced from 6 error enums to 4. Folded `WARPSumcheckProverError` into `ProverError`, inlined `WARPSumcheckVerifierError` into `VerifierError`, dropped `WARP` prefix. Moved errors from `utils/errs.rs` to `error.rs`.
 - **Made `chunk_size` compile-time.** Replaced runtime serialization with a `const fn` computed from `PrimeField::MODULUS_BIT_SIZE`.
 
+### Optimized
+
+- **Reduced inner product sumcheck communication by 1/3.** Updated to `efficient-sumcheck` 2-coefficient round messages: prover sends `(a, b)` instead of `(s(0), s(1), s(1/2))`. Verifier derives the third coefficient as `c = claim - 2a - b`. Updated verifier transcript to read `[F; 2]` instead of `[F; 3]` per round.
+- **Adopted `RoundPolyEvaluator` trait for twin constraint sumcheck.** Replaced closure-based `twin_constraint_round_poly` with `TwinConstraintEvaluator` struct implementing the new `RoundPolyEvaluator` trait from `efficient-sumcheck`. The library now handles pair iteration, parallel summation, and SIMD-accelerated reduce.
+- **Reduced twin constraint sumcheck communication.** Prover now sends `d` coefficients per round instead of `d+1`; verifier derives the leading coefficient from the sumcheck constraint. Updated `derive_randomness` to read `1 + max(log_n+1, log_m+2)` instead of `2 + max(log_n+1, log_m+2)`.
+- **Twin constraint sumcheck 64% faster.** Combined effect of `RoundPolyEvaluator` refactor, library-side optimizations (zero-allocation `poly_ops`, optimized `protogalaxy::fold`), and SIMD-accelerated pairwise reduce. End-to-end prover time improved ~23%.
+- **Pinned `ark-ff`/`ark-poly`/`ark-serialize` to rev `285dac2`.** Resolves spongefish BigInt mismatch with upstream `ark-ff` HEAD.
+
 ### Fixed
 
 - **BLS test desync.** Fixed `WARPConfig` in the BLS test from `l=4` to `l=8`, matching `l2=4` accumulated instances. The prover absorbed all accumulators unconditionally while the verifier only read `l2` of them, causing a sponge state mismatch.

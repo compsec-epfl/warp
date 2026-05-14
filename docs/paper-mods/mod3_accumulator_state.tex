@@ -1,0 +1,30 @@
+\documentclass{article}
+\input{notation.tex}
+
+\title{Modification 3: \\ Accumulator as explicit IOR state (stub)}
+\author{Warp paper-mods}
+\date{}
+
+\begin{document}
+\maketitle
+
+\paragraph{Status.} Stub. Full spec deferred to Plan C in the multi-plan
+roadmap. Paired code: signature-level refactor across
+\codemod{src/protocol/phases/} once authored.
+
+\section*{Abstract}
+
+The paper presently treats the accumulator \((\AccX, \AccW)\) partly as an
+object the protocol operates on and partly as ambient state read and written
+by each phase. Modification 3 makes the accumulator an explicit pre- and
+post-condition of every IOR:
+\[
+    \IOR{Phase}\ :\ (\AccState, \text{input}) \;\longmapsto\; (\AccState', \text{output}).
+\]
+This matches Nova-style folding-scheme presentation and lets the composition
+theorem be stated mechanically. At the code level it gives every phase
+function the same \texttt{AccState} parameter and return and makes prover
+and verifier phases exact structural duals. See Plan C for the full
+treatment.
+
+\end{document}

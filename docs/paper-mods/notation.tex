@@ -1,0 +1,58 @@
+% notation.tex --- shared preamble for Warp paper-mods.
+%
+% Every mod*.tex file begins with:
+%
+%     \input{notation.tex}
+%
+% Conventions
+% -----------
+% * Framing: IOP in the sense of Ben-Sasson--Chiesa--Spooner (BCS, TCC 2016),
+%   NOT Algebraic Holographic Proofs. Oracles are functions $f:[n] \to \F$,
+%   queried by index; multilinear-extension semantics layer on top for point
+%   queries.
+% * Every modification file cites the Rust module path it pairs with.
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{hyperref}
+
+% ---- Fields, indexing, domains -------------------------------------------
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\idx}[1]{\ensuremath{[#1]}}               % index set [n]
+\newcommand{\bool}[1]{\ensuremath{\{0,1\}^{#1}}}      % boolean hypercube
+\newcommand{\size}[1]{\ensuremath{\left\lvert#1\right\rvert}}
+
+% ---- Oracles (Modification 1) --------------------------------------------
+% An Oracle carries three views of the same object:
+%   (i)   an evaluation table  f : [n] -> F        (BCS-native)
+%   (ii)  a multilinear extension  \hat f : F^{log n} -> F
+%   (iii) a commitment handle (Merkle root under BCS compilation)
+% See mod1_oracle.tex.
+\newcommand{\Oracle}[1]{\ensuremath{\mathsf{O}[#1]}}
+\newcommand{\MLE}[1]{\ensuremath{\widehat{#1}}}
+\newcommand{\Commit}[1]{\ensuremath{\mathsf{com}(#1)}}
+\newcommand{\query}{\ensuremath{\mathsf{query}}}      % generic query operator
+
+% ---- Accumulator state (Modification 3, reserved) -------------------------
+\newcommand{\AccX}{\ensuremath{\mathsf{acc}_x}}       % accumulator instance
+\newcommand{\AccW}{\ensuremath{\mathsf{acc}_w}}       % accumulator witness
+\newcommand{\AccState}{\ensuremath{(\AccX, \AccW)}}
+
+% ---- Common structural IORs ----------------------------------------------
+\newcommand{\IOR}[1]{\textsc{#1}}
+\newcommand{\Zerocheck}{\IOR{Zerocheck}}
+\newcommand{\Sumcheck}{\IOR{Sumcheck}}
+\newcommand{\Pesat}{\IOR{Pesat}}
+\newcommand{\TwinConstraint}{\IOR{TwinConstraint}}
+\newcommand{\Proximity}{\IOR{Proximity}}
+\newcommand{\Batching}{\IOR{Batching}}
+\newcommand{\OOD}{\IOR{OOD}}
+
+% ---- Transcript notation --------------------------------------------------
+\newcommand{\absorb}{\ensuremath{\lhd}}               % absorb into transcript
+\newcommand{\squeeze}{\ensuremath{\rhd}}              % derive from transcript
+
+% ---- Code / module cross-reference ---------------------------------------
+% Use \codemod{src/protocol/oracle.rs} in .tex files to point at a Rust
+% module. Renders as inline typewriter with a URL when compiled with hyperref.
+\newcommand{\codemod}[1]{\href{../../#1}{\texttt{#1}}}
