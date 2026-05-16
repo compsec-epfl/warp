@@ -3,5 +3,6 @@ pub mod ir;
 pub mod ir_examples;
 pub mod oracles;
 pub mod schema;
+pub mod trace;
 
 pub use schema::{IorSchema, ProtocolSchema};
