@@ -1,9 +1,4 @@
-//! PESAT Reduction IOR.
-//!
-//! Encodes fresh witnesses into codewords, commits via the trait's
-//! joint-commit path (one commitment over all l1 codewords), absorbs
-//! that commitment + code evaluations, and derives the τ zero-check
-//! challenges.
+//! PESAT IOR. See `MESSAGE_TAGS` for the per-round shape.
 
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
@@ -12,7 +7,6 @@ use ark_iop::{
 };
 use ark_vc::mvc::MultiVectorCommitment;
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
-use std::marker::PhantomData;
 
 use crate::count_ops;
 use crate::crypto::vc::CommittedCodewords;
@@ -63,7 +57,6 @@ where
 {
     pub code: &'a C,
     pub ck: &'a V::CommitterKey,
-    pub _phantom: PhantomData<F>,
 }
 
 impl<'a, F, C, V> IOR for Pesat<'a, F, C, V>

@@ -13,6 +13,7 @@ use crate::accumulation_scheme::proof::{ProveResult, WarpProof};
 use crate::accumulation_scheme::scheme::WarpAccumulationScheme;
 use crate::accumulation_scheme::transcript::absorb_instances;
 use crate::accumulation_scheme::AccumulationScheme;
+use crate::count_ops;
 use crate::error::ProverError;
 use crate::iop::iors::{
     batching::{
@@ -133,20 +134,13 @@ where
         let pesat_ior = Pesat::<F, C, V> {
             code: &self.params.code,
             ck: &self.params.ck,
-            _phantom: PhantomData,
         };
-        let twin_constraint_ior = TwinConstraint::<F, V> {
-            r1cs: self.params.predicate.constraints(),
-            _phantom: PhantomData,
-        };
+        let twin_constraint_ior = TwinConstraint::<F, V>::new(self.params.predicate.constraints());
         let bridge_ior = Bridge::<F, P, V>::default();
         let ood_ior = Ood::<F>::default();
         let sample_queries_ior = SampleQueries::<F>::default();
         let batching_ior = Batching::<F>::default();
-        let proximity_ior = Proximity::<F, V> {
-            ck: &self.params.ck,
-            _phantom: PhantomData,
-        };
+        let proximity_ior = Proximity::<F>::default();
 
         let ark_iop::IorProveResult {
             reduced:
@@ -291,6 +285,10 @@ where
             inputs: BatchingProverInputs { oracle: &f_oracle },
         )?;
 
+        let acc_codewords_refs: Vec<&[Vec<F>]> =
+            acc_tds.iter().map(|td| td.codewords.as_slice()).collect();
+        let fresh_codewords_ref: &[Vec<F>] = td_0_committed_codeword.codewords.as_slice();
+
         let ark_iop::IorProveResult {
             reduced: _,
             proof: ProximityProofString {
@@ -308,11 +306,61 @@ where
             },
             witness: (),
             inputs: ProximityProverInputs {
-                ck: &self.params.ck,
-                td_0_committed_codeword: &td_0_committed_codeword,
-                acc_td_committed_codewords: &acc_tds,
+                acc_codewords: &acc_codewords_refs,
+                fresh_codewords: fresh_codewords_ref,
             },
         )?;
+
+        // FS ordering: Proximity prologue → auth paths. Opens live in the
+        // orchestrator (not in Proximity) so the IOR stays VC-agnostic.
+        // Verifier mirror at the matching site in `verify.rs`.
+        let leaf_positions = &queries.leaf_positions;
+        let mut sorted_unique = leaf_positions.clone();
+        sorted_unique.sort_unstable();
+        sorted_unique.dedup();
+        let column_tuples = |codewords: &[Vec<F>]| -> Vec<Vec<F>> {
+            sorted_unique
+                .iter()
+                .map(|&i| codewords.iter().map(|c| c[i]).collect())
+                .collect()
+        };
+
+        {
+            let _s = tracing::info_span!("proximity.auth_0").entered();
+            count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
+            let values = column_tuples(&td_0_committed_codeword.codewords);
+            V::open_multiple(
+                &self.params.ck,
+                td_0_committed_codeword.codewords.iter().map(|c| c.iter()),
+                &td_0_committed_codeword.commitment,
+                sorted_unique.iter().copied(),
+                values.into_iter(),
+                &td_0_committed_codeword.state,
+                prover_state,
+            )
+            .map_err(|_| ProverError::SpongeFish)?;
+        }
+
+        {
+            let _s = tracing::info_span!("proximity.auth_j").entered();
+            count_ops!(
+                MerklePathsGenerated,
+                (acc_tds.len() * sorted_unique.len()) as u64
+            );
+            for td in acc_tds.iter() {
+                let values = column_tuples(&td.codewords);
+                V::open_multiple(
+                    &self.params.ck,
+                    td.codewords.iter().map(|c| c.iter()),
+                    &td.commitment,
+                    sorted_unique.iter().copied(),
+                    values.into_iter(),
+                    &td.state,
+                    prover_state,
+                )
+                .map_err(|_| ProverError::SpongeFish)?;
+            }
+        }
 
         let mut nu_i_oracle_evals = Vec::with_capacity(1 + self.params.config.s_num_ood_samples);
         nu_i_oracle_evals.push(nu_0_oracle_eval);

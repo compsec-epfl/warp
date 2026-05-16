@@ -10,31 +10,54 @@ Ongoing research.
 ## Quick start
 
 ```rust
-use warp::{WARPConfig, AccumulatorInstance, AccumulatorWitness, WARPProverKey, WARP};
+use warp::{
+    AccumulatorInstance, AccumulatorWitness, WarpAccumulationScheme, WarpConfig,
+    WarpProverKey,
+};
+use warp::relations::{Arithmetize, r1cs::{R1CS, hashchain::HashChainRelation}};
 use warp::utils::poseidon;
-use warp::relations::{r1cs::{R1CS, hashchain::HashChainRelation}, BundledPESAT, ToPolySystem};
 use ark_codes::{reed_solomon::{ReedSolomon, config::ReedSolomonConfig}, traits::LinearCode};
 use ark_crypto_primitives::crh::poseidon::{CRH, constraints::CRHGadget};
-use ark_mt::blake3::Blake3FieldHasher;
+use ark_mt::{
+    blake3::Blake3FieldHasher, hash_region::HashRegion, scheme::MerkleCommitment,
+    shape::PerfectBinary,
+};
+use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
 use ark_bls12_381::Fr as F;
+use ark_std::rand::thread_rng;
 
-// 1. Build the relation (here: a hash chain of length 10).
+type Vc = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
+
+// 1. Build the relation (e.g., a hash chain of length 10).
 let poseidon = poseidon::initialize_poseidon_config::<F>();
-let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::into_r1cs(&(poseidon, 10))?;
+let r1cs = HashChainRelation::<F, CRH<_>, CRHGadget<_>>::arithmetize(&(poseidon, 10))?;
 
-// 2. Pick a code and a hasher.
-let code = ReedSolomon::new(ReedSolomonConfig::<F>::default(r1cs.k, r1cs.k.next_power_of_two()));
-let hasher = Blake3FieldHasher::<F>::new();
+// 2. Pick a code.
+let code = ReedSolomon::new(ReedSolomonConfig::<F>::default(
+    r1cs.k_num_witness_vars,
+    r1cs.k_num_witness_vars.next_power_of_two(),
+));
 
-// 3. Configure WARP and instantiate.
-//    `l1` = fresh-instance batch size, `l` = total accumulator capacity, `s`/`t` = OOD/shift queries.
-let cfg = WARPConfig::new(/*l1*/ 4, /*l*/ 4, /*s*/ 8, /*t*/ 7, r1cs.config(), code.code_len());
-let warp = WARP::new(cfg, code, r1cs.clone(), hasher);
+// 3. Provision the VC committer/verifier keys.
+let mut rng = thread_rng();
+let t = 7;
+let pp = <Vc as MultiVectorCommitment>::setup_multiple(0, code.code_len(), t, &mut rng)?;
+let (ck, vk) = <Vc as MultiVectorCommitment>::trim_multiple(&pp, 0, code.code_len(), t)?;
 
-// 4. Fold a stream of fresh (instance, witness) batches into the accumulator.
+// 4. Configure WARP and instantiate.
+//    (l1, l2, s, t): fresh-batch size, acc capacity, OOD samples, shift queries.
+let cfg = WarpConfig::new(/*l1*/ 4, /*l2*/ 4, /*s*/ 8, /*t*/ 7);
+let warp = WarpAccumulationScheme::<F, R1CS<F>, _, Vc>::new(cfg, code, r1cs.clone(), ck, vk);
+
+// 5. Fold a stream of (instance, witness) batches into the accumulator.
+let pk = WarpProverKey {
+    index: r1cs.clone(),
+    m_num_constraints: r1cs.m_num_constraints,
+    n_num_variables: r1cs.n_num_variables,
+    k_num_witness_vars: r1cs.k_num_witness_vars,
+};
 let mut acc_x = AccumulatorInstance::empty();
 let mut acc_w = AccumulatorWitness::empty();
-let pk = WARPProverKey { index: r1cs.clone(), m: r1cs.m, n: r1cs.n, k: r1cs.k };
 for batch in batches {
     let mut prover_state = /* spongefish prover state */;
     let ((new_x, new_w), _proof) = warp.prove(
@@ -45,8 +68,8 @@ for batch in batches {
     acc_w = acc_w.extend(new_w);
 }
 
-// 5. Final decide (the only non-succinct step — wrap in a SNARK if you need succinctness).
-warp.decide(acc_w, acc_x)?;
+// 6. Final decide (the only non-succinct step — wrap in a SNARK for succinctness).
+warp.decide(&acc_x, &acc_w)?;
 ```
 
 ## Picking `(s, t)` for a target security level
@@ -72,18 +95,21 @@ Exit codes: 0 ok, 1 derivation failed / target not met, 2 bad args.
 
 ## Layout
 
-- `src/warp/` — `WARP::{prove, verify, decide}` choreography over IORs
-- `src/protocol/ior.rs` — the `IOR` trait
-- `src/protocol/iors/` — concrete IORs (`pesat`, `twin_constraint`, `bridge`, `ood`, `sample_queries`, `batching`, `proximity`)
-- `src/protocol/oracles/` — oracle vocabulary used by IORs
-- `src/protocol/transcript/` — transcript absorb / parse helpers
-- `src/relations/` — `R1CS`, `BundledPESAT`, `HashChainRelation`
+- `src/accumulation_scheme/` — `WarpAccumulationScheme::{prove, verify, decide}`, `AccumulationScheme` trait, accumulator types
+- `src/iop/iors/` — concrete IORs (`pesat`, `twin_constraint`, `bridge`, `ood`, `sample_queries`, `batching`, `proximity`)
+- `src/iop/oracles/` — oracle vocabulary used by IORs
+- `src/iop/schema.rs` — `ProtocolSchema` (structural snapshot of the IOR sequence + tags)
+- `src/relations/` — `R1CS`, `HashChainRelation`, predicate traits
 - `src/params/` — soundness-driven `(s, t)` selection backing `warp-params`
 - `src/bin/warp-params.rs` — CLI front-end for `src/params/`
-- `src/crypto/`, `src/utils/` — Merkle wrapper, field / poly helpers
+- `src/crypto/`, `src/utils/` — VC helper, field / poly utilities
 - `src/profile/` — opt-in tracing layer (gated behind the `profile` feature)
 - `tests/integration_warp.rs` — end-to-end on BLS12-381 and Goldilocks
 - `tests/verifier_negative.rs` — single-tamper rejection tests
+- `tests/snapshot_fs.rs` — Fiat-Shamir transcript snapshot (catches FS drift)
+- `tests/snapshot_schema.rs` — `ProtocolSchema` snapshot (catches IOR shape drift)
+
+The `IOR` and `IOP` traits live in the external [`ark_iop`](https://github.com/arkworks-rs/ark-vc/tree/z-tech/ark-iop) crate.
 
 ## Running tests / benches
 

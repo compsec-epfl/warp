@@ -1,6 +1,4 @@
-use super::types::{ParamError, Params, Regime, SecurityLevel};
-
-const S_MIN: usize = 8;
+use super::types::{ParamError, Params, Regime, SecurityLevel, S_MIN};
 
 /// We require `log₂|F| ≥ λ + FIELD_EPSILON` so polylog noise is negligible.
 pub const FIELD_EPSILON: u32 = 40;

@@ -4,10 +4,7 @@ use ark_vc::mvc::MultiVectorCommitment;
 use crate::accumulation_scheme::accumulator::{AccumulatorInstance, AccumulatorWitness};
 use crate::error::ProverError;
 
-/// Proof produced by the WarpAccumulationScheme accumulation prover. Auth paths and
-/// sibling digests now live in the spongefish transcript (the trait's
-/// `open_multiple` writes them via `prover_state.prover_message`), so
-/// they no longer appear here as separate fields.
+/// Per-round accumulation proof. Auth paths live in the FS transcript.
 pub struct WarpProof<F, V>
 where
     F: Field,

@@ -1,4 +1,5 @@
 use ark_ff::Field;
+use std::marker::PhantomData;
 
 use crate::params::{validate, ParamError, Params, Regime, SecurityLevel, SoundnessBound};
 use crate::relations::PolyPredicate;
@@ -9,8 +10,7 @@ pub struct WarpConfig<F: Field, P: PolyPredicate<F>> {
     pub l2_second_fold_factor: usize,
     pub s_num_ood_samples: usize,
     pub t_num_queries: usize,
-    pub predicate_config: P::Config,
-    pub n_code_len: usize,
+    _phantom: PhantomData<(F, P)>,
 }
 
 impl<F: Field, P: PolyPredicate<F>> WarpConfig<F, P> {
@@ -19,16 +19,13 @@ impl<F: Field, P: PolyPredicate<F>> WarpConfig<F, P> {
         l2_second_fold_factor: usize,
         s_num_ood_samples: usize,
         t_num_queries: usize,
-        predicate_config: P::Config,
-        n_code_len: usize,
     ) -> Self {
         Self {
             l1_first_fold_factor,
             l2_second_fold_factor,
             s_num_ood_samples,
             t_num_queries,
-            predicate_config,
-            n_code_len,
+            _phantom: PhantomData,
         }
     }
 

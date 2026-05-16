@@ -26,7 +26,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Arithmetize, PolyPredicate, Relation,
+    Arithmetize, Relation,
 };
 use warp::utils::{fields::Goldilocks, poseidon};
 use warp::WarpAccumulationScheme;
@@ -38,13 +38,7 @@ fn hex_hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
-/// After capturing initial values, set these to `Some(...)`. Until then the
-/// test prints the observed values and skips assertion — useful for the
-/// first run after upgrading dependencies.
-// Bumped on AccumulationScheme prologue replacing IOP prologue at the
-// orchestrator level. Adds `AS:WarpAccumulationScheme-AccScheme|` prefix + the inner IOP
-// NAME (`WarpAccumulationScheme|`) before the IOR list — 32 extra bytes vs the prior
-// IOP-only prologue.
+// Snapshot constants; bump on intentional FS changes.
 const EXPECTED_NARG_HASH: Option<&str> =
     Some("83e5f65136d0ab5571a4f4c49e254a6bc178a264def7fba256cbdbd444b0f80d");
 const EXPECTED_NARG_LEN: Option<usize> = Some(1616);
@@ -93,7 +87,7 @@ fn fs_transcript_snapshot_goldilocks() {
         })
         .unzip();
 
-    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_config = WarpConfig::new(l1, 0, s, t);
     let pp = <VC as MultiVectorCommitment>::setup_multiple(0, code.code_len(), t, &mut rng)
         .expect("setup_multiple");
     let (ck, vk) = <VC as MultiVectorCommitment>::trim_multiple(&pp, 0, code.code_len(), t)

@@ -64,7 +64,6 @@ pub struct BatchingStatement<F: Field> {
     pub s_num_ood_samples: usize,
     pub t_num_queries: usize,
     pub log_n: usize,
-    pub _phantom: std::marker::PhantomData<F>,
 }
 
 impl<F: Field> BatchingStatement<F> {
@@ -91,7 +90,6 @@ impl<F: Field> BatchingStatement<F> {
             s_num_ood_samples,
             t_num_queries,
             log_n,
-            _phantom: std::marker::PhantomData,
         }
     }
 }

@@ -1,22 +1,12 @@
-//! Proximity / shift-query IOR.
-//!
-//! Index queries on the committed oracles. Opens both the fresh PESAT
-//! commitment and each accumulated commitment at the query positions.
-//! Opening proofs (auth paths + sibling digests) are written into the
-//! spongefish transcript by `V::open_multiple` rather than carried as
-//! separate proof fields.
+//! Shift-query IOR. Computes shift-query answers from raw codewords;
+//! the orchestrator emits the VC opens (`V::open_multiple` /
+//! `V::check_multiple`) so the IOR stays VC-agnostic on both sides.
 
 use ark_ff::Field;
-use ark_iop::{
-    IndexedOracle, IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple,
-    IOR,
-};
-use ark_vc::mvc::MultiVectorCommitment;
-use spongefish::{Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
+use ark_iop::{IorProveResult, IorProverError, IorVerifierError, IorVerifyResult, ProverTriple, IOR};
+use spongefish::{ProverState, VerifierState};
 use std::marker::PhantomData;
 
-use crate::count_ops;
-use crate::crypto::vc::CommittedCodewords;
 use crate::iop::oracles::query_indices::QueryIndices;
 
 pub struct ProximityStatement<F: Field> {
@@ -26,53 +16,24 @@ pub struct ProximityStatement<F: Field> {
     pub n_code_len: usize,
 }
 
-pub struct ProximityProverInputs<'a, F, V>
-where
-    F: Field,
-    V: MultiVectorCommitment<Alphabet = F>,
-{
-    pub ck: &'a V::CommitterKey,
-    pub td_0_committed_codeword: &'a CommittedCodewords<F, V>,
-    pub acc_td_committed_codewords: &'a [CommittedCodewords<F, V>],
+/// Inner slices are codewords-per-commitment; outer order is acc first then
+/// fresh, opposite to the orchestrator's open order (fresh first then accs).
+pub struct ProximityProverInputs<'a, F: Field> {
+    pub acc_codewords: &'a [&'a [Vec<F>]],
+    pub fresh_codewords: &'a [Vec<F>],
 }
 
-/// Verifier-side inputs. The IOR sees [`IndexedOracle`] handles, not
-/// raw commitments / opening proofs — IORs stay BCS-agnostic.
-pub struct ProximityVerifierInputs<'a, F, O>
-where
-    F: Field,
-    O: IndexedOracle<Vec<F>>,
-{
-    pub fresh: &'a O,
-    pub acc: &'a [O],
-    pub _f: PhantomData<F>,
-}
-
-/// Wire-format proof string. Auth paths + sibling digests now live in
-/// the spongefish transcript; only the shift-query answers remain
-/// out-of-band.
 pub struct ProximityProofString<F: Field> {
-    /// Per-query × per-codeword. Outer length = t (queries). Inner
-    /// length = (l2 acc + l1 fresh).
+    /// `[t][l2_acc + l1_fresh]`. Auth paths live in the FS transcript.
     pub shift_query_answers: Vec<Vec<F>>,
 }
 
-pub struct Proximity<'a, F, V>
-where
-    F: Field,
-    V: MultiVectorCommitment<Alphabet = F>,
-{
-    pub ck: &'a V::CommitterKey,
-    pub _phantom: PhantomData<F>,
-}
+#[derive(Default)]
+pub struct Proximity<F: Field>(PhantomData<F>);
 
-impl<'a, F, V> IOR for Proximity<'a, F, V>
-where
-    F: Field,
-    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
-    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
-{
+impl<F: Field> IOR for Proximity<F> {
     const NAME: &'static str = "Proximity";
+    // Tag absorbed by compose_prove/verify here; orchestrator emits the bytes.
     const MESSAGE_TAGS: &'static [&'static str] = &["delegate:vc.open_multiple"];
 
     type Statement<'b>
@@ -84,11 +45,11 @@ where
     where
         Self: 'b;
     type ProverInputs<'b>
-        = ProximityProverInputs<'b, F, V>
+        = ProximityProverInputs<'b, F>
     where
         Self: 'b;
     type VerifierInputs<'b>
-        = ProximityVerifierInputs<'b, F, ark_iop::ValidatedOracle<F>>
+        = ()
     where
         Self: 'b;
     type ReductionInputs = ();
@@ -108,98 +69,38 @@ where
     }
 }
 
-impl<'a, F, V> Proximity<'a, F, V>
-where
-    F: Field,
-    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
-    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize,
-{
+impl<F: Field> Proximity<F> {
     #[tracing::instrument(
         name = "proximity",
         skip_all,
         fields(
             n_queries = statement.queries.leaf_positions.len(),
-            n_accumulators = inputs.acc_td_committed_codewords.len(),
+            n_accumulators = inputs.acc_codewords.len(),
         )
     )]
     fn prove_inner(
         &self,
-        prover_state: &mut ProverState,
+        _prover_state: &mut ProverState,
         statement: &ProximityStatement<F>,
-        inputs: &ProximityProverInputs<'_, F, V>,
+        inputs: &ProximityProverInputs<'_, F>,
     ) -> ProverTriple<(), ProximityProofString<F>, ()> {
         let leaf_positions = &statement.queries.leaf_positions;
 
-        let mut sorted_unique = leaf_positions.clone();
-        sorted_unique.sort_unstable();
-        sorted_unique.dedup();
-
-        let column_tuples = |codewords: &[Vec<F>]| -> Vec<Vec<F>> {
-            sorted_unique
-                .iter()
-                .map(|&i| codewords.iter().map(|c| c[i]).collect())
-                .collect()
-        };
-
-        {
-            let _s = tracing::info_span!("proximity.auth_0").entered();
-            count_ops!(MerklePathsGenerated, sorted_unique.len() as u64);
-            let values = column_tuples(&inputs.td_0_committed_codeword.codewords);
-            V::open_multiple(
-                inputs.ck,
-                inputs
-                    .td_0_committed_codeword
-                    .codewords
-                    .iter()
-                    .map(|c| c.iter()),
-                &inputs.td_0_committed_codeword.commitment,
-                sorted_unique.iter().copied(),
-                values.into_iter(),
-                &inputs.td_0_committed_codeword.state,
-                prover_state,
-            )
-            .expect("proximity: open_multiple (fresh) failed");
-        }
-
-        {
-            let _s = tracing::info_span!("proximity.auth_j").entered();
-            count_ops!(
-                MerklePathsGenerated,
-                (inputs.acc_td_committed_codewords.len() * sorted_unique.len()) as u64
-            );
-            for td in inputs.acc_td_committed_codewords.iter() {
-                let values = column_tuples(&td.codewords);
-                V::open_multiple(
-                    inputs.ck,
-                    td.codewords.iter().map(|c| c.iter()),
-                    &td.commitment,
-                    sorted_unique.iter().copied(),
-                    values.into_iter(),
-                    &td.state,
-                    prover_state,
-                )
-                .expect("proximity: open_multiple (acc) failed");
-            }
-        }
+        let total_codewords: usize = inputs.acc_codewords.iter().map(|cws| cws.len()).sum::<usize>()
+            + inputs.fresh_codewords.len();
 
         let shift_query_answers = {
             let _s = tracing::info_span!("proximity.shift_queries").entered();
-            let total_codewords = inputs
-                .acc_td_committed_codewords
-                .iter()
-                .map(|td| td.codewords.len())
-                .sum::<usize>()
-                + inputs.td_0_committed_codeword.codewords.len();
             let mut answers = vec![vec![F::default(); total_codewords]; leaf_positions.len()];
             for (qi, idx) in leaf_positions.iter().enumerate() {
                 let mut col = 0usize;
-                for td in inputs.acc_td_committed_codewords.iter() {
-                    for cw in &td.codewords {
+                for cws in inputs.acc_codewords.iter() {
+                    for cw in *cws {
                         answers[qi][col] = cw[*idx];
                         col += 1;
                     }
                 }
-                for cw in &inputs.td_0_committed_codeword.codewords {
+                for cw in inputs.fresh_codewords {
                     answers[qi][col] = cw[*idx];
                     col += 1;
                 }
@@ -216,41 +117,13 @@ where
         ))
     }
 
-    #[tracing::instrument(
-        name = "proximity.verify",
-        skip_all,
-        fields(t = statement.t_num_queries, l2 = statement.l2_second_fold_factor)
-    )]
+    #[tracing::instrument(name = "proximity.verify", skip_all)]
     fn verify_inner(
         &self,
         _verifier_state: &mut VerifierState<'_>,
-        statement: &ProximityStatement<F>,
-        inputs: &ProximityVerifierInputs<'_, F, ark_iop::ValidatedOracle<F>>,
+        _statement: &ProximityStatement<F>,
+        _inputs: &(),
     ) -> Result<((), ()), IorVerifierError> {
-        (inputs.acc.len() == statement.l2_second_fold_factor)
-            .then_some(())
-            .ok_or_else(|| {
-                IorVerifierError::Custom(format!(
-                    "Proximity: NumL2Instances mismatch (got {}, expected {})",
-                    inputs.acc.len(),
-                    statement.l2_second_fold_factor
-                ))
-            })?;
-
-        // Validation by construction: ValidatedOracle's existence
-        // already attests the orchestrator ran V::check_multiple
-        // upstream. No runtime validate() call needed.
-        count_ops!(
-            MerklePathsVerified,
-            statement.queries.leaf_positions.len() as u64
-        );
-        for _ in inputs.acc.iter() {
-            count_ops!(
-                MerklePathsVerified,
-                statement.queries.leaf_positions.len() as u64
-            );
-        }
-
         Ok(((), ()))
     }
 
@@ -259,7 +132,7 @@ where
         prover_state: &mut ProverState,
         statement: &ProximityStatement<F>,
         _witness: &(),
-        inputs: &ProximityProverInputs<'_, F, V>,
+        inputs: &ProximityProverInputs<'_, F>,
     ) -> Result<IorProveResult<(), ProximityProofString<F>, ()>, IorProverError> {
         self.compose_prove(prover_state, statement, |t| {
             self.prove_inner(t, statement, inputs)
@@ -270,7 +143,7 @@ where
         &self,
         verifier_state: &mut VerifierState<'_>,
         statement: &ProximityStatement<F>,
-        inputs: &ProximityVerifierInputs<'_, F, ark_iop::ValidatedOracle<F>>,
+        inputs: &(),
     ) -> Result<IorVerifyResult<(), ()>, IorVerifierError> {
         self.compose_verify(verifier_state, statement, |t| {
             self.verify_inner(t, statement, inputs)

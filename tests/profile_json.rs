@@ -1,9 +1,5 @@
-//! End-to-end check that Plan O's JSON layer emits well-formed
-//! `warp.profile.v1` records with phase names, dimensions, and non-zero
-//! op counters.
-//!
-//! Runs only under `--features profile` (see the `cfg` below). Without
-//! the feature there's no JSON layer to test.
+//! End-to-end check that the profile JSON layer emits well-formed
+//! `warp.profile.v1` records. Runs only under `--features profile`.
 
 #![cfg(feature = "profile")]
 
@@ -16,22 +12,29 @@ use ark_codes::{
     traits::LinearCode,
 };
 use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
-use ark_mt::blake3::Blake3FieldHasher;
+use ark_ff::UniformRand;
+use ark_mt::{
+    blake3::Blake3FieldHasher, hash_region::HashRegion, scheme::MerkleCommitment,
+    shape::PerfectBinary,
+};
 use ark_std::rand::thread_rng;
-use ark_std::UniformRand;
-use warp::accumulation_scheme::{AccumulatorInstance, AccumulatorWitness, WarpProverKey};
+use ark_vc::{mvc::MultiVectorCommitment, vc::VectorCommitment};
+
 use warp::config::WarpConfig;
 use warp::relations::{
     r1cs::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Arithmetize, PolyPredicate, Relation,
+    Arithmetize, Relation,
 };
 use warp::utils::poseidon;
-use warp::WarpAccumulationScheme;
+use warp::{
+    AccumulatorInstance, AccumulatorWitness, WarpAccumulationScheme, WarpProverKey,
+};
 
-/// `Arc<Mutex<Vec<u8>>>` wrapped so it implements `io::Write`.
+type MerkleVc<F> = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
+
 #[derive(Clone)]
 struct SharedBuf(Arc<Mutex<Vec<u8>>>);
 
@@ -49,12 +52,8 @@ impl Write for SharedBuf {
 fn json_layer_emits_phase_records() {
     let sink = SharedBuf(Arc::new(Mutex::new(Vec::new())));
     let installed = warp::profile::init_json(sink.clone());
-    assert!(
-        installed,
-        "json subscriber install should succeed on first call"
-    );
+    assert!(installed);
 
-    // Minimum viable prove run — same shape as the top-level warp_test.
     let l1 = 4;
     let s = 8;
     let t = 7;
@@ -66,11 +65,10 @@ fn json_layer_emits_phase_records() {
         hash_chain_size,
     ))
     .unwrap();
-    let code_config = ReedSolomonConfig::<BLS12_381>::default(
+    let code = ReedSolomon::new(ReedSolomonConfig::<BLS12_381>::default(
         r1cs.k_num_witness_vars,
         r1cs.k_num_witness_vars.next_power_of_two(),
-    );
-    let code = ReedSolomon::new(code_config.clone());
+    ));
 
     let (instances, witnesses): (Vec<_>, Vec<_>) = (0..l1)
         .map(|_| {
@@ -92,91 +90,66 @@ fn json_layer_emits_phase_records() {
         })
         .unzip();
 
-    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
-    let hash_chain_warp =
-        WarpAccumulationScheme::<BLS12_381, R1CS<BLS12_381>, _, Blake3FieldHasher<BLS12_381>>::new(
-            warp_config,
-            code,
-            r1cs.clone(),
-            Blake3FieldHasher::<BLS12_381>::new(),
-        );
+    let warp_config = WarpConfig::new(l1, 0, s, t);
+    let pp = <MerkleVc<BLS12_381> as MultiVectorCommitment>::setup_multiple(
+        0,
+        code.code_len(),
+        t,
+        &mut rng,
+    )
+    .expect("setup_multiple");
+    let (ck, vk) = <MerkleVc<BLS12_381> as MultiVectorCommitment>::trim_multiple(
+        &pp,
+        0,
+        code.code_len(),
+        t,
+    )
+    .expect("trim_multiple");
+    let warp = WarpAccumulationScheme::<BLS12_381, R1CS<BLS12_381>, _, MerkleVc<BLS12_381>>::new(
+        warp_config,
+        code,
+        r1cs.clone(),
+        ck,
+        vk,
+    );
 
     let domainsep = spongefish::domain_separator!("test::profile_json");
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
 
-    hash_chain_warp
-        .prove(
-            WarpProverKey {
-                index: r1cs.clone(),
-                m_num_constraints: r1cs.m_num_constraints,
-                n_num_variables: r1cs.n_num_variables,
-                k_num_witness_vars: r1cs.k_num_witness_vars,
-            },
-            &mut prover_state,
-            witnesses,
-            instances,
-            AccumulatorInstance::empty(),
-            AccumulatorWitness::empty(),
-        )
-        .unwrap();
+    warp.prove(
+        WarpProverKey {
+            index: r1cs.clone(),
+            m_num_constraints: r1cs.m_num_constraints,
+            n_num_variables: r1cs.n_num_variables,
+            k_num_witness_vars: r1cs.k_num_witness_vars,
+        },
+        &mut prover_state,
+        witnesses,
+        instances,
+        AccumulatorInstance::empty(),
+        AccumulatorWitness::empty(),
+    )
+    .unwrap();
 
-    // Inspect collected records.
     let bytes = sink.0.lock().unwrap().clone();
     let text = String::from_utf8(bytes).expect("JSON output is UTF-8");
-    assert!(
-        !text.is_empty(),
-        "JSON sink should contain at least one record"
-    );
+    assert!(!text.is_empty());
 
     let lines: Vec<&str> = text.lines().collect();
-    assert!(
-        !lines.is_empty(),
-        "expected newline-delimited JSON, got: {text:?}"
-    );
+    assert!(!lines.is_empty());
 
-    // Every line is a record carrying the schema tag.
     for (i, line) in lines.iter().enumerate() {
-        assert!(
-            line.contains(r#""schema":"warp.profile.v1""#),
-            "line {i} missing schema: {line}"
-        );
-        assert!(
-            line.contains(r#""wall_ns""#),
-            "line {i} missing wall_ns: {line}"
-        );
-        assert!(
-            line.contains(r#""counters""#),
-            "line {i} missing counters: {line}"
-        );
-        assert!(
-            line.contains(r#""dimensions""#),
-            "line {i} missing dimensions: {line}"
-        );
+        assert!(line.contains(r#""schema":"warp.profile.v1""#), "line {i}: {line}");
+        assert!(line.contains(r#""wall_ns""#), "line {i}: {line}");
+        assert!(line.contains(r#""counters""#), "line {i}: {line}");
+        assert!(line.contains(r#""dimensions""#), "line {i}: {line}");
     }
 
-    // Every top-level phase must appear at least once.
-    for phase in [
-        "warp.prove",
-        "pesat",
-        "twin_constraint",
-        "ood",
-        "batching",
-        "proximity",
-    ] {
+    for phase in ["warp.prove", "pesat", "twin_constraint", "ood", "batching", "proximity"] {
         let needle = format!(r#""phase":"{phase}""#);
-        assert!(
-            text.contains(&needle),
-            "expected a record for phase `{phase}`, got lines: {lines:#?}"
-        );
+        assert!(text.contains(&needle), "missing phase `{phase}`");
     }
 
-    // At least one record must have non-empty counters (pesat bumps several).
-    assert!(
-        text.contains(r#""merkle_tree_builds":"#),
-        "expected merkle_tree_builds counter in output: {text}"
-    );
-    assert!(
-        text.contains(r#""encode_calls":"#),
-        "expected encode_calls counter in output: {text}"
-    );
+    assert!(text.contains(r#""merkle_tree_builds":"#));
+    assert!(text.contains(r#""encode_calls":"#));
 }

@@ -1,5 +1,18 @@
 # Fiat–Shamir audit
 
+> ⚠️ **STALE.** This audit was written before the post-D4 / IOR-extraction
+> refactor and references paths under `src/protocol/`, `src/warp/`,
+> `src/protocol/phases/`, etc. that no longer exist. The transcript surface
+> is now: per-IOR `compose_prove` / `compose_verify` in `ark_iop`,
+> orchestrated by `src/accumulation_scheme/{prove,verify}.rs`. The
+> structural parity invariants are now enforced by `compose_*` + the
+> `MESSAGE_TAGS` constants on each IOR (see `src/iop/iors/*.rs`) and the
+> protocol-map absorbed by `AccumulationScheme::absorb_scheme_prologue_*`.
+>
+> Regression protection is provided by `tests/snapshot_fs.rs` (FS bytes)
+> and `tests/snapshot_schema.rs` (IOR shape). A fresh audit against the
+> current source tree is pending.
+
 Status: **v1 manual audit**, current as of commit `9bf4f43`. Automated
 runtime-ordering enforcement is deferred (see bottom).
 

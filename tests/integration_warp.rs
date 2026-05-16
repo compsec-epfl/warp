@@ -37,7 +37,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Arithmetize, PolyPredicate, Relation,
+    Arithmetize, Relation,
 };
 use warp::serialize::acc_witness_size;
 use warp::utils::poseidon;
@@ -111,7 +111,7 @@ fn warp_test() {
     ))
     .unwrap();
 
-    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_config = WarpConfig::new(l1, 0, s, t);
     let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
     let hash_chain_warp = WarpAccumulationScheme::<
         BLS12_381,
@@ -147,7 +147,7 @@ fn warp_test() {
 
     let domainsep = spongefish::domain_separator!("test::warp");
     let warp_config =
-        WarpConfig::<_, R1CS<BLS12_381>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+        WarpConfig::<_, R1CS<BLS12_381>>::new(l1, 4, s, t);
 
     let (ck, vk) = build_keys::<BLS12_381>(code.code_len(), t);
     let hash_chain_warp = WarpAccumulationScheme::<
@@ -247,7 +247,7 @@ fn warp_test_goldilocks() {
     ))
     .unwrap();
 
-    let warp_config = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_config = WarpConfig::new(l1, 0, s, t);
     let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
     let hash_chain_warp = WarpAccumulationScheme::<
         Goldilocks,
@@ -284,7 +284,7 @@ fn warp_test_goldilocks() {
     let domainsep = spongefish::domain_separator!("test::warp");
     // Use 8 (2*l1) for the total accumulation size to test multi-instance accumulation
     let warp_config =
-        WarpConfig::<_, R1CS<Goldilocks>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+        WarpConfig::<_, R1CS<Goldilocks>>::new(l1, 4, s, t);
 
     let (ck, vk) = build_keys::<Goldilocks>(code.code_len(), t);
     let hash_chain_warp = WarpAccumulationScheme::<

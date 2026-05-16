@@ -8,8 +8,8 @@
 \begin{document}
 \maketitle
 
-\paragraph{Paired Rust module.} \codemod{src/protocol/oracle.rs}, consumed
-throughout \codemod{src/protocol/phases/}.
+\paragraph{Paired Rust module.} \codemod{src/iop/oracles/evaluation.rs}, consumed
+throughout \codemod{src/iop/iors/}.
 
 \section{Motivation}
 
@@ -35,7 +35,7 @@ This modification promotes Oracle to a first-class input/output type of every
 Warp IOR. No new soundness argument is required; the BCS compiler already
 handles the Merkle-commitment bookkeeping. What changes is the presentation,
 which in turn legitimises a direct Rust implementation in
-\codemod{src/protocol/oracle.rs}.
+\codemod{src/iop/oracles/evaluation.rs}.
 
 \section{Definition}
 
@@ -53,7 +53,7 @@ object:
 \end{itemize}
 
 \(\MLE{f}\) is \emph{implied} by \(f\); the prover materialises it lazily and
-caches. See \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_point}.
+caches. See \codemod{src/iop/oracles/evaluation.rs}, method \texttt{query\_at\_point}.
 
 \paragraph{Implementation note: commitments and oracles are not 1:1.} Warp's
 \Pesat{} phase interleaves \(l_1\) codewords into a single Merkle tree
@@ -74,12 +74,12 @@ Two legal query operations on \(\Oracle{f}\):
         The verifier receives \(f[i]\) alongside a Merkle opening against
         \(\Commit{f}\); the BCS compiler makes this non-interactive via
         Fiat--Shamir. Corresponds to
-        \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_leaf}.
+        \codemod{src/iop/oracles/evaluation.rs}, method \texttt{query\_at\_leaf}.
   \item[Point query.] \(\MLE{f}(\zeta)\) for \(\zeta \in \F^{\log n}\).
         The prover answers directly; the verifier's check that the answer is
         consistent with \(\Commit{f}\) is deferred to a downstream IOR (in
         Warp, the batching sumcheck). Corresponds to
-        \codemod{src/protocol/oracle.rs}, method \texttt{query\_at\_point}.
+        \codemod{src/iop/oracles/evaluation.rs}, method \texttt{query\_at\_point}.
 \end{description}
 
 Both operations act on \emph{the same} oracle; a downstream IOR is free to
@@ -118,7 +118,7 @@ Encode-and-commit   & emits \(\Oracle{f}\) per fresh witness \\
 
 The same object carries the codeword, the multilinear extension, and the
 Merkle tree; downstream phases access whichever view the operation requires.
-In Rust this is literally one struct (\codemod{src/protocol/oracle.rs}).
+In Rust this is literally one struct (\codemod{src/iop/oracles/evaluation.rs}).
 
 \section{What this does not change}
 

@@ -27,21 +27,12 @@ impl<F: Field> Oracle<F> {
         &self.evals
     }
 
-    pub fn into_evals(self) -> Vec<F> {
-        self.evals
-    }
-
     pub fn len(&self) -> usize {
         self.evals.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.evals.is_empty()
-    }
-
-    pub fn query_at_leaf(&self, idx: usize) -> F {
-        count_ops!(OracleLeafQueries);
-        self.evals[idx]
     }
 
     /// `\hat f(ζ)`. Materialises the MLE on first call, caches afterward.
@@ -56,8 +47,3 @@ impl<F: Field> Oracle<F> {
     }
 }
 
-impl<F: Field> From<Vec<F>> for Oracle<F> {
-    fn from(evals: Vec<F>) -> Self {
-        Self::from_evals(evals)
-    }
-}

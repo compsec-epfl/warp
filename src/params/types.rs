@@ -1,3 +1,6 @@
+/// Minimum number of OOD samples — shared by `select` and `validate`.
+pub const S_MIN: usize = 8;
+
 /// Target soundness in bits: `SecurityLevel(128)` means error ≤ 2⁻¹²⁸.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SecurityLevel(pub u32);

@@ -20,8 +20,6 @@ pub struct R1CS<F: Field> {
     pub m_num_constraints: usize,
     pub n_num_variables: usize,
     pub k_num_witness_vars: usize,
-    pub log_m: usize,
-    pub log_n: usize,
 }
 
 impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
@@ -59,11 +57,6 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
             });
         }
 
-        // Safe: `m` is always ≥ 1 (next_power_of_two of any usize is ≥ 1) and `n > 0`
-        // checked above. usize→u32 cast is safe on ≥32-bit platforms per lib.rs.
-        let log_m = m.ilog2().try_into().unwrap();
-        let log_n = n.ilog2().try_into().unwrap();
-
         let mut a = r1cs_matrices[0].clone().into_iter();
         let mut b = r1cs_matrices[1].clone().into_iter();
         let mut c = r1cs_matrices[2].clone().into_iter();
@@ -81,8 +74,6 @@ impl<F: Field> TryFrom<ConstraintSystemRef<F>> for R1CS<F> {
             m_num_constraints: m,
             n_num_variables: n,
             k_num_witness_vars: k,
-            log_m,
-            log_n,
         })
     }
 }

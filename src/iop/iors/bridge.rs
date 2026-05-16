@@ -37,7 +37,7 @@ where
 {
     pub predicate: &'a P,
     pub ck: &'a V::CommitterKey,
-    pub _f: PhantomData<F>,
+    pub _f: PhantomData<F>,  // P doesn't appear in any non-phantom field
 }
 
 pub struct BridgeVerifierInputs<'a, F: Field> {

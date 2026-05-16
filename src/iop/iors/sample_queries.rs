@@ -1,8 +1,5 @@
-//! Shift-query sampling IOR.
-//!
-//! Between OOD and Batching, the verifier draws `t · log_n` random
-//! bits and decodes them into `t` shift-query positions over
-//! `{0, 1}^log_n`, plus their corresponding evaluation-point vectors.
+//! Shift-query sampling IOR. Squeezes `t · log_n` bits into `t` query
+//! positions over `{0,1}^log_n`.
 
 use ark_ff::Field;
 use ark_iop::{

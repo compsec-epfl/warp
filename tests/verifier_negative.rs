@@ -1,24 +1,6 @@
-//! Negative-path verifier tests.
-//!
-//! The existing `warp_test` exercises only the happy path. This file
-//! covers the other direction: for each cleanly-triggerable
-//! [`warp::error::VerifierError`] variant, produce a valid proof, tamper
-//! with one field, and assert the verifier rejects the proof with the
-//! *specific* expected error.
-//!
-//! Catches a class of bug that's otherwise invisible: "verifier looks
-//! correct on valid proofs but accepts broken ones." Several real-world
-//! SNARKs have shipped that way.
-//!
-//! Not every error variant is reachable through a one-field tamper.
-//! Variants we don't cover here:
-//!
-//! - `SpongeFish` / `ArkError` wrap underlying errors; hitting them
-//!   requires transcript-byte-level corruption rather than proof-object
-//!   tampering, which would exercise spongefish/arkworks, not our code.
-//! - `NumSumcheckRounds` is derived from the transcript; a sibling of
-//!   `SpongeFish`.
-//! - `SumcheckRound` is not raised from any code path right now.
+//! Negative-path verifier tests: tamper one field of a valid proof, assert
+//! the specific expected `VerifierError`. `SpongeFish` / `SumcheckRound`
+//! aren't reachable via proof-object tampering and aren't covered here.
 
 use ark_bls12_381::Fr as BLS12_381;
 use ark_codes::{
@@ -44,7 +26,7 @@ use warp::relations::{
         hashchain::{compute_hash_chain, HashChainInstance, HashChainRelation, HashChainWitness},
         R1CS,
     },
-    Arithmetize, PolyPredicate, Relation,
+    Arithmetize, Relation,
 };
 use warp::utils::poseidon;
 use warp::WarpAccumulationScheme;
@@ -134,7 +116,7 @@ fn make_fixture() -> Fixture {
 
     // Phase 1: produce `l1` single-round acc states so we have a non-trivial
     // accumulator to feed phase 2 (l2 > 0 so NumL2Instances is reachable).
-    let warp_cfg1 = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_cfg1 = WarpConfig::new(l1, 0, s, t);
     let (ck1, vk1) = build_keys(code.code_len(), t);
     let w1 = WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(
         warp_cfg1,
@@ -170,7 +152,7 @@ fn make_fixture() -> Fixture {
     }
 
     // Phase 2: the "real" prove with l2 > 0 accumulated instances.
-    let warp_cfg2 = WarpConfig::<_, R1CS<F>>::new(l1, 4, s, t, r1cs.config(), code.code_len());
+    let warp_cfg2 = WarpConfig::<_, R1CS<F>>::new(l1, 4, s, t);
     let (ck2, vk2) = build_keys(code.code_len(), t);
     let warp =
         WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(warp_cfg2, code, r1cs.clone(), ck2, vk2);
@@ -266,21 +248,11 @@ fn truncated_shift_query_answers_raises_num_shift_queries() {
 fn tampered_shift_query_answer_raises_target() {
     let fix = make_fixture();
     let mut proof = fix.proof.clone();
-    // Tampering a `shift_query_answer` is caught at two distinct points:
-    // (a) Batching's sumcheck consumes the answer to compute `nu_i` and
-    // its final-claim check fails (`Target`), and (b) the trait's
-    // `check_multiple` would also fail because the leaf no longer
-    // hashes to the committed root (`ShiftQuery`). With the verify
-    // ordering Batching → check_multiple, (a) fires first.
+    // With verify ordering Batching → check_multiple, Batching's final-claim
+    // check (`Target`) fires before `check_multiple`'s root mismatch.
     proof.shift_query_answers[0][0] += F::from(1u64);
     assert_err(fix.verify(fix.acc_x.clone(), proof), "Target");
 }
-
-// `truncated_auth_j_raises_num_l2_instances` removed: opening proofs now
-// live in the spongefish transcript (written by `V::open_multiple`), so
-// there are no longer separate `auth_j` fields on `WarpProof` to truncate.
-// Equivalent coverage would require transcript-byte tampering, which is a
-// spongefish-layer concern, not warp's.
 
 #[test]
 fn tampered_mu_raises_target() {
@@ -331,7 +303,7 @@ fn prove_rejects_mismatched_instance_witness_lengths() {
         })
         .unzip();
 
-    let warp_cfg = WarpConfig::new(l1, 0, s, t, r1cs.config(), code.code_len());
+    let warp_cfg = WarpConfig::new(l1, 0, s, t);
     let (ck, vk) = build_keys(code.code_len(), t);
     let warp =
         WarpAccumulationScheme::<F, R1CS<F>, _, V>::new(warp_cfg, code, r1cs.clone(), ck, vk);

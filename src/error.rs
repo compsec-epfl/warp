@@ -1,4 +1,3 @@
-use ark_crypto_primitives::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -9,8 +8,6 @@ pub enum WarpError {
     VerifierError(#[from] VerifierError),
     #[error(transparent)]
     DeciderError(#[from] DeciderError),
-    #[error(transparent)]
-    ArkError(#[from] Error),
     #[error("z.len() is {0}, but tried accessing at {1}")]
     R1CSWitnessSize(usize, usize),
     #[error("Tried accessing at {1} when z.len() is {0}")]
@@ -23,15 +20,13 @@ pub enum WarpError {
 
 #[derive(Error, Debug)]
 pub enum ProverError {
-    #[error(transparent)]
-    ArkError(#[from] Error),
     #[error("Spongefish verification error")]
     SpongeFish,
     #[error("instance batch must contain at least 2 instances; got {got}")]
     InsufficientInstances { got: usize },
     #[error("instances.len() ({instances}) != witnesses.len() ({witnesses})")]
     InstanceWitnessLengthMismatch { instances: usize, witnesses: usize },
-    #[error("acc_witness.td_committed_codewords.len() ({roots}) != acc_instance.rt_merkle_roots.len() ({instances})")]
+    #[error("acc_witness.td_committed_codewords.len() ({roots}) != acc_instance.rt_commitments.len() ({instances})")]
     AccumulatorShapeMismatch { instances: usize, roots: usize },
     #[error("config parameter invalid: {reason}")]
     ConfigParameterInvalid { reason: String },
@@ -71,8 +66,6 @@ impl From<ark_iop::IorProverError> for ProverError {
 
 #[derive(Error, Debug)]
 pub enum VerifierError {
-    #[error(transparent)]
-    ArkError(#[from] Error),
     #[error("Spongefish verification error")]
     SpongeFish,
     #[error("Invalid new code evaluation point")]
@@ -81,14 +74,8 @@ pub enum VerifierError {
     CircuitEvaluationPoint,
     #[error("Found invalid number of shift queries points")]
     NumShiftQueries,
-    #[error("Found invalid shift query index")]
-    ShiftQueryIndex,
     #[error("Couldn't verify shift query")]
     ShiftQuery,
-    #[error("Found invalid number of l2 accumulated instances")]
-    NumL2Instances,
-    #[error("Found invalid number of sumcheck rounds")]
-    NumSumcheckRounds,
     #[error("Sumcheck round verification failed")]
     SumcheckRound,
     #[error("Incorrect target")]
@@ -140,7 +127,7 @@ impl From<effsc::proof::SumcheckError> for VerifierError {
             SumcheckError::FinalEvaluation => Self::Target,
             // Ran out of transcript or malformed bytes.
             SumcheckError::TranscriptError { .. } => Self::SpongeFish,
-            // Not reachable: warp passes `noop_hook_verify`.
+            // Not reachable: warp's hook is `|_, _| Ok(())`.
             SumcheckError::HookError { .. } => Self::SumcheckRound,
         }
     }

@@ -213,7 +213,17 @@ where
     V: MultiVectorCommitment<Alphabet = F>,
 {
     pub r1cs: &'a R1CSConstraints<F>,
-    pub _phantom: PhantomData<V>,
+    _phantom: PhantomData<V>,
+}
+
+impl<'a, F, V> TwinConstraint<'a, F, V>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    V: MultiVectorCommitment<Alphabet = F>,
+{
+    pub fn new(r1cs: &'a R1CSConstraints<F>) -> Self {
+        Self { r1cs, _phantom: PhantomData }
+    }
 }
 
 impl<'a, F, V> IOR for TwinConstraint<'a, F, V>

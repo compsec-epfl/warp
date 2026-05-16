@@ -1,7 +1,5 @@
 use super::select::FIELD_EPSILON;
-use super::types::{ParamError, Params, Regime, SecurityLevel, SoundnessBound};
-
-const S_MIN: usize = 8;
+use super::types::{ParamError, Params, Regime, SecurityLevel, SoundnessBound, S_MIN};
 
 /// Fail-closed soundness check. Returns `Ok(bound)` only when every
 /// admissibility flag passes and proximity soundness meets the target.

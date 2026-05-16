@@ -1,16 +1,8 @@
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 
 pub mod fields;
 pub mod poly;
 pub mod poseidon;
-
-pub const fn chunk_size_bytes(modulus_bit_size: u32) -> usize {
-    modulus_bit_size.div_ceil(64) as usize * 8
-}
-
-pub fn chunk_size<F: PrimeField>() -> usize {
-    chunk_size_bytes(F::MODULUS_BIT_SIZE)
-}
 
 pub fn concat_slices<F: Clone>(a: &[F], b: &[F]) -> Vec<F> {
     let mut v = Vec::<F>::with_capacity(a.len() + b.len());

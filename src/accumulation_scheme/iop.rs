@@ -1,8 +1,5 @@
-//! WarpAccumulationScheme's trait impls: `IOP` (per-round protocol identity) and
-//! `AccumulationScheme` (split-accumulation wrapper). Both are
-//! implemented directly on `WarpAccumulationScheme<F, P, C, V>` — no phantom markers.
-//! The same value that holds params (code, ck, predicate) is also
-//! the FS-prologue absorber, the IOR-list owner, and the decider.
+//! `IOP` + `AccumulationScheme` trait impls on `WarpAccumulationScheme`,
+//! plus the `schema()` constructor and the decider.
 
 use ark_codes::traits::LinearCode;
 use ark_ff::{Field, PrimeField};
@@ -37,6 +34,8 @@ where
 {
     const NAME: &'static str = "WARP";
 
+    // Excludes Proximity: FS-transparent (orchestrator emits the open bytes;
+    // its prologue tag is still absorbed via `compose_prove/verify`).
     fn ior_names() -> Vec<&'static str> {
         vec![
             <Pesat<'_, F, C, V> as IOR>::NAME,
@@ -51,6 +50,54 @@ where
     type Statement = Vec<Vec<F>>;
     type Witness = Vec<Vec<F>>;
     type Proof = WarpProof<F, V>;
+}
+
+impl<F, P, C, V> WarpAccumulationScheme<F, P, C, V>
+where
+    F: Field + PrimeField + Encoding<[u8]> + Decoding<[u8]> + NargDeserialize + NargSerialize,
+    P: Clone + PolyPredicate<F, Config = (usize, usize, usize)>,
+    C: LinearCode<F> + Clone,
+    V: MultiVectorCommitment<Alphabet = F, Index = usize>,
+    V::Commitment: Encoding<[u8]> + NargSerialize + NargDeserialize + Clone,
+{
+    /// Complete protocol shape (includes Proximity, which `ior_names()` omits).
+    pub fn schema() -> crate::iop::schema::ProtocolSchema {
+        use crate::iop::iors::proximity::Proximity;
+        use crate::iop::schema::{IorSchema, ProtocolSchema};
+        ProtocolSchema {
+            iop_name: <Self as IOP>::NAME,
+            iors: vec![
+                IorSchema {
+                    name: <Pesat<'_, F, C, V> as IOR>::NAME,
+                    message_tags: <Pesat<'_, F, C, V> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <TwinConstraint<'_, F, V> as IOR>::NAME,
+                    message_tags: <TwinConstraint<'_, F, V> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <Bridge<F, P, V> as IOR>::NAME,
+                    message_tags: <Bridge<F, P, V> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <Ood<F> as IOR>::NAME,
+                    message_tags: <Ood<F> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <SampleQueries<F> as IOR>::NAME,
+                    message_tags: <SampleQueries<F> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <Batching<F> as IOR>::NAME,
+                    message_tags: <Batching<F> as IOR>::MESSAGE_TAGS,
+                },
+                IorSchema {
+                    name: <Proximity<F> as IOR>::NAME,
+                    message_tags: <Proximity<F> as IOR>::MESSAGE_TAGS,
+                },
+            ],
+        }
+    }
 }
 
 impl<F, P, C, V> AccumulationScheme for WarpAccumulationScheme<F, P, C, V>

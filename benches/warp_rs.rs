@@ -12,12 +12,10 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use utils::domainsep::init_prover_state;
 use utils::hash_chain::{get_hashchain_instance_witness_pairs, get_hashchain_r1cs};
 use warp::config::WarpConfig;
-use warp::warp::WarpProverKey;
-use warp::WarpAccumulationScheme;
+use warp::{WarpAccumulationScheme, WarpProverKey};
 
 mod utils;
 use utils::poseidon;
-use warp::relations::PolyPredicate;
 use warp::utils::fields::Goldilocks;
 
 const HASHCHAIN_SIZE: usize = 800;
@@ -39,7 +37,7 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
     type V = MerkleCommitment<HashRegion<Blake3FieldHasher<F>>, PerfectBinary>;
 
     for l in [32, 64, 128, 256, 512] {
-        let warp_config = WarpConfig::new(l, 0, s, t, r1cs.config(), code.code_len());
+        let warp_config = WarpConfig::new(l, 0, s, t);
 
         let pp = <V as MultiVectorCommitment>::setup_multiple(0, code.code_len(), t, &mut rng)
             .expect("setup_multiple");
@@ -79,8 +77,8 @@ pub fn bench_rs_warp_fields(c: &mut Criterion) {
                                 &mut prover_state,
                                 instances_witnesses.1.clone(),
                                 instances_witnesses.0.clone(),
-                                warp::warp::AccumulatorInstance::empty(),
-                                warp::warp::AccumulatorWitness::empty(),
+                                warp::AccumulatorInstance::empty(),
+                                warp::AccumulatorWitness::empty(),
                             )
                             .unwrap();
                     },
