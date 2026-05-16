@@ -660,6 +660,139 @@ pub fn warp_proximity_ior(num_accs: usize) -> ProtocolIR {
     b.finish()
 }
 
+/// §11.5 — Toy 3-IOR protocol expressed in the IR. The point of this
+/// example is to stress IR generality on a non-WARP shape. Per the
+/// reviewer spec in §5 of the design doc, it must contain:
+/// - 3 IORs (steps)
+/// - 1 oracle commitment
+/// - 1 challenge
+/// - 1 delegated opening
+/// - 1 deferred obligation
+/// - 1 cross-cutting wire (output of step 1 consumed by step 3,
+///   skipping step 2)
+///
+/// Pseudo-shape (from §5):
+/// - Step A (`source`): commits an oracle, samples a challenge,
+///   emits a side value
+/// - Step B (`middle`): consumes the side value, emits a deferred
+///   obligation
+/// - Step C (`sink`): consumes A's oracle handle and challenge
+///   (cross-cut from A, skipping B), discharges B's obligation,
+///   delegates an opening at queried positions
+///
+/// This is the first IR example that ISN'T a WARP slice. If the IR
+/// can't express a protocol of this shape, the IR is WARP-specific
+/// and the framework's universality claim fails.
+pub fn toy_three_ior_ir() -> ProtocolIR {
+    use crate::iop::ir_builder::ProtocolIrBuilder;
+
+    let mut b = ProtocolIrBuilder::new("ToyThreeIor");
+
+    b.param("n", "usize") // oracle length
+        .param("ck", "V::CommitterKey");
+
+    // Public inputs at the protocol boundary.
+    b.public_input("query_positions", "Vec<usize>");
+    b.private_input("witness", "Vec<F>"); // raw data committed by A
+
+    // ── Step A — source. Commits an oracle, samples a challenge,
+    // sends a side value to B.
+    b.step("source", "ToySource")
+        .input("witness", "private.witness")
+        .input("ck", "params.ck")
+        // Outputs: commitment (public, consumed by C — the cross-cut),
+        // codeword (private, consumed by C for the opening),
+        // challenge (public, consumed by C — also cross-cut),
+        // side value (public, consumed by B).
+        .output("commitment", "V::Commitment", Visibility::Public)
+        .output(
+            "codeword",
+            "Vec<F>",
+            Visibility::ProverPrivate,
+        )
+        .output("c", "F", Visibility::Public)
+        .output("x", "F", Visibility::Public)
+        .commit_oracle(
+            "toy:commit_oracle",
+            "source.codeword",
+            "source.commitment",
+            "single_codeword[1, n]",
+        )
+        .sample_challenge(
+            "toy:sample_c",
+            "source.c",
+            ChallengeDistribution::Field,
+        )
+        .send_message("toy:send_x", "source.x")
+        .build();
+
+    // ── Step B — middle. Consumes A's side value only; does NOT
+    // consume the commitment or challenge (those flow A → C as the
+    // cross-cut). Emits the deferred obligation.
+    b.step("middle", "ToyMiddle")
+        .input("x", "input.source.x")
+        .output("y", "F", Visibility::Public)
+        .send_message("toy:send_y", "middle.y")
+        .emit_obligation("toy:emit_obligation", "toy_check")
+        .build();
+
+    // ── Step C — sink. Cross-cut wires from A: consumes A's commitment
+    // and challenge directly. Also consumes B's obligation. Discharges
+    // the obligation and delegates one opening at the public
+    // query_positions.
+    b.step("sink", "ToySink")
+        // CROSS-CUT WIRE: input.source.commitment and input.source.c
+        // flow A → C, skipping B. B does not consume them.
+        .input("commitment", "input.source.commitment")
+        .input("c", "input.source.c")
+        .input("query_positions", "input.query_positions")
+        .input("y", "input.middle.y")
+        .output(
+            "opened_values",
+            "Vec<F>",
+            Visibility::Public,
+        )
+        // Delegated open (C-prime pattern: declared here, runtime
+        // emission by the orchestrator).
+        .open_oracle(
+            "toy:open",
+            "input.source.commitment",
+            "input.query_positions",
+            "sink.opened_values",
+            "single_codeword[1, n]",
+        )
+        // Discharge B's obligation. Evidence: the challenge from A,
+        // the message from B, and the openings.
+        .discharge_obligation(
+            "toy:discharge",
+            "toy_check",
+            vec![
+                Cow::Borrowed("input.source.c"),
+                Cow::Borrowed("input.middle.y"),
+                Cow::Borrowed("sink.opened_values"),
+            ],
+        )
+        .build();
+
+    // Register the obligation. B emits → C discharges.
+    b.obligation(
+        "toy_check",
+        "middle",
+        Some(Cow::Borrowed("sink")),
+        "toy deferred check",
+    );
+
+    // Protocol-level outputs.
+    b.output(
+        "opened_values",
+        "sink.opened_values",
+        "Vec<F>",
+        Visibility::Public,
+    );
+
+    b.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,6 +1040,133 @@ mod tests {
                 matches!(event, EventNode::OpenOracle { .. }),
                 "expected OpenOracle, got {event:?}"
             );
+        }
+    }
+
+    /// Toy 3-IOR has the structural shape the reviewer spec required:
+    /// 3 steps, 1 oracle commit, 1 challenge, 1 open, 1 obligation.
+    #[test]
+    fn toy_three_ior_has_required_shape() {
+        let ir = toy_three_ior_ir();
+        assert_eq!(ir.name, "ToyThreeIor");
+        assert_eq!(ir.steps.len(), 3);
+        assert_eq!(ir.obligations.len(), 1);
+
+        let mut commits = 0;
+        let mut challenges = 0;
+        let mut opens = 0;
+        let mut emits = 0;
+        let mut discharges = 0;
+        for e in &ir.events {
+            match e {
+                EventNode::CommitOracle { .. } => commits += 1,
+                EventNode::SampleChallenge { .. } => challenges += 1,
+                EventNode::OpenOracle { .. } => opens += 1,
+                EventNode::EmitObligation { .. } => emits += 1,
+                EventNode::DischargeObligation { .. } => discharges += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(commits, 1);
+        assert_eq!(challenges, 1);
+        assert_eq!(opens, 1);
+        assert_eq!(emits, 1);
+        assert_eq!(discharges, 1);
+    }
+
+    /// The cross-cutting wire is the key structural requirement.
+    /// `sink` must consume two inputs sourced directly from `source`
+    /// (commitment + challenge), none of which are routed via `middle`.
+    #[test]
+    fn toy_three_ior_has_cross_cut_wire() {
+        let ir = toy_three_ior_ir();
+        let sink = ir.steps.iter().find(|s| s.id == "sink").expect("sink");
+        let source_sourced: Vec<&str> = sink
+            .inputs
+            .iter()
+            .filter_map(|b| {
+                let s: &str = &b.source;
+                if s.starts_with("input.source.") {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            source_sourced.len() >= 2,
+            "sink must cross-cut at least 2 inputs from source; got {source_sourced:?}"
+        );
+
+        // Middle MUST NOT consume the commitment or challenge (cross-cut
+        // is defined as "skipping middle").
+        let middle = ir
+            .steps
+            .iter()
+            .find(|s| s.id == "middle")
+            .expect("middle");
+        for binding in &middle.inputs {
+            let s: &str = &binding.source;
+            assert!(
+                !s.contains("commitment") && !s.contains(".c"),
+                "middle must not consume source.commitment or source.c; got binding {binding:?}"
+            );
+        }
+    }
+
+    /// The obligation lifecycle is end-to-end: middle emits, sink
+    /// discharges, registry agrees.
+    #[test]
+    fn toy_three_ior_obligation_lifecycle() {
+        let ir = toy_three_ior_ir();
+        let obl = &ir.obligations[0];
+        assert_eq!(obl.id, "toy_check");
+        assert_eq!(obl.emitter, "middle");
+        assert_eq!(obl.discharger.as_deref(), Some("sink"));
+
+        let emit = ir.events.iter().any(|e| matches!(
+            e,
+            EventNode::EmitObligation { obligation, .. }
+                if obligation == "toy_check"
+        ));
+        let disch = ir.events.iter().any(|e| matches!(
+            e,
+            EventNode::DischargeObligation { obligation, .. }
+                if obligation == "toy_check"
+        ));
+        assert!(emit && disch);
+    }
+
+    /// Every wire's source must reference a real upstream port: either
+    /// `params.*`, `public.*`, `private.*`, `input.*`, or `<step_id>.<port>`.
+    /// Catches a class of typo-bug at IR-construction time.
+    #[test]
+    fn toy_three_ior_wires_resolve() {
+        let ir = toy_three_ior_ir();
+        let step_ids: Vec<&str> = ir
+            .steps
+            .iter()
+            .map(|s| {
+                let id: &str = &s.id;
+                id
+            })
+            .collect();
+        for step in &ir.steps {
+            for binding in &step.inputs {
+                let src: &str = &binding.source;
+                let resolves = src.starts_with("params.")
+                    || src.starts_with("public.")
+                    || src.starts_with("private.")
+                    || src.starts_with("input.")
+                    || step_ids.iter().any(|id| {
+                        src.starts_with(&format!("{id}."))
+                    });
+                assert!(
+                    resolves,
+                    "binding {:?} on step {:?} has unresolvable source {src}",
+                    binding.input, step.id
+                );
+            }
         }
     }
 

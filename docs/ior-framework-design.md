@@ -770,7 +770,38 @@ Proximity, SumcheckIOR, and (when written) WHIR to use it.
 
 ### 11.5 Toy protocol in IR form
 
-**TODO** (depends on §5 design)
+**FIRST PASS LANDED.** See [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs)
+`fn toy_three_ior_ir() -> ProtocolIR`. First worked example that
+ISN'T a WARP slice — its purpose is to falsify the WARP-only
+hypothesis. Three IORs (`source`, `middle`, `sink`), 6 events
+(commit, challenge, send, send, emit_obligation, open, discharge),
+1 obligation, 1 cross-cut wire (A → C skipping B). Four sanity
+tests pass:
+- `toy_three_ior_has_required_shape` — exactly 1 commit, 1
+  challenge, 1 open, 1 emit, 1 discharge
+- `toy_three_ior_has_cross_cut_wire` — `sink` consumes ≥ 2 inputs
+  from `source` while `middle` consumes none of the cross-cut paths
+- `toy_three_ior_obligation_lifecycle` — middle emits, sink
+  discharges, registry agrees
+- `toy_three_ior_wires_resolve` — every binding's source path
+  resolves to a real upstream port (`params.*`, `public.*`,
+  `private.*`, `input.*`, or `step.port`)
+
+Finding F14:
+
+**F14 (positive): the current IR handles a non-WARP shape with no
+new primitives.** The toy mixes commits, challenges, sends, opens,
+and obligations across three IORs and exercises a cross-cut wire —
+all expressible with the existing `EventNode` variants and the
+builder API. The IR did not need a new event variant or builder
+method to encode this protocol. Limits this stress test exposes:
+- The cross-cut wire is encoded by *convention* (binding source
+  string starts with `input.source.*`), not by an IR-level wire
+  type. F4/OQ2 (wire types) would make this checkable.
+- The toy's "queries" come from `public.query_positions` rather
+  than a `SampleQueries` sub-IOR — a real protocol would derive
+  positions from squeezed randomness, but that just adds another
+  `SampleChallenge` event and doesn't stress new shape.
 
 ### 11.6 A WHIR round in IR form (with the recursive-composition encoding)
 
@@ -807,13 +838,14 @@ Next-cycle artifacts (per the design plan):
    subprotocol).~~ **DONE.**
 4. ~~Bridge in IR (stresses obligation discharge).~~ **DONE.**
 5. ~~Proximity in IR (stresses C-prime VC openings).~~ **DONE.**
-6. Toy 3-IOR protocol (stresses non-WARP generality). **NEXT.**
-7. FS interpreter (only after 6 lands).
+6. ~~Toy 3-IOR protocol (stresses non-WARP generality).~~ **DONE.**
+7. FS interpreter. **NEXT.**
 
 ### Findings already surfaced (drive the next IR revision)
 
-Thirteen findings from §11.1 (Pesat), §11.2 (TwinConstraint), §11.3
-(Bridge) and §11.4 (Proximity) feed back into the IR design:
+Fourteen findings from §11.1 (Pesat), §11.2 (TwinConstraint), §11.3
+(Bridge), §11.4 (Proximity), and §11.5 (Toy 3-IOR) feed back into
+the IR design:
 
 - **F1 → OQ1.** Internal prover compute isn't a transcript event but
   must be reconciled with declared output ports. Concrete instance of
@@ -852,3 +884,8 @@ Thirteen findings from §11.1 (Pesat), §11.2 (TwinConstraint), §11.3
 - **F13** (confirmed via Proximity): the F2/F8 shape mini-DSL is
   load-bearing. Three independent worked examples (Pesat,
   SumcheckIOR, Proximity) already need it; WHIR will make four.
+- **F14** (positive, via Toy 3-IOR): the IR's existing primitives
+  express a non-WARP shape with no extensions needed. The toy mixes
+  commits / challenges / sends / opens / obligations and a cross-cut
+  wire — all covered by the current `EventNode` variants and builder
+  API. Validates the universality claim at small scale.
