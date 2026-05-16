@@ -1,4 +1,5 @@
 pub mod iors;
+pub mod ir;
 pub mod oracles;
 pub mod schema;
 

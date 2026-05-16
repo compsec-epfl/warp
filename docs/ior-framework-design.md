@@ -355,10 +355,16 @@ To make this doc useful before the next review cycle, prioritize:
 1. **Pick a strategy for HQ2** (hidden-effects forbidding) and **OQ1**
    (trace-vs-declaration consistency) — these are coupled.
 2. **Pick a strategy for sumcheck and VC integration** (§6 sub-fork).
-3. **Sketch the runtime IR's Rust types** — `ProtocolIR`, `Wire`,
-   `EventNode`, etc. — even rough. This forces concreteness.
+3. ~~**Sketch the runtime IR's Rust types**~~ — **DONE.** See
+   [`src/iop/ir.rs`](../src/iop/ir.rs): `ProtocolIR`, `StepNode`,
+   `Wire`, `EventNode`, `ObligationNode`, etc. as ordinary Rust types.
+   Three sanity tests build minimal IR values (one-step, two-step
+   with a wire, two-step with an emit/discharge obligation pair).
+   Status: **skeleton only** — no compilation, no validation, no
+   builder ergonomics. OQ2 (wire types) is stubbed as
+   `TypeFingerprint(String)`; OQ4 (compile-time vs runtime IR) is
+   answered "runtime, for now."
 4. **Hand-build §11.1 (Pesat) in the IR** — the smallest non-trivial
    worked example. If this can't be done, the IR isn't real yet.
 
-Once those four artifacts exist, the doc has enough substance for
-another review cycle.
+Remaining first-cycle artifacts: 1, 2, 4.
