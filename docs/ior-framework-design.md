@@ -324,7 +324,86 @@ These sections fill in across iterations as the IR shape stabilizes.
 
 ### 11.1 Pesat in IR form
 
-**TODO**
+**FIRST PASS LANDED.** See [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs)
+`fn warp_pesat_only_ir() -> ProtocolIR`. Four sanity tests:
+- `pesat_ir_builds` — types compose
+- `pesat_step_events_reference_real_events` — step ↔ events
+  consistency
+- `pesat_all_step_outputs_are_protocol_outputs` — output ports
+  exported correctly in single-step protocol
+- `pesat_output_sources_resolve` — output sources point to real
+  step output ports
+
+Findings from doing the exercise (these inform the next IR revision):
+
+**F1: No event variant for internal prover compute.** Pesat computes
+its codewords and mus from witnesses *before* any transcript event.
+The IR has CommitOracle, SendMessage, SampleChallenge etc. — all
+transcript-visible — but no "internal compute" variant. Probably
+correct: internal compute *shouldn't* be a transcript event. But it
+means the IR doesn't fully describe what the component does; the
+reader has to infer that codewords come from witnesses via the
+component's `prove()` body. **This is the trace-vs-declaration gap
+(OQ1) in concrete form.** The declaration says "this commitment
+exists"; the implementation knows how it was built. The framework
+must commit to a strategy for verifying they match.
+
+**F2: `SampleChallenge` lacks shape annotations.** Pesat samples `l1`
+challenges each of `log_m` field elements — total `l1 × log_m` field
+elements, shaped `Vec<Vec<F>>`. Current `ChallengeDistribution` is
+`Field | Bytes{count}` (scalar). Neither emitting one event with no
+shape info nor emitting `l1` events captures the structure. **Open
+issue:** add structured shape annotations:
+
+```rust
+pub enum Shape {
+    Scalar,
+    Vector(usize),
+    Matrix(usize, usize),
+    // ... or a typed-shape mini-DSL
+}
+
+pub enum ChallengeDistribution {
+    Field { shape: Shape },
+    Bytes { count: usize },
+}
+```
+
+Same problem will recur in WHIR's recursive challenge sampling.
+
+**F3: Step `outputs` field carries port declarations, not values.**
+The codeword commitment is *created by* the `CommitOracle` event, but
+also appears as a `PortDecl` in the step's `outputs`. The current type
+definition treats events as the source of truth for which ports exist;
+the step's `outputs` is redundant data that must be kept consistent
+with the events. Consider: derive `outputs` from events automatically
+(builder pattern), or drop the redundancy entirely.
+
+**F4: Type fingerprints lose generic context.** `V::Commitment` is
+fingerprinted as the literal string `"V::Commitment"`. The IR has no
+encoding of what `V` is, what `F` is, or that this is the same `V`
+that appears in `CommitterKey`. For two-step protocols where Pesat's
+`V::Commitment` must equal Bridge's `V::Commitment`, the IR can't
+check that automatically. (Confirms OQ2 — wire types as strings are
+genuinely insufficient.)
+
+**F5: Population is awkward without a builder.** The example uses
+`ir.events.push(...)` followed by `ir.steps.push(...)` referencing
+`e_commit`, `e_send_mus`, `e_squeeze_taus` by index. A real builder
+would chain these and assign indices automatically. The current
+imperative-population style is fine for skeleton work but tedious as
+scale grows. **Open issue:** design a builder API (probably
+`ProtocolIR::builder()` returning a typed builder that gives you
+per-event handles).
+
+**F6: Single-step Pesat doesn't test wires or obligations.** This
+exercise validates: params, private inputs, three event variants
+(`CommitOracle` / `SendMessage` / `SampleChallenge`), step outputs,
+protocol outputs. It does **not** validate: cross-step wires,
+delegated events, deferred obligations, recursive subprotocols,
+multi-IOR DAG topology. §11.2 (TwinConstraint with deferred
+obligation) and §11.3 (Bridge with discharge) are the natural next
+exercises.
 
 ### 11.2 TwinConstraint in IR form (including the deferred obligation)
 
@@ -356,15 +435,29 @@ To make this doc useful before the next review cycle, prioritize:
    (trace-vs-declaration consistency) — these are coupled.
 2. **Pick a strategy for sumcheck and VC integration** (§6 sub-fork).
 3. ~~**Sketch the runtime IR's Rust types**~~ — **DONE.** See
-   [`src/iop/ir.rs`](../src/iop/ir.rs): `ProtocolIR`, `StepNode`,
-   `Wire`, `EventNode`, `ObligationNode`, etc. as ordinary Rust types.
-   Three sanity tests build minimal IR values (one-step, two-step
-   with a wire, two-step with an emit/discharge obligation pair).
-   Status: **skeleton only** — no compilation, no validation, no
-   builder ergonomics. OQ2 (wire types) is stubbed as
-   `TypeFingerprint(String)`; OQ4 (compile-time vs runtime IR) is
-   answered "runtime, for now."
-4. **Hand-build §11.1 (Pesat) in the IR** — the smallest non-trivial
-   worked example. If this can't be done, the IR isn't real yet.
+   [`src/iop/ir.rs`](../src/iop/ir.rs).
+4. ~~**Hand-build §11.1 (Pesat) in the IR**~~ — **DONE.** See
+   [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs) and §11.1
+   above for findings F1–F6.
 
-Remaining first-cycle artifacts: 1, 2, 4.
+Remaining first-cycle artifacts: 1, 2.
+
+### Findings already surfaced (drive the next IR revision)
+
+Six findings from §11.1 (Pesat) feed back into the IR design:
+
+- **F1 → OQ1.** Internal prover compute isn't a transcript event but
+  must be reconciled with declared output ports. Concrete instance of
+  the trace-vs-declaration gap.
+- **F2.** `ChallengeDistribution` needs a shape mini-DSL
+  (`Scalar` / `Vector(n)` / `Matrix(r, c)`). Pesat's `Vec<Vec<F>>`
+  taus expose this. Recurs in WHIR.
+- **F3.** `StepNode.outputs` is redundant data vs the events that
+  create the ports. Consider deriving via builder.
+- **F4 → OQ2.** Type fingerprints as strings lose generic-parameter
+  identity. `V::Commitment` from two different steps fingerprints to
+  the same string but the IR can't *check* they're the same `V`.
+- **F5.** Imperative population is tedious. A builder API is needed
+  before the IR scales to multi-step examples.
+- **F6.** Single-step Pesat doesn't stress wires, delegated events,
+  or obligations. Next exercises (§11.2, §11.3) need to.
