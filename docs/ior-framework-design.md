@@ -263,6 +263,86 @@ Costs (accepted under "irrespective of effort"):
 At IR-construction time `num_rounds` is fixed. The framework
 materialises the `2 * num_rounds` events.
 
+### Sub-fork: hidden-effect control / trace-vs-declaration — **DECIDED: validated-trace architecture (HQ2 + OQ1)**
+
+A four-component architecture, agreed across all council passes:
+
+```
+ProtocolIR     = static declaration (steps, wires, events, obligations)
+ExecutionTrace = runtime record of concrete protocol-visible effects
+TraceChecker   = validates trace ⊢ IR
+ValidatedTrace = compiler-consumable proof of conformance
+Compiler       = ProtocolIR + ValidatedTrace → Argument
+```
+
+**Flow:** the prover runs each IOR (in ordinary typed Rust) and the
+framework records a `TraceEvent` for each protocol-visible effect.
+After execution, `TraceChecker::check(&ir, trace)` validates structural
+conformance. Only the validated trace can be fed to a compiler.
+
+**Hidden-effect control is audit-class** in the first framework
+version: declared effects + trace validation + future static-analysis
+lint (`ior-lint-no-raw-channel`), **not** Rust type-level enforcement.
+
+The reasoning: a type-class enforcement would wrap the sponge in a
+context trait that IOR implementations are forced to go through. That
+re-opens the D4 lifetime trap (same `&mut transcript + &committed_state`
+aliasing problem the framework already escaped) and applies the
+re-opened trap to every IOR, not just VC. The validated-trace
+architecture catches hidden effects post-hoc: any divergence between
+the trace and the IR's declared effects fails validation. Combined
+with code review and (future) lint, this is the right research-stage
+choice.
+
+This is explicit honesty: **the framework detects hidden effects, it
+does not structurally forbid them.** Direct transcript/channel access
+inside IOR `prove_inner` bodies is inadmissible by convention. The
+trace checker will catch any drift between declared and actual
+behaviour, but only after the fact.
+
+**Trace event shape:** per IR event variant. `TraceEvent::SendMessage`
+carries `(ir_event_id, value_digest)`; `TraceEvent::OpenOracle` carries
+`(ir_event_id, commitment_digest, positions_digest, values_digest,
+evidence)`; etc.
+
+**Evidence:** start with the simplest workable shape.
+
+```rust
+pub enum Evidence {
+    Bytes { scheme: &'static str, bytes: Vec<u8> },
+}
+```
+
+Typed `OpeningProof` evidence (with scheme-specific Rust types) comes
+later, after OQ2 (wire types) matures. Premature typing here would
+couple the runtime trace to scheme-specific generics before the
+framework knows how to express them.
+
+**TraceChecker validates** (first version):
+- Event count matches IR event count
+- Each `trace.events[i].ir_event` resolves to a real `ir.events[id]`
+- Event kinds match (SendMessage in IR ↔ SendMessage in trace, etc.)
+- Trace order matches IR order (modulo subprotocol nesting)
+- `protocol_fingerprint` matches the IR's `schema().fingerprint()`
+- Obligations: every `EmitObligation` in the trace has a matching
+  `DischargeObligation` somewhere, or is exported via an output
+
+**TraceChecker does NOT validate** (deferred to later versions):
+- Challenge consistency (challenge values are derived from prior sponge
+  state — needs FS-replay tooling)
+- Oracle opening consistency (values returned by `V::check_multiple`
+  match the auth-path proof — needs cooperation with the VC layer)
+- Type compatibility beyond string `TypeFingerprint` (needs OQ2)
+- Witness-dependent control flow detection (needs static analysis)
+
+**Future artifact:** `ior-lint-no-raw-channel`, a Clippy-style or
+custom-rustc-driver lint that flags direct `prover_state.public_message`,
+`verifier_message`, `V::open_multiple` calls inside IOR `prove_inner` /
+`verify_inner` bodies. Forces the audit-class discipline to be
+machine-checked even before type-class enforcement exists.
+
+---
+
 ### Sub-fork: ark-vc's `V::open_multiple` integration — **DECIDED: C-prime (asymmetric with sumcheck)**
 
 A three-agent council reviewed whether to apply Option D (sumcheck's
@@ -597,8 +677,22 @@ To make this doc useful before the next review cycle, prioritize:
    [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs) and §11.1
    above for findings F1–F6.
 
-Remaining first-cycle artifacts: 1 (HQ2/OQ1). §12.2's sumcheck half
-landed as D; VC half landed as C-prime.
+All first-cycle artifacts landed:
+- §12.1 (HQ2/OQ1): validated-trace architecture, audit-class
+  hidden-effect control. See §6's "trace-vs-declaration" sub-fork.
+- §12.2: sumcheck → D, VC → C-prime.
+- §12.3: IR Rust types in `src/iop/ir.rs`.
+- §12.4: Pesat in IR + findings F1-F6.
+
+Next-cycle artifacts (per the design plan):
+1. Execution trace types: `src/iop/trace.rs` with `ExecutionTrace`,
+   `TraceEvent`, `Evidence`, `TraceChecker` stub, `ValidatedTrace`.
+2. Builder API for `ProtocolIR` (addresses finding F5).
+3. TwinConstraint in IR (stresses obligations + SumcheckIOR subprotocol).
+4. Bridge in IR (stresses obligation discharge).
+5. Proximity in IR (stresses C-prime VC openings).
+6. Toy 3-IOR protocol (stresses non-WARP generality).
+7. FS interpreter (only after 1-6 land).
 
 ### Findings already surfaced (drive the next IR revision)
 
