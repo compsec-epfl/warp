@@ -263,12 +263,94 @@ Costs (accepted under "irrespective of effort"):
 At IR-construction time `num_rounds` is fixed. The framework
 materialises the `2 * num_rounds` events.
 
-### Sub-fork: ark-vc's `V::open_multiple` integration
+### Sub-fork: ark-vc's `V::open_multiple` integration — **DECIDED: C-prime (asymmetric with sumcheck)**
 
-**Still open.** Two analogous options (rewrite ark-vc events
-abstractly vs. wrap concrete opens as delegated events). The
-delegated-event mechanism in `ProtocolSchema` is a first stab. **TODO:**
-commit to a strategy.
+A three-agent council reviewed whether to apply Option D (sumcheck's
+strategy) to ark-vc as "D-prime." Verdict 2-against-1 against D-prime:
+the asymmetry between sumcheck and VC is **structural**, not aesthetic,
+and D-prime collapses to C-prime in Rust anyway.
+
+**The asymmetry that broke D-prime:**
+
+- **Sumcheck's `prove()` owns its own event loop.** Each iteration
+  produces a stable (send-poly, squeeze-chal) pair. The implementation
+  can emit framework events natively because *the implementation is
+  the loop.* Effsc-as-impl falls out cleanly.
+- **VC's `open_multiple()` is atomic from the framework's view.** One
+  call, scheme-specific internal proof structure (Merkle auth paths
+  vs KZG group elements vs binius binary-field-specific vs packed
+  alphabet), no loop the framework can name. The Rust critic walked
+  three trait sketches:
+  - `&mut impl EventEmitter` param → D4 lifetime trap when emitter
+    shares an owner with committed-codeword state.
+  - Return opening data → compiles, but this is just C-prime, not D.
+  - Static IR fragment + runtime byte work → two parallel sources of
+    truth, drift hazard.
+
+**C-prime:**
+
+```rust
+pub trait MultiVectorCommitment: VectorCommitment {
+    type OpeningProof: CanonicalSerialize + CanonicalDeserialize;
+
+    fn open_multiple<'a, Codeword>(...)
+        -> Result<Self::OpeningProof, Self::Error>;
+
+    fn check_multiple<R: RngCore + CryptoRng>(
+        ...,
+        proof: &Self::OpeningProof,
+        rng: &mut R,
+    ) -> Result<(), Self::Error>;
+}
+```
+
+Flow under C-prime:
+1. Orchestrator calls `V::open_multiple(...)` → receives `Self::OpeningProof`.
+2. Orchestrator binds proof + values + positions to declared PortIds.
+3. Orchestrator emits `EventNode::OpenOracle { tag, commitment,
+   positions, values, oracle_interface }`.
+4. FS/BCS compilers see the declared event and interpret it per
+   backend.
+
+**Admissibility is still satisfied.** Rule 8 ("subprotocols expose
+their IR") holds because the event IS declared — just by the
+orchestrator, not by ark-vc. The soundness theorem doesn't care who
+emits the event, only that it's emitted and corresponds to actual
+behaviour. The advocate's claim that "without D-prime, VC-using
+protocols are inadmissible" conflates *who emits* with *whether
+emitted*.
+
+**The framework supports two integration patterns, not one:**
+
+| Subprotocol shape | Integration pattern | Example |
+|---|---|---|
+| Owns its event loop (multi-round, stable per-round structure) | **D** — impl emits events natively | Sumcheck (effsc backend) |
+| Atomic from framework view (single call, complex internal proof) | **C-prime** — impl returns data, framework emits events | VC (Merkle / KZG / binius / etc.) |
+
+This is structural honesty. Sumcheck and VC are different shapes;
+forcing symmetry breaks Rust.
+
+**Compatibility with ia_core / PR #5:**
+
+C-prime is compatible with the in-flight `ia_core::{ProverChannel,
+VerifierChannel}` work. ia_core sits **below** framework events:
+- ia_core: byte transport (low level)
+- Framework events: protocol actions (high level)
+
+ark-vc takes a channel parameter for its byte work; framework
+emits events at a higher abstraction level after ark-vc returns the
+`OpeningProof`. No conflict with Christian's design.
+
+**Costs:**
+- ark-vc gets a new `OpeningProof` associated type and a return-shape
+  change. Smaller refactor than effsc's, and compatible with PR #5.
+- Existing ark-vc consumers (non-IOP) are unaffected by the framework
+  event language — they just receive `OpeningProof` and do whatever
+  they want with it.
+- WARP's `accumulation_scheme/prove.rs` and `verify.rs` keep their
+  current orchestrator-owns-the-opens structure, gaining explicit
+  event emissions around each `V::open_multiple` / `V::check_multiple`
+  call.
 
 ---
 
@@ -515,7 +597,8 @@ To make this doc useful before the next review cycle, prioritize:
    [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs) and §11.1
    above for findings F1–F6.
 
-Remaining first-cycle artifacts: 1, 2.
+Remaining first-cycle artifacts: 1 (HQ2/OQ1). §12.2's sumcheck half
+landed as D; VC half landed as C-prime.
 
 ### Findings already surfaced (drive the next IR revision)
 
