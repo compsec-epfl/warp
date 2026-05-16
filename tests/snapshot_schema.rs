@@ -21,7 +21,7 @@ type VC = MerkleCommitment<HashRegion<Blake3FieldHasher<BLS12_381>>, PerfectBina
 type Scheme = WarpAccumulationScheme<BLS12_381, R1CS<BLS12_381>, ReedSolomon<BLS12_381>, VC>;
 
 const EXPECTED_SCHEMA_HASH: Option<&str> =
-    Some("3951519bee5a77b2fc5aeb8143c6597485bdd949cdaf9190dcd8337e4b0d2aad");
+    Some("f57f4464b3775fe5718196f04ba8a9d5b0745d4fa2bdd7d314f15fc97d8d1182");
 
 #[test]
 fn warp_protocol_schema_snapshot() {

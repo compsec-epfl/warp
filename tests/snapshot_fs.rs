@@ -19,7 +19,9 @@ use ark_serialize::{CanonicalSerialize, Compress};
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use ark_vc::mvc::MultiVectorCommitment;
 
-use warp::accumulation_scheme::{AccumulatorInstance, AccumulatorWitness, WarpProverKey};
+use warp::accumulation_scheme::{
+    AccumulatorInstance, AccumulatorWitness, WarpProverKey, WarpVerifierKey,
+};
 use warp::config::WarpConfig;
 use warp::relations::{
     r1cs::{
@@ -45,6 +47,12 @@ const EXPECTED_NARG_LEN: Option<usize> = Some(1616);
 const EXPECTED_PROOF_HASH: Option<&str> =
     Some("68aec437a44825f513f3b5bfa55049e2c466b533bb0aede65dc63c6f76b7ec9c");
 const EXPECTED_PROOF_LEN: Option<usize> = Some(224);
+// Sponge state at end-of-protocol must match prover ↔ verifier; squeezing a
+// post-protocol challenge from each catches asymmetric `public_message`
+// absorption that doesn't affect `narg_string` (e.g. swapped IOR prologue
+// order around a delegated VC open).
+const EXPECTED_SENTINEL: Option<&str> =
+    Some("746e75e17fc638b3cc7d07e7bc8b21f4efa254faae123f13b9d5ee1fbadc22b4");
 
 #[test]
 fn fs_transcript_snapshot_goldilocks() {
@@ -97,7 +105,7 @@ fn fs_transcript_snapshot_goldilocks() {
 
     let domainsep = spongefish::domain_separator!("test::snapshot");
     let mut prover_state = domainsep.without_session().instance(&0u32).std_prover();
-    let (_acc, pf) = warp_inst
+    let ((acc_x, _acc_w), pf) = warp_inst
         .prove(
             WarpProverKey {
                 index: r1cs.clone(),
@@ -121,12 +129,45 @@ fn fs_transcript_snapshot_goldilocks() {
     let narg_hash = hex_hash(&narg);
     let pf_hash = hex_hash(&pf_bytes);
 
+    // Run verify with the same domain separator and check the post-protocol
+    // sponge state matches the prover's by squeezing a sentinel challenge.
+    let domainsep_v = spongefish::domain_separator!("test::snapshot");
+    let mut verifier_state = domainsep_v
+        .without_session()
+        .instance(&0u32)
+        .std_verifier(&narg);
+    warp_inst
+        .verify(
+            WarpVerifierKey {
+                m_num_constraints: r1cs.m_num_constraints,
+                n_num_variables: r1cs.n_num_variables,
+                k_num_witness_vars: r1cs.k_num_witness_vars,
+            },
+            &mut verifier_state,
+            acc_x.clone(),
+            pf.clone(),
+        )
+        .unwrap();
+
+    let sentinel_prover: F = prover_state.verifier_message::<F>();
+    let sentinel_verifier: F = verifier_state.verifier_message::<F>();
+    assert_eq!(
+        sentinel_prover, sentinel_verifier,
+        "post-protocol sponge state diverged (asymmetric public_message absorption?)"
+    );
+    let sentinel_hex = {
+        let mut b = Vec::new();
+        sentinel_prover.serialize_with_mode(&mut b, Compress::Yes).unwrap();
+        hex_hash(&b)
+    };
+
     println!(
-        "fs_snapshot:\n  narg_len  = {}\n  narg_hash = {}\n  proof_len = {}\n  proof_hash = {}",
+        "fs_snapshot:\n  narg_len  = {}\n  narg_hash = {}\n  proof_len = {}\n  proof_hash = {}\n  sentinel = {}",
         narg.len(),
         narg_hash,
         pf_bytes.len(),
         pf_hash,
+        sentinel_hex,
     );
 
     if let Some(expected) = EXPECTED_NARG_LEN {
@@ -140,5 +181,8 @@ fn fs_transcript_snapshot_goldilocks() {
     }
     if let Some(expected) = EXPECTED_PROOF_HASH {
         assert_eq!(pf_hash, expected, "proof bytes changed");
+    }
+    if let Some(expected) = EXPECTED_SENTINEL {
+        assert_eq!(sentinel_hex, expected, "post-protocol sponge value changed");
     }
 }

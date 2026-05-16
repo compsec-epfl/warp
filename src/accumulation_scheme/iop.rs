@@ -34,8 +34,12 @@ where
 {
     const NAME: &'static str = "WARP";
 
-    // Excludes Proximity: FS-transparent (orchestrator emits the open bytes;
-    // its prologue tag is still absorbed via `compose_prove/verify`).
+    // Names absorbed in the AccumulationScheme prologue (the top-level
+    // domain separator). Excludes Proximity: its `compose_*` still
+    // absorbs its name+tags mid-stream when invoked, but the prologue
+    // here only lists the IOP-level IORs whose order defines the
+    // FS protocol map up-front. For the *complete* protocol shape
+    // (including Proximity), see `schema()`.
     fn ior_names() -> Vec<&'static str> {
         vec![
             <Pesat<'_, F, C, V> as IOR>::NAME,
@@ -70,30 +74,40 @@ where
                 IorSchema {
                     name: <Pesat<'_, F, C, V> as IOR>::NAME,
                     message_tags: <Pesat<'_, F, C, V> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <TwinConstraint<'_, F, V> as IOR>::NAME,
                     message_tags: <TwinConstraint<'_, F, V> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <Bridge<F, P, V> as IOR>::NAME,
                     message_tags: <Bridge<F, P, V> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <Ood<F> as IOR>::NAME,
                     message_tags: <Ood<F> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <SampleQueries<F> as IOR>::NAME,
                     message_tags: <SampleQueries<F> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <Batching<F> as IOR>::NAME,
                     message_tags: <Batching<F> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[],
                 },
                 IorSchema {
                     name: <Proximity<F> as IOR>::NAME,
                     message_tags: <Proximity<F> as IOR>::MESSAGE_TAGS,
+                    delegated_events: &[
+                        "vc.open_multiple:fresh",
+                        "vc.open_multiple:acc[*]",
+                    ],
                 },
             ],
         }

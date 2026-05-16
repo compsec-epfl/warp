@@ -246,7 +246,21 @@ where
             },
         )?;
 
-        // Consume opens in prover's order: fresh first, then each acc.
+        // Mirror prover ordering: Proximity prologue → V::check_multiple.
+        // compose_verify absorbs "Proximity"+TAGS via public_message (no
+        // narg bytes), then orchestrator consumes the auth-path bytes.
+        ark_iop::verify_ior!(
+            proximity_ior,
+            verifier_state,
+            statement: ProximityStatement {
+                queries: queries.clone(),
+                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
+                t_num_queries: self.params.config.t_num_queries,
+                n_code_len,
+            },
+            inputs: (),
+        )?;
+
         let mut rng = OsRng;
         V::check_multiple(
             &self.params.vk,
@@ -269,18 +283,6 @@ where
             )
             .map_err(|_| VerifierError::ShiftQuery)?;
         }
-
-        ark_iop::verify_ior!(
-            proximity_ior,
-            verifier_state,
-            statement: ProximityStatement {
-                queries: queries.clone(),
-                l2_second_fold_factor: self.params.config.l2_second_fold_factor,
-                t_num_queries: self.params.config.t_num_queries,
-                n_code_len,
-            },
-            inputs: (),
-        )?;
 
         (acc_alpha_first == alpha_sumcheck_challenges)
             .then_some(())
