@@ -644,7 +644,57 @@ exercises.
 
 ### 11.2 TwinConstraint in IR form (including the deferred obligation)
 
-**TODO**
+**FIRST PASS LANDED.** See [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs)
+`fn warp_twin_constraint_ior(log_l, tc_degree)`. Constructed using the
+new [`ProtocolIrBuilder`](../src/iop/ir_builder.rs) (addresses F5).
+Four sanity tests pass:
+- `twin_constraint_ir_builds` — types compose; 4 events (omega,
+  tau, sumcheck, emit_obligation)
+- `twin_constraint_ir_embeds_sumcheck_child` — RunSubprotocol's
+  child IR has 2·log_l events as expected
+- `twin_constraint_obligation_lifecycle_is_declared` — emitter +
+  discharger naming consistent
+- `twin_constraint_emit_event_matches_obligation` — EmitObligation
+  event references the registered obligation id
+
+Findings F7-F9 from doing the exercise:
+
+**F7: Subprotocol output extraction has no formal mechanism.** The
+SumcheckIOR child IR's outputs (`final_claim`, `challenges`) need to
+be wired back into the outer IR's port namespace. Today this is done
+informally: TwinConstraint declares its own `gamma_sumcheck_challenges`
+and `final_claim` outputs, and the implementation is expected to copy
+the values from the child's outputs. The IR has no explicit "subprotocol
+output → outer port" wire shape. **Open issue:** add a
+`subprotocol_output_bindings: Vec<PortBinding>` field to the
+RunSubprotocol event, mapping the child's output port names to outer
+port references.
+
+**F8 (confirmed from sumcheck): no shape annotations on
+`ChallengeDistribution`.** TwinConstraint squeezes both a scalar
+omega and a vector beta_tau. With current `Field | Bytes{count}`,
+both render as the same event, losing the structural distinction.
+Same fix as previously noted: structured shape annotations.
+
+**F9: The obligation's "data" lives outside the event.** The
+deferred check obligation has implicit data (the gamma challenges,
+the final_claim) that Bridge consumes when discharging. The current
+`EmitObligation { obligation: ObligationId }` event names the
+obligation but doesn't reference the data ports. The data is exposed
+via the step's other output ports; Bridge consumes them as wires.
+This works because obligations and ordinary data wires are kept
+separate. But it means an obligation's *semantics* (what evidence
+discharges it) is not in the IR — it's documentation. **Open issue:**
+consider whether obligations should carry a typed
+`expected_evidence_shape` so the TraceChecker can validate discharge
+events more strongly.
+
+**F10 (positive): the builder API closed F5 cleanly.** TwinConstraint's
+IR construction is ~30 lines of chained method calls, vs. the ~100
+lines of manual `ir.events.push(...)` + index management Pesat
+needed. The chain reads top-to-bottom and the dataflow is locally
+visible. The builder approach is validated; expanding to Bridge,
+Proximity, and the toy 3-IOR will use the same pattern.
 
 ### 11.3 Bridge in IR form (including the discharge)
 
@@ -696,7 +746,8 @@ Next-cycle artifacts (per the design plan):
 
 ### Findings already surfaced (drive the next IR revision)
 
-Six findings from §11.1 (Pesat) feed back into the IR design:
+Ten findings from §11.1 (Pesat) and §11.2 (TwinConstraint) feed back
+into the IR design:
 
 - **F1 → OQ1.** Internal prover compute isn't a transcript event but
   must be reconciled with declared output ports. Concrete instance of
@@ -712,4 +763,15 @@ Six findings from §11.1 (Pesat) feed back into the IR design:
 - **F5.** Imperative population is tedious. A builder API is needed
   before the IR scales to multi-step examples.
 - **F6.** Single-step Pesat doesn't stress wires, delegated events,
-  or obligations. Next exercises (§11.2, §11.3) need to.
+  or obligations. §11.2 / §11.3 / §11.4 cover those.
+- **F7.** Subprotocol output extraction has no formal mechanism in
+  the IR. Add `subprotocol_output_bindings` to `RunSubprotocol`.
+- **F8** (confirmed via TwinConstraint): `ChallengeDistribution`
+  shape mini-DSL is needed. Both Pesat's matrix taus and
+  TwinConstraint's omega-vs-tau distinction demand it.
+- **F9.** Obligation semantics (what evidence discharges it) is
+  documentation, not IR data. Consider typed
+  `expected_evidence_shape` on `ObligationNode`.
+- **F10** (positive). The builder API closed F5. TwinConstraint's IR
+  is ~30 lines using the builder vs. an estimated ~100 with manual
+  pushes. Validates the no-macro / builder-only ergonomics path.

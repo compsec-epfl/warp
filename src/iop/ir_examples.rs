@@ -320,6 +320,131 @@ pub fn warp_sumcheck_ior(num_rounds: usize, degree: usize) -> ProtocolIR {
     ir
 }
 
+/// §11.2 — WARP's `TwinConstraint` IOR expressed as a multi-step IR
+/// using the [`ProtocolIrBuilder`]. Stresses:
+/// - cross-step wires (consumes Pesat's `mus_codeword_first_coords`
+///   and `taus_zero_check_challenges`)
+/// - `RunSubprotocol` with an embedded `SumcheckIOR` child IR
+/// - `EmitObligation` for the deferred oracle-check Bridge later
+///   discharges
+///
+/// `log_l` and `tc_degree` are the sumcheck dimensions (log of the
+/// total fold factor and the sumcheck polynomial's per-round degree
+/// respectively).
+pub fn warp_twin_constraint_ior(log_l: usize, tc_degree: usize) -> ProtocolIR {
+    use crate::iop::ir_builder::ProtocolIrBuilder;
+
+    let mut b = ProtocolIrBuilder::new("WarpTwinConstraint");
+
+    // Parameters wired in by the outer protocol.
+    b.param("log_l", "usize")
+        .param("tc_degree", "usize")
+        .param("log_m", "usize")
+        .param("l", "usize"); // total fold factor
+
+    // Public inputs consumed from upstream IORs (Pesat's reduced
+    // statement) and from the accumulator instance.
+    b.public_input("pesat.mus_codeword_first_coords", "Vec<F>")
+        .public_input("pesat.taus_zero_check_challenges", "Vec<Vec<F>>")
+        .public_input("acc_instance.alpha_fold_vectors", "Vec<Vec<F>>")
+        .public_input("acc_instance.mu_claimed_evals", "Vec<F>");
+
+    // Private inputs: prover-side codewords from Pesat + accumulators.
+    b.private_input("pesat.codewords", "Vec<Vec<F>>")
+        .private_input("acc_witness.codewords", "Vec<Vec<F>>");
+
+    // The SumcheckIOR child IR — built once at IR-construction time
+    // for a specific `log_l`. The framework decision (§6 sub-fork)
+    // makes sumcheck a first-class IR component embedded here via
+    // RunSubprotocol.
+    let sumcheck_child = warp_sumcheck_ior(log_l, tc_degree);
+
+    // FINDING F9: The SumcheckIOR child IR is opaque to TwinConstraint's
+    // own wires. Its outputs (`final_claim`, `challenges`) are
+    // referenced via the RunSubprotocol event, but there's no wire
+    // mechanism between outer-IR ports and inner-IR ports yet. The
+    // framework needs a convention: subprotocol outputs are
+    // "extracted" back into the outer IR via a synthetic port.
+    // Sketched here as `twin.gamma_sumcheck_*` outputs on the step.
+
+    b.step("twin_constraint", "TwinConstraint")
+        .input("mus", "input.pesat.mus_codeword_first_coords")
+        .input("taus", "input.pesat.taus_zero_check_challenges")
+        .input("alpha", "input.acc_instance.alpha_fold_vectors")
+        .input("acc_mu", "input.acc_instance.mu_claimed_evals")
+        .input("fresh_codewords", "input.pesat.codewords")
+        .input("acc_codewords", "input.acc_witness.codewords")
+        // Public reduced-statement outputs.
+        .output("zeta_0", "Vec<F>", Visibility::Public)
+        .output("beta_tau", "Vec<F>", Visibility::Public)
+        .output("gamma_sumcheck_challenges", "Vec<F>", Visibility::Public)
+        .output("final_claim", "F", Visibility::Public)
+        // Prover-private outputs threaded to later IORs.
+        .output("f_oracle", "Oracle<F>", Visibility::ProverPrivate)
+        .output("z_witness_assignment", "Vec<F>", Visibility::ProverPrivate)
+        // Sample omega challenge (global combination).
+        .sample_challenge(
+            "twin_constraint:squeeze_omega",
+            "twin_constraint.omega",
+            ChallengeDistribution::Field,
+        )
+        // Sample tau (per-step folding challenge).
+        .sample_challenge(
+            "twin_constraint:squeeze_tau",
+            "twin_constraint.beta_tau",
+            ChallengeDistribution::Field,
+        )
+        // Run the sumcheck subprotocol. The child IR has its own
+        // event sequence (2 * log_l events); from TwinConstraint's
+        // perspective it's a single RunSubprotocol event.
+        .run_subprotocol("twin_constraint:gamma_sumcheck", sumcheck_child)
+        // Emit the deferred obligation. Bridge will discharge it
+        // by computing `eq(τ,γ)·(ν₀ + ω·η)` and comparing to
+        // final_claim. The obligation's "data" (gamma challenges,
+        // final claim) is exposed via the step's outputs above; the
+        // event itself just names the obligation.
+        .emit_obligation(
+            "twin_constraint:emit_deferred",
+            "tc_deferred_oracle_check",
+        )
+        .build();
+
+    // Register the obligation with its discharger.
+    b.obligation(
+        "tc_deferred_oracle_check",
+        "twin_constraint",
+        Some(Cow::Borrowed("bridge")),
+        "post-sumcheck oracle-eval equality check",
+    );
+
+    // Outputs of the TwinConstraint slice of the protocol.
+    for (name, ty, vis) in [
+        ("zeta_0", "Vec<F>", Visibility::Public),
+        ("beta_tau", "Vec<F>", Visibility::Public),
+        (
+            "gamma_sumcheck_challenges",
+            "Vec<F>",
+            Visibility::Public,
+        ),
+        ("final_claim", "F", Visibility::Public),
+        ("f_oracle", "Oracle<F>", Visibility::ProverPrivate),
+        (
+            "z_witness_assignment",
+            "Vec<F>",
+            Visibility::ProverPrivate,
+        ),
+    ] {
+        b.output(
+            Cow::Borrowed(name),
+            Cow::Owned(format!("twin_constraint.{}", name)),
+            ty,
+            vis,
+        );
+    }
+
+    b.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +534,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// TwinConstraint IR builds and exposes the expected event
+    /// shape: 2 challenges + 1 subprotocol + 1 obligation = 4 events.
+    #[test]
+    fn twin_constraint_ir_builds() {
+        let ir = warp_twin_constraint_ior(/* log_l = */ 4, /* tc_degree = */ 3);
+        assert_eq!(ir.name, "WarpTwinConstraint");
+        assert_eq!(ir.steps.len(), 1);
+        assert_eq!(ir.events.len(), 4); // omega, tau, sumcheck, emit
+        assert_eq!(ir.obligations.len(), 1);
+        assert_eq!(ir.obligations[0].id, "tc_deferred_oracle_check");
+    }
+
+    /// The embedded SumcheckIOR child is reachable from the
+    /// RunSubprotocol event and has its own event sequence
+    /// (2 * log_l events).
+    #[test]
+    fn twin_constraint_ir_embeds_sumcheck_child() {
+        let log_l = 5;
+        let ir = warp_twin_constraint_ior(log_l, 2);
+
+        // Find the RunSubprotocol event.
+        let child_ir = ir
+            .events
+            .iter()
+            .find_map(|e| match e {
+                EventNode::RunSubprotocol { child, .. } => Some(child),
+                _ => None,
+            })
+            .expect("expected RunSubprotocol event");
+
+        assert_eq!(child_ir.name, "SumcheckIOR");
+        assert_eq!(child_ir.events.len(), 2 * log_l);
+    }
+
+    /// The deferred obligation's emitter/discharger naming is
+    /// consistent: emitted by twin_constraint, discharged by bridge.
+    #[test]
+    fn twin_constraint_obligation_lifecycle_is_declared() {
+        let ir = warp_twin_constraint_ior(3, 2);
+        let obl = &ir.obligations[0];
+        assert_eq!(obl.emitter, "twin_constraint");
+        assert_eq!(obl.discharger.as_deref(), Some("bridge"));
+    }
+
+    /// TwinConstraint declares an EmitObligation event matching the
+    /// registered obligation id.
+    #[test]
+    fn twin_constraint_emit_event_matches_obligation() {
+        let ir = warp_twin_constraint_ior(3, 2);
+        let emit_event = ir.events.iter().find(|e| {
+            matches!(e, EventNode::EmitObligation { obligation, .. }
+                if obligation == "tc_deferred_oracle_check")
+        });
+        assert!(emit_event.is_some());
     }
 
     /// Output ports referenced by the protocol's `outputs` must point
