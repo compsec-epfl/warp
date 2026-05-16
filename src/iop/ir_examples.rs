@@ -445,6 +445,221 @@ pub fn warp_twin_constraint_ior(log_l: usize, tc_degree: usize) -> ProtocolIR {
     b.finish()
 }
 
+/// §11.3 — WARP's `Bridge` IOR expressed in the IR. Pairs with
+/// `warp_twin_constraint_ior` to complete the obligation lifecycle:
+/// TwinConstraint emits `tc_deferred_oracle_check`, Bridge discharges
+/// it. Stresses:
+/// - `CommitOracle` (the new `td_new` commitment)
+/// - `SendMessage` × 2 (eta, nu_0)
+/// - `DischargeObligation` with evidence ports
+/// - Cross-step wire consumption from TwinConstraint's outputs
+pub fn warp_bridge_ior() -> ProtocolIR {
+    use crate::iop::ir_builder::ProtocolIrBuilder;
+
+    let mut b = ProtocolIrBuilder::new("WarpBridge");
+
+    b.param("log_m", "usize")
+        .param("n_minus_k", "usize")
+        .param("predicate", "P: PolyPredicate<F>")
+        .param("ck", "V::CommitterKey");
+
+    // Inputs from TwinConstraint (consumed via wires).
+    b.public_input("twin_constraint.zeta_0", "Vec<F>")
+        .public_input("twin_constraint.beta_tau", "Vec<F>")
+        .public_input(
+            "twin_constraint.gamma_sumcheck_challenges",
+            "Vec<F>",
+        )
+        .public_input("twin_constraint.final_claim", "F")
+        .private_input("twin_constraint.f_oracle", "Oracle<F>")
+        .private_input(
+            "twin_constraint.z_witness_assignment",
+            "Vec<F>",
+        );
+
+    b.step("bridge", "Bridge")
+        .input("zeta_0", "input.twin_constraint.zeta_0")
+        .input("beta_tau", "input.twin_constraint.beta_tau")
+        .input(
+            "gamma_challenges",
+            "input.twin_constraint.gamma_sumcheck_challenges",
+        )
+        .input("final_claim", "input.twin_constraint.final_claim")
+        .input("f_oracle", "input.twin_constraint.f_oracle")
+        .input(
+            "z_witness_assignment",
+            "input.twin_constraint.z_witness_assignment",
+        )
+        // Public reduced-statement outputs.
+        .output("td_new_commitment", "V::Commitment", Visibility::Public)
+        .output("eta_predicate_eval", "F", Visibility::Public)
+        .output("nu_0_oracle_eval", "F", Visibility::Public)
+        .output("new_x", "Vec<F>", Visibility::Public)
+        // Private witness-side outputs.
+        .output(
+            "td_new",
+            "CommittedCodewords<F, V>",
+            Visibility::ProverPrivate,
+        )
+        .output("new_w", "Vec<F>", Visibility::ProverPrivate)
+        .output(
+            "f_oracle_evals",
+            "Vec<F>  // codeword from f_oracle",
+            Visibility::ProverPrivate,
+        )
+        // Events: commit td_new, send eta, send nu_0, discharge TC.
+        .commit_oracle(
+            "bridge:commit_td_new",
+            "bridge.f_oracle_evals",
+            "bridge.td_new_commitment",
+            "single_codeword[1, n]",
+        )
+        .send_message("bridge:send_eta", "bridge.eta_predicate_eval")
+        .send_message("bridge:send_nu_0", "bridge.nu_0_oracle_eval")
+        .discharge_obligation(
+            "bridge:discharge_tc",
+            "tc_deferred_oracle_check",
+            vec![
+                Cow::Borrowed("bridge.eta_predicate_eval"),
+                Cow::Borrowed("bridge.nu_0_oracle_eval"),
+                Cow::Borrowed(
+                    "input.twin_constraint.gamma_sumcheck_challenges",
+                ),
+                Cow::Borrowed("input.twin_constraint.final_claim"),
+            ],
+        )
+        .build();
+
+    // Outputs of the Bridge slice.
+    for (name, ty, vis) in [
+        ("td_new_commitment", "V::Commitment", Visibility::Public),
+        ("eta_predicate_eval", "F", Visibility::Public),
+        ("nu_0_oracle_eval", "F", Visibility::Public),
+        ("new_x", "Vec<F>", Visibility::Public),
+        (
+            "td_new",
+            "CommittedCodewords<F, V>",
+            Visibility::ProverPrivate,
+        ),
+        ("new_w", "Vec<F>", Visibility::ProverPrivate),
+    ] {
+        b.output(
+            Cow::Borrowed(name),
+            Cow::Owned(format!("bridge.{}", name)),
+            ty,
+            vis,
+        );
+    }
+
+    b.finish()
+}
+
+/// §11.4 — WARP's `Proximity` IOR expressed in the IR. Stresses
+/// the C-prime VC opening pattern: Proximity's IR declares
+/// `OpenOracle` events (one for the fresh commitment, one per
+/// accumulator), but the **orchestrator** is the actual emitter
+/// of the opening bytes at runtime.
+///
+/// FINDING F11: There's no IR mechanism today to mark events as
+/// "declared by IOR X, emitted by orchestrator Y." The convention
+/// is implicit. Future work: add an `emission_owner` field to
+/// `EventNode` variants where the IR-declarer differs from the
+/// runtime-emitter. For now, Proximity owns the declaration; the
+/// orchestrator owns the runtime emission per the C-prime decision
+/// in §6.
+///
+/// `num_accs` is the accumulator-fold-factor — fixed at
+/// IR-construction time per the same convention as SumcheckIOR.
+pub fn warp_proximity_ior(num_accs: usize) -> ProtocolIR {
+    use crate::iop::ir_builder::ProtocolIrBuilder;
+
+    let mut b = ProtocolIrBuilder::new("WarpProximity");
+
+    b.param("num_accs", "usize")
+        .param("t_num_queries", "usize")
+        .param("n_code_len", "usize");
+
+    // Inputs.
+    b.public_input("sample_queries.queries", "QueryIndices<F>")
+        .public_input("pesat.td_0_commitment", "V::Commitment")
+        .public_input(
+            "acc_instance.rt_commitments",
+            "Vec<V::Commitment>",
+        )
+        .private_input("pesat.codewords", "Vec<Vec<F>>")
+        .private_input("acc_witness.codewords", "Vec<Vec<F>>");
+
+    let mut step = b
+        .step("proximity", "Proximity")
+        .input("queries", "input.sample_queries.queries")
+        .input("fresh_codewords", "input.pesat.codewords")
+        .input("acc_codewords", "input.acc_witness.codewords")
+        // The reduced statement is `()` — Proximity has no real
+        // reduced-statement output beyond what the orchestrator
+        // does with the opens.
+        .output(
+            "shift_query_answers",
+            "Vec<Vec<F>>  // [t][l2 + l1]",
+            Visibility::Public,
+        )
+        // Internal computation outputs surfaced for the orchestrator
+        // to bind to OpenOracle events.
+        .output(
+            "sorted_unique_positions",
+            "Vec<usize>",
+            Visibility::Public,
+        )
+        .output(
+            "fresh_column_tuples",
+            "Vec<Vec<F>>",
+            Visibility::Public,
+        );
+
+    // FINDING F12: One output port per accumulator, indexed by `j`.
+    // Same scaling issue as F2/F8 — needs shape annotations to
+    // express compactly. For `num_accs = 8` we have 8 output ports
+    // plus 8 corresponding OpenOracle events.
+    for j in 0..num_accs {
+        step = step.output(
+            Cow::Owned(format!("acc_column_tuples_{}", j)),
+            "Vec<Vec<F>>",
+            Visibility::Public,
+        );
+    }
+
+    // Fresh open (C-prime: declared here, emitted by orchestrator).
+    step = step.open_oracle(
+        "proximity:open_fresh",
+        "input.pesat.td_0_commitment",
+        "proximity.sorted_unique_positions",
+        "proximity.fresh_column_tuples",
+        "joint_rs_codeword[l1, n]",
+    );
+
+    // Per-accumulator opens.
+    for j in 0..num_accs {
+        step = step.open_oracle(
+            "proximity:open_acc",
+            Cow::Owned(format!("input.acc_instance.rt_commitments[{}]", j)),
+            Cow::Borrowed("proximity.sorted_unique_positions"),
+            Cow::Owned(format!("proximity.acc_column_tuples_{}", j)),
+            "joint_rs_codeword[l2_acc, n]",
+        );
+    }
+
+    step.build();
+
+    // Protocol outputs.
+    b.output(
+        "shift_query_answers",
+        "proximity.shift_query_answers",
+        "Vec<Vec<F>>",
+        Visibility::Public,
+    );
+
+    b.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,6 +805,109 @@ mod tests {
                 if obligation == "tc_deferred_oracle_check")
         });
         assert!(emit_event.is_some());
+    }
+
+    /// Bridge IR builds with the expected event shape: 1 commit +
+    /// 2 sends + 1 discharge = 4 events.
+    #[test]
+    fn bridge_ir_builds() {
+        let ir = warp_bridge_ior();
+        assert_eq!(ir.name, "WarpBridge");
+        assert_eq!(ir.steps.len(), 1);
+        assert_eq!(ir.events.len(), 4);
+        assert_eq!(ir.outputs.len(), 6);
+    }
+
+    /// Bridge's discharge event references the obligation that
+    /// TwinConstraint emits. End-to-end obligation lifecycle is
+    /// expressible across two separate IORs.
+    #[test]
+    fn bridge_discharges_tc_obligation() {
+        let ir = warp_bridge_ior();
+        let discharge_event = ir.events.iter().find_map(|e| match e {
+            EventNode::DischargeObligation { obligation, .. }
+                if obligation == "tc_deferred_oracle_check" =>
+            {
+                Some(e)
+            }
+            _ => None,
+        });
+        assert!(
+            discharge_event.is_some(),
+            "Bridge must declare a DischargeObligation event for tc_deferred_oracle_check"
+        );
+    }
+
+    /// Bridge's events appear in the expected order: CommitOracle,
+    /// SendMessage, SendMessage, DischargeObligation.
+    #[test]
+    fn bridge_event_sequence_is_correct() {
+        let ir = warp_bridge_ior();
+        let kinds: Vec<&'static str> = ir
+            .events
+            .iter()
+            .map(|e| match e {
+                EventNode::CommitOracle { .. } => "CommitOracle",
+                EventNode::SendMessage { .. } => "SendMessage",
+                EventNode::SampleChallenge { .. } => "SampleChallenge",
+                EventNode::DischargeObligation { .. } => "DischargeObligation",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "CommitOracle",
+                "SendMessage",
+                "SendMessage",
+                "DischargeObligation"
+            ]
+        );
+    }
+
+    /// Proximity with `num_accs = 0` is degenerate: only the fresh
+    /// open. 1 event.
+    #[test]
+    fn proximity_ir_zero_accs() {
+        let ir = warp_proximity_ior(0);
+        assert_eq!(ir.events.len(), 1);
+        let step = &ir.steps[0];
+        // 3 baseline outputs (shift_query_answers,
+        // sorted_unique_positions, fresh_column_tuples).
+        assert_eq!(step.outputs.len(), 3);
+    }
+
+    /// Proximity scales linearly: `1 + num_accs` OpenOracle events
+    /// and `3 + num_accs` step output ports.
+    #[test]
+    fn proximity_ir_scales_with_num_accs() {
+        for num_accs in [0, 1, 4, 8] {
+            let ir = warp_proximity_ior(num_accs);
+            assert_eq!(
+                ir.events.len(),
+                1 + num_accs,
+                "for num_accs={num_accs}"
+            );
+            let step = &ir.steps[0];
+            assert_eq!(
+                step.outputs.len(),
+                3 + num_accs,
+                "for num_accs={num_accs}"
+            );
+        }
+    }
+
+    /// All Proximity events are OpenOracle — there are no
+    /// sends, squeezes, or commits inside Proximity itself.
+    #[test]
+    fn proximity_all_events_are_open_oracle() {
+        let ir = warp_proximity_ior(3);
+        for event in &ir.events {
+            assert!(
+                matches!(event, EventNode::OpenOracle { .. }),
+                "expected OpenOracle, got {event:?}"
+            );
+        }
     }
 
     /// Output ports referenced by the protocol's `outputs` must point

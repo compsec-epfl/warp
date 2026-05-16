@@ -698,11 +698,75 @@ Proximity, and the toy 3-IOR will use the same pattern.
 
 ### 11.3 Bridge in IR form (including the discharge)
 
-**TODO**
+**FIRST PASS LANDED.** See [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs)
+`fn warp_bridge_ior() -> ProtocolIR`. Built with [`ProtocolIrBuilder`].
+Closes the obligation lifecycle TwinConstraint opens. Three sanity
+tests pass:
+- `bridge_ir_builds` — types compose; 4 events
+  (CommitOracle, SendMessage, SendMessage, DischargeObligation)
+- `bridge_discharges_tc_obligation` — Bridge's DischargeObligation
+  event names `tc_deferred_oracle_check` exactly
+- `bridge_event_sequence_is_correct` — event order matches Bridge's
+  intended commit-send-send-discharge structure
+
+Finding F11 from the exercise:
+
+**F11: `DischargeObligation.evidence` is `Vec<PortId>` — untyped.**
+Bridge's discharge passes four ports: `eta_predicate_eval`,
+`nu_0_oracle_eval`, the upstream `gamma_sumcheck_challenges`, and the
+upstream `final_claim`. The `EventNode::DischargeObligation` variant
+accepts these as an opaque `Vec<PortId>`. The IR can't check that the
+evidence shape matches the obligation's expected_evidence_shape
+(because no such field exists yet, per F9). Combined with F9 this
+becomes concrete: Bridge silently providing the wrong number or
+wrong-typed evidence ports would not be caught at IR-construction
+time. **Resolution path:** tie F11's fix to F9's — when
+`ObligationNode` gains an `expected_evidence_shape`, the discharge
+event can be checked against it at TraceChecker time. Until then,
+discharge evidence is convention.
 
 ### 11.4 Proximity in IR form (with delegated VC opens)
 
-**TODO**
+**FIRST PASS LANDED.** See [`src/iop/ir_examples.rs`](../src/iop/ir_examples.rs)
+`fn warp_proximity_ior(num_accs) -> ProtocolIR`. Built with
+[`ProtocolIrBuilder`]. Exercises the C-prime VC pattern (events
+*declared* by Proximity, *emitted* by the orchestrator at runtime).
+Three sanity tests pass:
+- `proximity_ir_zero_accs` — degenerate `num_accs = 0` builds with
+  just the fresh open
+- `proximity_ir_scales_with_num_accs` — `1 + num_accs` OpenOracle
+  events and `3 + num_accs` step output ports for each `num_accs ∈
+  {0, 1, 4, 8}`
+- `proximity_all_events_are_open_oracle` — Proximity has *only*
+  opens, no sends/squeezes/commits
+
+Findings F12-F13:
+
+**F12: No `emission_owner` field on events.** Per the C-prime decision
+(§6 VC sub-fork), Proximity's IR *declares* the OpenOracle events,
+but the orchestrator is the actual runtime emitter. There's no IR
+mechanism today to distinguish declarer from emitter — the convention
+is implicit (Proximity owns the declaration, orchestrator runs
+`V::open_multiple` and writes the trace event). This works for now
+because TraceChecker just validates structural conformance (count +
+kind + order + fingerprint), and it doesn't care who wrote the bytes.
+But once we add per-event validity checks (e.g., "the
+OpenOracle.commitment field references a real prior CommitOracle"),
+or once we add a `ior-lint-no-raw-channel` lint that flags direct VC
+calls inside IOR bodies, we'll need an explicit
+`emission_owner: EmissionOwner { Declarer, Orchestrator(StepId) }`
+field on EventNode to know which IOR bodies are *allowed* to write
+the bytes. **Open issue:** add `emission_owner` when the lint and
+per-event validity logic are designed (post-FS-interpreter).
+
+**F13: Linear port-name scaling with `num_accs` reproduces F2/F8.**
+Proximity declares `num_accs` separately-named output ports
+(`acc_column_tuples_0`, `acc_column_tuples_1`, ...) and the
+corresponding number of OpenOracle events. The shape mini-DSL
+proposed in F2 would let this collapse to one port and one event with
+a `Shape::Vector(num_accs)` annotation. Recurs in WHIR's per-fold
+opens. **Resolution path:** ship the F2/F8 shape DSL and refactor
+Proximity, SumcheckIOR, and (when written) WHIR to use it.
 
 ### 11.5 Toy protocol in IR form
 
@@ -735,19 +799,21 @@ All first-cycle artifacts landed:
 - §12.4: Pesat in IR + findings F1-F6.
 
 Next-cycle artifacts (per the design plan):
-1. Execution trace types: `src/iop/trace.rs` with `ExecutionTrace`,
-   `TraceEvent`, `Evidence`, `TraceChecker` stub, `ValidatedTrace`.
-2. Builder API for `ProtocolIR` (addresses finding F5).
-3. TwinConstraint in IR (stresses obligations + SumcheckIOR subprotocol).
-4. Bridge in IR (stresses obligation discharge).
-5. Proximity in IR (stresses C-prime VC openings).
-6. Toy 3-IOR protocol (stresses non-WARP generality).
-7. FS interpreter (only after 1-6 land).
+1. ~~Execution trace types: `src/iop/trace.rs` with `ExecutionTrace`,
+   `TraceEvent`, `Evidence`, `TraceChecker` stub, `ValidatedTrace`.~~
+   **DONE.**
+2. ~~Builder API for `ProtocolIR` (addresses finding F5).~~ **DONE.**
+3. ~~TwinConstraint in IR (stresses obligations + SumcheckIOR
+   subprotocol).~~ **DONE.**
+4. ~~Bridge in IR (stresses obligation discharge).~~ **DONE.**
+5. ~~Proximity in IR (stresses C-prime VC openings).~~ **DONE.**
+6. Toy 3-IOR protocol (stresses non-WARP generality). **NEXT.**
+7. FS interpreter (only after 6 lands).
 
 ### Findings already surfaced (drive the next IR revision)
 
-Ten findings from §11.1 (Pesat) and §11.2 (TwinConstraint) feed back
-into the IR design:
+Thirteen findings from §11.1 (Pesat), §11.2 (TwinConstraint), §11.3
+(Bridge) and §11.4 (Proximity) feed back into the IR design:
 
 - **F1 → OQ1.** Internal prover compute isn't a transcript event but
   must be reconciled with declared output ports. Concrete instance of
@@ -775,3 +841,14 @@ into the IR design:
 - **F10** (positive). The builder API closed F5. TwinConstraint's IR
   is ~30 lines using the builder vs. an estimated ~100 with manual
   pushes. Validates the no-macro / builder-only ergonomics path.
+- **F11.** `DischargeObligation.evidence` is untyped (`Vec<PortId>`).
+  Bridge would silently pass wrong-shape evidence with no check.
+  Resolved together with F9 (typed `expected_evidence_shape` on
+  `ObligationNode`).
+- **F12.** No `emission_owner` field on events. The C-prime VC
+  pattern (events declared by IOR, emitted by orchestrator) works
+  by convention today. Needed once per-event validity checks or the
+  `ior-lint-no-raw-channel` lint land.
+- **F13** (confirmed via Proximity): the F2/F8 shape mini-DSL is
+  load-bearing. Three independent worked examples (Pesat,
+  SumcheckIOR, Proximity) already need it; WHIR will make four.
