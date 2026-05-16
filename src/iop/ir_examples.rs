@@ -190,6 +190,136 @@ pub fn warp_pesat_only_ir() -> ProtocolIR {
     ir
 }
 
+/// §11.2 first half — `SumcheckIOR` expressed as a ProtocolIR
+/// parameterised by `num_rounds`.
+///
+/// Per design doc §6 decision (Option D): SumcheckIOR is defined IN
+/// the framework. Effsc is refactored to be one high-performance
+/// implementation of it; effsc's own transcript trait is removed.
+/// This IR sketch is the framework-canonical declaration that any
+/// implementation (effsc-backed, toy, future) must match.
+///
+/// At IR-construction time `num_rounds` is concrete. Each round
+/// generates two events: `SendMessage` (round polynomial coeffs)
+/// then `SampleChallenge` (round challenge). For `num_rounds = N`
+/// the IR has `2N` events.
+///
+/// The returned ProtocolIR is intended to be embedded inside an
+/// outer IOR's `RunSubprotocol` child rather than run standalone —
+/// but it is a valid standalone IR.
+pub fn warp_sumcheck_ior(num_rounds: usize, degree: usize) -> ProtocolIR {
+    let mut ir = ProtocolIR::empty("SumcheckIOR");
+
+    ir.params.push(ParamDecl {
+        name: Cow::Borrowed("num_rounds"),
+        ty: TypeFingerprint::of("usize"),
+    });
+    ir.params.push(ParamDecl {
+        name: Cow::Borrowed("degree"),
+        ty: TypeFingerprint::of("usize"),
+    });
+    ir.public_inputs.push(PortDecl {
+        name: Cow::Borrowed("claim"),
+        ty: TypeFingerprint::of("F"),
+        visibility: Visibility::Public,
+    });
+    ir.private_inputs.push(PortDecl {
+        name: Cow::Borrowed("polynomial"),
+        ty: TypeFingerprint::of("MultilinearOrTablewisePoly<F>"),
+        visibility: Visibility::ProverPrivate,
+    });
+
+    // Per-round events: SendMessage(round_poly) → SampleChallenge(chal).
+    //
+    // FINDING F7: For `num_rounds = N`, the IR contains `2N` events. No
+    // loop construct in the IR itself — recursion lives in the
+    // SumcheckIOR-as-subprotocol abstraction. This is the right
+    // factoring (a generic Loop event would be more powerful but less
+    // type-checkable); the cost is IR size scales linearly with rounds.
+    let mut step_events = Vec::with_capacity(num_rounds * 2);
+    let mut step_outputs = Vec::with_capacity(num_rounds + 1);
+    for i in 0..num_rounds {
+        let e_send = ir.events.len();
+        ir.events.push(EventNode::SendMessage {
+            tag: "sumcheck:round_poly",
+            value: Cow::Owned(format!("sumcheck.round_poly_{}", i)),
+        });
+        step_events.push(e_send);
+
+        let e_chal = ir.events.len();
+        ir.events.push(EventNode::SampleChallenge {
+            tag: "sumcheck:round_chal",
+            output: Cow::Owned(format!("sumcheck.chal_{}", i)),
+            distribution: ChallengeDistribution::Field,
+        });
+        step_events.push(e_chal);
+
+        // FINDING F8: Each round needs TWO output ports (round_poly,
+        // chal_i). For N rounds that's 2N ports declared, all named
+        // with index suffixes. Without shape annotations (F2's open
+        // issue) we can't express "Vec<F> indexed by round."
+        step_outputs.push(PortDecl {
+            name: Cow::Owned(format!("round_poly_{}", i)),
+            ty: TypeFingerprint::of("Vec<F>  // degree+1 coeffs"),
+            visibility: Visibility::Public,
+        });
+        step_outputs.push(PortDecl {
+            name: Cow::Owned(format!("chal_{}", i)),
+            ty: TypeFingerprint::of("F"),
+            visibility: Visibility::Public,
+        });
+    }
+
+    // Final reduced-statement ports.
+    step_outputs.push(PortDecl {
+        name: Cow::Borrowed("final_claim"),
+        ty: TypeFingerprint::of("F"),
+        visibility: Visibility::Public,
+    });
+    step_outputs.push(PortDecl {
+        name: Cow::Borrowed("challenges"),
+        ty: TypeFingerprint::of("Vec<F>  // length = num_rounds"),
+        visibility: Visibility::Public,
+    });
+
+    ir.steps.push(StepNode {
+        id: Cow::Borrowed("sumcheck"),
+        component: Cow::Borrowed("SumcheckIOR"),
+        inputs: vec![
+            PortBinding {
+                input: Cow::Borrowed("claim"),
+                source: Cow::Borrowed("public.claim"),
+            },
+            PortBinding {
+                input: Cow::Borrowed("polynomial"),
+                source: Cow::Borrowed("private.polynomial"),
+            },
+        ],
+        outputs: step_outputs,
+        events: step_events,
+    });
+
+    ir.outputs.push(OutputDecl {
+        name: Cow::Borrowed("final_claim"),
+        source: Cow::Borrowed("sumcheck.final_claim"),
+        ty: TypeFingerprint::of("F"),
+        visibility: Visibility::Public,
+    });
+    ir.outputs.push(OutputDecl {
+        name: Cow::Borrowed("challenges"),
+        source: Cow::Borrowed("sumcheck.challenges"),
+        ty: TypeFingerprint::of("Vec<F>"),
+        visibility: Visibility::Public,
+    });
+
+    // Mark unused param to keep signature honest; degree is consumed
+    // by the implementation's polynomial-round-coefficient computation
+    // but doesn't appear in the IR-event structure beyond as parameter.
+    let _ = degree;
+
+    ir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +366,48 @@ mod tests {
                 "step output {:?} not exported as protocol output",
                 out_port.name
             );
+        }
+    }
+
+    /// SumcheckIOR with `num_rounds = 4` should have `8` events
+    /// (4 sends + 4 challenges) plus the right output cardinality.
+    #[test]
+    fn sumcheck_ir_event_count_scales_linearly() {
+        let ir = warp_sumcheck_ior(4, 2);
+        assert_eq!(ir.events.len(), 8);
+        assert_eq!(ir.steps.len(), 1);
+        let step = &ir.steps[0];
+        assert_eq!(step.events.len(), 8);
+        // 4 round_poly + 4 chal + 2 final = 10 output ports.
+        assert_eq!(step.outputs.len(), 10);
+    }
+
+    /// SumcheckIOR with 0 rounds is degenerate but should still build.
+    #[test]
+    fn sumcheck_ir_zero_rounds_builds() {
+        let ir = warp_sumcheck_ior(0, 0);
+        assert_eq!(ir.events.len(), 0);
+        // Only the final_claim + challenges ports remain.
+        assert_eq!(ir.steps[0].outputs.len(), 2);
+    }
+
+    /// SumcheckIOR's event sequence must alternate send → challenge.
+    /// This is the per-round protocol invariant.
+    #[test]
+    fn sumcheck_ir_events_alternate_send_challenge() {
+        let ir = warp_sumcheck_ior(3, 2);
+        for (i, event) in ir.events.iter().enumerate() {
+            if i % 2 == 0 {
+                assert!(
+                    matches!(event, EventNode::SendMessage { .. }),
+                    "event {i} should be SendMessage, got {event:?}"
+                );
+            } else {
+                assert!(
+                    matches!(event, EventNode::SampleChallenge { .. }),
+                    "event {i} should be SampleChallenge, got {event:?}"
+                );
+            }
         }
     }
 

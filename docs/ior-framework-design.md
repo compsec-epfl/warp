@@ -188,12 +188,87 @@ Candidate rules (from the direction doc):
 statically (i.e. enforceable by the framework's API) vs which are
 proof obligations the protocol author must satisfy.
 
-**Sub-fork: effsc::sumcheck integration.** Either:
-- (a) Rewrite sumcheck as a DSL IOR component (subprotocol IR exposed)
-- (b) Treat sumcheck as an opaque transcript-effect event
+### Sub-fork: effsc::sumcheck integration — **DECIDED: D**
 
-(a) is invasive; (b) breaks rule 8. **TODO:** pick a strategy. Same
-applies to `ark-vc`'s `V::open_multiple`.
+The user's framing: best interface design, effort tolerated. Four
+options:
+
+- **A.** Sumcheck as opaque library call. Violates rule 8. **Rejected.**
+- **B.** Reimplement sumcheck inside the framework, abandon effsc.
+  Throws away years of work for marginal cleanliness gain.
+  **Rejected.**
+- **C.** `SumcheckIOR` is first-class in the IR; its implementation
+  *wraps* `effsc::sumcheck` internally. Effsc stays standalone. The
+  OQ1 trace-vs-declaration consistency problem appears at the
+  wrapper boundary. **Rejected as a compromise.**
+- **D.** **`SumcheckIOR` is defined IN the framework. Effsc is
+  refactored to become a (high-performance) implementation of it.
+  Effsc's own transcript trait is removed; the framework's event
+  language replaces it.** **CHOSEN.**
+
+The layering under D:
+
+```
+Framework layer:    defines SumcheckIOR — IR + Rust trait + event schedule
+                                 ↑
+Implementation:     effsc::SumcheckCore  (production impl: SIMD, streaming)
+                    toy::SumcheckCore    (reference impl for tests)
+                    ...future impls
+                                 ↑
+Caller layer:       WARP's TwinConstraint + Batching
+                    WHIR's sumcheck rounds
+                    other framework consumers
+```
+
+Wins vs option C:
+- **No OQ1 gap for sumcheck.** Effsc's emitted events *are* the
+  framework's declared events (effsc is the implementation, not a
+  wrapper). Trace-vs-declaration consistency becomes a non-question
+  for this subprotocol.
+- **Effsc's own transcript trait disappears.** One transcript
+  abstraction in the ecosystem (the framework's), not two.
+- **Multiple sumcheck implementations become first-class.** Reference
+  toy, production effsc-backed, future GPU/distributed — all
+  implement the same trait.
+- **WARP and WHIR share the same `SumcheckIOR` automatically.**
+- **Effsc's algorithmic optimizations preserved** as internal
+  implementation details: SIMD, memmap-streaming, polynomial-form
+  variants (multilinear vs tablewise vs coefficient), etc. These
+  are implementation concerns, not interface concerns.
+
+Costs (accepted under "irrespective of effort"):
+- Effsc loses standalone-library identity; becomes a framework
+  implementation.
+- WARP's `effsc::sumcheck` / `effsc::sumcheck_verify` call sites in
+  `iors/twin_constraint.rs` and `iors/batching.rs` are rewritten to
+  use the framework's `SumcheckIOR`.
+- WHIR's sumcheck integration (the in-flight PR
+  <https://github.com/WizardOfMenlo/whir/pull/250>) is similarly
+  affected — that PR likely supersedes itself in the framework story.
+- Cross-crate coordination: effsc and ark-iop must evolve together
+  for this refactor.
+
+**`SumcheckIOR` interface shape** (framework-defined):
+- Parameters: `degree: usize`, `num_rounds: usize`,
+  `prover_strategy: SumcheckProverStrategy` (multilinear / tablewise /
+  coefficient — implementation hint).
+- Public input: `claim: F`.
+- Private input: `polynomial: SumcheckPolynomial<F>` (abstract over
+  the strategy).
+- Events (per round, in order): `SendMessage { tag: "sumcheck:round_poly", ... }`,
+  `SampleChallenge { tag: "sumcheck:round_chal", ..., distribution: Field }`.
+- Outputs: `final_claim: F`, `challenges: Vec<F>` (length =
+  `num_rounds`).
+
+At IR-construction time `num_rounds` is fixed. The framework
+materialises the `2 * num_rounds` events.
+
+### Sub-fork: ark-vc's `V::open_multiple` integration
+
+**Still open.** Two analogous options (rewrite ark-vc events
+abstractly vs. wrap concrete opens as delegated events). The
+delegated-event mechanism in `ProtocolSchema` is a first stab. **TODO:**
+commit to a strategy.
 
 ---
 
