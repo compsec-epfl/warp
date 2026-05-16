@@ -440,18 +440,62 @@ How a compiler interprets the IR.
 
 ### 7.1 FS interpretation
 
-**TODO:** spell out how each event type maps to FS-transcript actions:
+**FIRST PASS LANDED.** See
+[`src/iop/fs_interpreter.rs`](../src/iop/fs_interpreter.rs).
+Architecture:
 
-- `AbsorbPublic` → `public_message`
-- `SendMessage` → `prover_message`
-- `SampleChallenge` → squeeze via `verifier_message`
-- `CommitOracle` → write commitment bytes via `prover_message`
-- `QueryOracle` → look up locally (verifier-side)
-- `OpenOracle` → orchestrator calls `V::open_multiple` /
-  `V::check_multiple`
-- `RunSubprotocol` → recurse into the child IR
-- `EmitObligation` / `DischargeObligation` → out-of-band check;
-  framework enforces all obligations terminate
+```text
+ValidatedTrace → FsInterpreter::interpret(&trace, &mut backend)
+                            │
+                            ▼
+                       walks IR + trace in lockstep
+                            │
+                            ▼
+                       dispatches each event to FsBackend
+                            │
+            ┌───────────────┼────────────────┐
+            ▼               ▼                ▼
+         spongefish    BCS backend     RecordingBackend
+         (future)      (future)        (tests today)
+```
+
+The `FsBackend` trait has one method per `EventNode` variant; the
+interpreter is transcript-agnostic and just dispatches in IR order.
+Event-to-action mapping (the §7.1 spec) is implemented by each
+backend impl, not the interpreter:
+
+- `AbsorbPublic` → `backend.absorb_public(tag, value_digest)`
+- `SendMessage` → `backend.prover_message(tag, value_digest)`
+- `SampleChallenge` → `backend.sample_challenge(tag, value_digest)`
+- `CommitOracle` → `backend.commit_oracle(tag, oracle_digest,
+  commitment_digest)`
+- `QueryOracle` → `backend.query_oracle(tag, commitment_digest,
+  positions_digest)`
+- `OpenOracle` → `backend.open_oracle(tag, commitment_digest,
+  positions_digest, values_digest, evidence)`
+- `RunSubprotocol` → `backend.enter_subprotocol(tag, child_ir)`,
+  recurse with child IR + child trace, then
+  `backend.leave_subprotocol(tag, child_ir)`
+- `EmitObligation` / `DischargeObligation` →
+  `backend.emit_obligation(...)` / `backend.discharge_obligation(...)`
+
+Tests use `RecordingBackend` (captures every call) to verify each
+variant dispatches correctly and that subprotocol recursion produces
+the right enter/recurse/leave call sequence. Five tests cover empty
+traces, single-event dispatch, every variant in order, RunSubprotocol
+recursion with bookends, and backend-error abort behaviour.
+
+What the first cycle does NOT cover:
+- Real FS randomness — the backend supplies any sampled values; the
+  interpreter only passes digests through.
+- Child-trace validation: the trace checker validates only top-level
+  structural conformance. Nested traces inside RunSubprotocol events
+  are trusted by the interpreter (`FsInterpretError::KindMismatch` is
+  a defensive guard, not a guarantee). Lifting trace validation
+  through subprotocols is a follow-up artifact, paired with the
+  `subprotocol_output_bindings` work from F7.
+- A real backend impl. spongefish-backed and BCS-backed backends
+  come in subsequent commits.
 
 ### 7.2 BCS interpretation
 
@@ -839,7 +883,15 @@ Next-cycle artifacts (per the design plan):
 4. ~~Bridge in IR (stresses obligation discharge).~~ **DONE.**
 5. ~~Proximity in IR (stresses C-prime VC openings).~~ **DONE.**
 6. ~~Toy 3-IOR protocol (stresses non-WARP generality).~~ **DONE.**
-7. FS interpreter. **NEXT.**
+7. ~~FS interpreter walking IR + ValidatedTrace.~~ **DONE.**
+
+Next-cycle continuation:
+- §11.6 WHIR fold round in IR (stresses recursive composition;
+  forces a §7.3 decision)
+- Recursive trace validation (lift trace checker through
+  RunSubprotocol)
+- spongefish-backed `FsBackend` impl (first real compiler target)
+- BCS compiler (§7.2)
 
 ### Findings already surfaced (drive the next IR revision)
 
