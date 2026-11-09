@@ -649,6 +649,7 @@ impl<
             .collect();
 
         (proof.6.len() == self.config.t).ok_or_err(VerifierError::NumShiftQueries)?;
+        (proof.4.len() == self.config.t).ok_or_err(VerifierError::NumShiftQueries)?;
         for (i, path) in proof.4.iter().enumerate() {
             (path.leaf_index == shift_queries_indexes[i])
                 .ok_or_err(VerifierError::ShiftQueryIndex)?;
@@ -811,6 +812,7 @@ pub mod test {
     use std::marker::PhantomData;
 
     use super::{WARPConfig, WARP};
+    use crate::error::VerifierError;
     use crate::traits::WARPAccumResult;
 
     #[test]
@@ -1312,6 +1314,39 @@ pub mod test {
                 .is_err(),
             "a proof produced under one index must not verify under another"
         );
+    }
+
+    #[test]
+    pub fn verify_rejects_wrong_number_of_fresh_auth_paths() {
+        let fixture = bind_fixture();
+        let warp = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let vk = fixture.r1cs.config();
+
+        let (((acc_instance, _), proof), narg) = bind_prove(&warp, &fixture);
+
+        let mut none = proof.clone();
+        none.4.clear();
+        let mut short = proof.clone();
+        short.4.pop();
+        let mut long = proof.clone();
+        long.4.push(proof.4[0].clone());
+
+        for (name, tampered) in [
+            ("no paths", none),
+            ("one path missing", short),
+            ("one path extra", long),
+        ] {
+            let result = warp.verify(
+                vk,
+                &mut bind_verifier_state(&narg),
+                acc_instance.clone(),
+                tampered,
+            );
+            assert!(
+                matches!(result, Err(VerifierError::NumShiftQueries)),
+                "{name} must be rejected"
+            );
+        }
     }
 
     #[test]
