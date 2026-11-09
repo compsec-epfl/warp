@@ -1,9 +1,13 @@
+use ark_codes::traits::LinearCode;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
 
 use spongefish::{
     Decoding, Encoding, NargDeserialize, ProverState, VerificationResult, VerifierState,
 };
+
+use crate::config::WARPConfig;
+use crate::relations::BundledPESAT;
 
 pub type AccInstances<F, MT> = (
     Vec<<MT as Config>::InnerDigest>, // rt
@@ -12,6 +16,61 @@ pub type AccInstances<F, MT> = (
     (Vec<Vec<F>>, Vec<Vec<F>>),       // (tau, x)
     Vec<F>,                           // eta
 );
+
+/// Fixed-length tag absorbed immediately before the index digest.
+const INDEX_DIGEST_TAG: [u8; 20] = *b"warp-index-digest-v1";
+
+/// Digest of the relation index and the protocol parameters: the field, the
+/// accumulation and query parameters, the relation and code dimensions, and
+/// the canonical encoding of the relation.
+pub fn index_digest<F, P, C>(config: &WARPConfig<F, P>, code: &C, p: &P) -> [u8; 32]
+where
+    F: Field,
+    P: BundledPESAT<F, Config = (usize, usize, usize)>,
+    C: LinearCode<F>,
+{
+    let characteristic = F::characteristic();
+    let (m, n, k) = config.p_conf;
+    let description = p.description();
+
+    let mut hasher = blake3::Hasher::new_derive_key("warp index digest v1");
+    hasher.update(&(characteristic.len() as u64).to_le_bytes());
+    for limb in characteristic {
+        hasher.update(&limb.to_le_bytes());
+    }
+    hasher.update(&F::extension_degree().to_le_bytes());
+    for value in [
+        config.l,
+        config.l1,
+        config.s,
+        config.t,
+        config.n,
+        m,
+        n,
+        k,
+        code.message_len(),
+        code.code_len(),
+        description.len(),
+    ] {
+        hasher.update(&(value as u64).to_le_bytes());
+    }
+    hasher.update(&description);
+    *hasher.finalize().as_bytes()
+}
+
+/// Binds the prover transcript to the index. Must be the first transcript
+/// operation, mirrored by [`absorb_index_digest_verifier`].
+pub fn absorb_index_digest_prover(prover_state: &mut ProverState, digest: &[u8; 32]) {
+    prover_state.public_message(&INDEX_DIGEST_TAG);
+    prover_state.public_message(digest);
+}
+
+/// Binds the verifier transcript to the index. Must be the first transcript
+/// operation, mirrored by [`absorb_index_digest_prover`].
+pub fn absorb_index_digest_verifier(verifier_state: &mut VerifierState<'_>, digest: &[u8; 32]) {
+    verifier_state.public_message(&INDEX_DIGEST_TAG);
+    verifier_state.public_message(digest);
+}
 
 pub fn absorb_instances<F: Field + Encoding<[u8]>>(
     prover_state: &mut ProverState,

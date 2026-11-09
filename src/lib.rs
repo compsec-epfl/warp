@@ -23,7 +23,10 @@ use effsc::{
     runner::sumcheck,
     verifier::sumcheck_verify,
 };
-use protocol::domainsep::{derive_between_sumchecks, derive_pre_twin_constraint, parse_statement};
+use protocol::domainsep::{
+    absorb_index_digest_prover, absorb_index_digest_verifier, derive_between_sumchecks,
+    derive_pre_twin_constraint, index_digest, parse_statement,
+};
 use protocol::EffscVerifierTranscript;
 use relations::{r1cs::R1CSConstraints, BundledPESAT};
 use spongefish::{Decoding, Encoding, NargDeserialize, NargSerialize, ProverState, VerifierState};
@@ -194,6 +197,7 @@ pub struct WARP<F: Field, P: BundledPESAT<F>, C: LinearCode<F> + Clone, MT: Conf
     config: WARPConfig<F, P>,
     code: C,
     p: P,
+    index_digest: [u8; 32],
     mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
     mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 }
@@ -212,11 +216,13 @@ impl<
         mt_leaf_hash_params: <MT::LeafHash as CRHScheme>::Parameters,
         mt_two_to_one_hash_params: <MT::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
     ) -> WARP<F, P, C, MT> {
+        let index_digest = index_digest(&config, &code, &p);
         Self {
             _f: PhantomData,
             config,
             code,
             p,
+            index_digest,
             mt_leaf_hash_params,
             mt_two_to_one_hash_params,
         }
@@ -309,6 +315,7 @@ impl<
 
         // b. and c. statements and accumulators
         // d. absorb parameters
+        absorb_index_digest_prover(prover_state, &self.index_digest);
         absorb_instances(prover_state, &instances);
         absorb_accumulated_instances::<F, MT>(prover_state, &acc_instances);
 
@@ -573,7 +580,8 @@ impl<
         let r = 1 + self.config.s + self.config.t;
         let log_r = log2(r) as usize;
 
-        // 1. Parse statement.
+        // 1. Bind the transcript to the index, then parse the statement.
+        absorb_index_digest_verifier(verifier_state, &self.index_digest);
         let (l1_xs, (l2_roots, l2_alphas, l2_mus, (l2_taus, l2_xs), l2_etas)) =
             parse_statement::<F, MT>(verifier_state, l1, l2, N - k, log_n, log_M)?;
 
@@ -641,6 +649,7 @@ impl<
             .collect();
 
         (proof.6.len() == self.config.t).ok_or_err(VerifierError::NumShiftQueries)?;
+        (proof.4.len() == self.config.t).ok_or_err(VerifierError::NumShiftQueries)?;
         for (i, path) in proof.4.iter().enumerate() {
             (path.leaf_index == shift_queries_indexes[i])
                 .ok_or_err(VerifierError::ShiftQueryIndex)?;
@@ -797,11 +806,14 @@ pub mod test {
     use ark_crypto_primitives::crh::poseidon::{constraints::CRHGadget, CRH};
     use ark_ff::UniformRand;
     use ark_serialize::{CanonicalSerialize, Compress};
-    use ark_std::rand::thread_rng;
+    use ark_std::rand::{rngs::StdRng, thread_rng, SeedableRng};
+    use spongefish::{ProverState, VerifierState};
 
     use std::marker::PhantomData;
 
     use super::{WARPConfig, WARP};
+    use crate::error::VerifierError;
+    use crate::traits::WARPAccumResult;
 
     #[test]
     pub fn warp_test() {
@@ -1102,5 +1114,255 @@ pub mod test {
             proof_to_serde.serialized_size(Compress::Yes)
         );
         println!("Goldilocks narg_str size: {}", narg_str.len());
+    }
+
+    // Index-binding tests. Every run uses a fixed seed, `l1 = l = 2` and no
+    // prior accumulators.
+    type BindF = BLS12_381;
+    type BindMT = Blake3MerkleTreeParams<BindF>;
+    type BindWarp = WARP<BindF, R1CS<BindF>, ReedSolomon<BindF>, BindMT>;
+    type BindRelation = HashChainRelation<BindF, CRH<BindF>, CRHGadget<BindF>>;
+    type BindAccInstance = <BindWarp as AccumulationScheme<BindF, BindMT>>::AccumulatorInstances;
+    type BindProof = <BindWarp as AccumulationScheme<BindF, BindMT>>::Proof;
+
+    const BIND_L1: usize = 2;
+    const BIND_S: usize = 2;
+    const BIND_T: usize = 7;
+    const BIND_CHAIN: usize = 2;
+
+    struct BindFixture {
+        r1cs: R1CS<BindF>,
+        code: ReedSolomon<BindF>,
+        xs: Vec<Vec<BindF>>,
+        ws: Vec<Vec<BindF>>,
+    }
+
+    fn bind_fixture() -> BindFixture {
+        let mut rng = StdRng::seed_from_u64(0x5741_5250);
+        let poseidon_config = poseidon::initialize_poseidon_config::<BindF>();
+        let r1cs = BindRelation::into_r1cs(&(poseidon_config.clone(), BIND_CHAIN)).unwrap();
+        let code = ReedSolomon::new(ReedSolomonConfig::<BindF>::default(
+            r1cs.k,
+            r1cs.k.next_power_of_two(),
+        ));
+        let (xs, ws) = (0..BIND_L1)
+            .map(|_| {
+                let preimage = vec![BindF::rand(&mut rng)];
+                let instance = HashChainInstance {
+                    digest: compute_hash_chain::<BindF, CRH<_>>(
+                        &poseidon_config,
+                        &preimage,
+                        BIND_CHAIN,
+                    ),
+                };
+                let witness = HashChainWitness {
+                    preimage,
+                    _crhs_scheme: PhantomData::<CRH<BindF>>,
+                };
+                let relation =
+                    BindRelation::new(instance, witness, (poseidon_config.clone(), BIND_CHAIN));
+                (relation.x, relation.w)
+            })
+            .unzip();
+        BindFixture { r1cs, code, xs, ws }
+    }
+
+    fn bind_warp(r1cs: &R1CS<BindF>, code: &ReedSolomon<BindF>, s: usize, t: usize) -> BindWarp {
+        let config = WARPConfig::new(BIND_L1, BIND_L1, s, t, r1cs.config(), code.code_len());
+        WARP::new(config, code.clone(), r1cs.clone(), (), ())
+    }
+
+    fn bind_prover_state() -> ProverState {
+        let domainsep = spongefish::domain_separator!("test::warp::index-binding");
+        domainsep.without_session().instance(&0u32).std_prover()
+    }
+
+    fn bind_verifier_state(narg: &[u8]) -> VerifierState<'_> {
+        let domainsep = spongefish::domain_separator!("test::warp::index-binding");
+        domainsep
+            .without_session()
+            .instance(&0u32)
+            .std_verifier(narg)
+    }
+
+    /// A copy of `r1cs` that differs in exactly one matrix entry, with the
+    /// same sizes.
+    fn with_one_entry_changed(r1cs: &R1CS<BindF>) -> R1CS<BindF> {
+        let mut changed = r1cs.clone();
+        let row = changed
+            .p
+            .iter_mut()
+            .find(|row| !row.0.is_empty())
+            .expect("the relation has a non-empty row");
+        row.0[0].0 += BindF::from(1u64);
+        changed
+    }
+
+    fn bind_prove(
+        warp: &BindWarp,
+        fixture: &BindFixture,
+    ) -> (WARPAccumResult<BindF, BindMT, BindWarp>, Vec<u8>) {
+        let r1cs = &fixture.r1cs;
+        let mut prover_state = bind_prover_state();
+        let output = warp
+            .prove(
+                (r1cs.clone(), r1cs.m, r1cs.n, r1cs.k),
+                &mut prover_state,
+                fixture.ws.clone(),
+                fixture.xs.clone(),
+                (vec![], vec![], vec![], (vec![], vec![]), vec![]),
+                (vec![], vec![], vec![]),
+            )
+            .unwrap();
+        (output, prover_state.narg_string().to_vec())
+    }
+
+    /// Number of NARG bytes holding the statement and the first commitment,
+    /// which is everything the verifier reads before the claimed evaluations.
+    fn statement_and_root_len(xs: &[Vec<BindF>]) -> usize {
+        let mut prover_state = bind_prover_state();
+        crate::protocol::domainsep::absorb_instances(&mut prover_state, xs);
+        prover_state.prover_message(&[0u8; 32]);
+        prover_state.narg_string().len()
+    }
+
+    /// Runs `verify` on a transcript cut right after the first commitment.
+    /// `verify` stops at its first read past the end, so the sponge holds
+    /// whatever the real verifier code path absorbed up to that point, and
+    /// the next squeeze is the first verifier challenge of that transcript.
+    fn first_challenge(
+        warp: &BindWarp,
+        fixture: &BindFixture,
+        narg_prefix: &[u8],
+        acc_instance: &BindAccInstance,
+        proof: &BindProof,
+    ) -> BindF {
+        let mut verifier_state = bind_verifier_state(narg_prefix);
+        let result = warp.verify(
+            fixture.r1cs.config(),
+            &mut verifier_state,
+            acc_instance.clone(),
+            proof.clone(),
+        );
+        assert!(result.is_err(), "the transcript is cut, verify must stop");
+        verifier_state.verifier_message::<BindF>()
+    }
+
+    #[test]
+    pub fn one_matrix_entry_changes_first_challenge() {
+        let fixture = bind_fixture();
+        let other_r1cs = with_one_entry_changed(&fixture.r1cs);
+        let warp = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let other_warp = bind_warp(&other_r1cs, &fixture.code, BIND_S, BIND_T);
+
+        let (((acc_instance, _), proof), narg) = bind_prove(&warp, &fixture);
+        let prefix = &narg[..statement_and_root_len(&fixture.xs)];
+
+        let first = first_challenge(&warp, &fixture, prefix, &acc_instance, &proof);
+        let same_index = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let replayed = first_challenge(&same_index, &fixture, prefix, &acc_instance, &proof);
+        let other = first_challenge(&other_warp, &fixture, prefix, &acc_instance, &proof);
+
+        assert_eq!(first, replayed, "the same index gives the same challenge");
+        assert_ne!(first, other, "the first challenge must depend on the index");
+    }
+
+    #[test]
+    pub fn protocol_parameters_change_first_challenge() {
+        let fixture = bind_fixture();
+        let (r1cs, code) = (&fixture.r1cs, &fixture.code);
+        let warp = bind_warp(r1cs, code, BIND_S, BIND_T);
+
+        let (((acc_instance, _), proof), narg) = bind_prove(&warp, &fixture);
+        let prefix = &narg[..statement_and_root_len(&fixture.xs)];
+        let first = first_challenge(&warp, &fixture, prefix, &acc_instance, &proof);
+
+        let lower_rate = ReedSolomon::new(ReedSolomonConfig::<BindF>::default(
+            r1cs.k,
+            2 * code.code_len(),
+        ));
+        for (name, changed) in [
+            ("query count t", bind_warp(r1cs, code, BIND_S, BIND_T + 1)),
+            ("ood samples s", bind_warp(r1cs, code, BIND_S + 1, BIND_T)),
+            ("code rate", bind_warp(r1cs, &lower_rate, BIND_S, BIND_T)),
+        ] {
+            let other = first_challenge(&changed, &fixture, prefix, &acc_instance, &proof);
+            assert_ne!(first, other, "the first challenge must depend on {name}");
+        }
+    }
+
+    #[test]
+    pub fn verify_rejects_proof_from_another_index() {
+        let fixture = bind_fixture();
+        let other_r1cs = with_one_entry_changed(&fixture.r1cs);
+        let warp = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let other_warp = bind_warp(&other_r1cs, &fixture.code, BIND_S, BIND_T);
+        let vk = fixture.r1cs.config();
+
+        let (((acc_instance, _), proof), narg) = bind_prove(&warp, &fixture);
+
+        warp.verify(
+            vk,
+            &mut bind_verifier_state(&narg),
+            acc_instance.clone(),
+            proof.clone(),
+        )
+        .unwrap();
+        assert!(
+            other_warp
+                .verify(vk, &mut bind_verifier_state(&narg), acc_instance, proof)
+                .is_err(),
+            "a proof produced under one index must not verify under another"
+        );
+    }
+
+    #[test]
+    pub fn verify_rejects_wrong_number_of_fresh_auth_paths() {
+        let fixture = bind_fixture();
+        let warp = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let vk = fixture.r1cs.config();
+
+        let (((acc_instance, _), proof), narg) = bind_prove(&warp, &fixture);
+
+        let mut none = proof.clone();
+        none.4.clear();
+        let mut short = proof.clone();
+        short.4.pop();
+        let mut long = proof.clone();
+        long.4.push(proof.4[0].clone());
+
+        for (name, tampered) in [
+            ("no paths", none),
+            ("one path missing", short),
+            ("one path extra", long),
+        ] {
+            let result = warp.verify(
+                vk,
+                &mut bind_verifier_state(&narg),
+                acc_instance.clone(),
+                tampered,
+            );
+            assert!(
+                matches!(result, Err(VerifierError::NumShiftQueries)),
+                "{name} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    pub fn decide_rejects_accumulator_from_another_index() {
+        let fixture = bind_fixture();
+        let other_r1cs = with_one_entry_changed(&fixture.r1cs);
+        let warp = bind_warp(&fixture.r1cs, &fixture.code, BIND_S, BIND_T);
+        let other_warp = bind_warp(&other_r1cs, &fixture.code, BIND_S, BIND_T);
+
+        let (((acc_instance, acc_witness), _), _) = bind_prove(&warp, &fixture);
+
+        warp.decide(acc_witness.clone(), acc_instance.clone())
+            .unwrap();
+        assert!(
+            other_warp.decide(acc_witness, acc_instance).is_err(),
+            "an accumulator produced under one index must not decide under another"
+        );
     }
 }

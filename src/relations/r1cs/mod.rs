@@ -2,6 +2,7 @@ pub mod hashchain;
 
 use ark_ff::Field;
 use ark_relations::gr1cs::{ConstraintSystemRef, R1CS_PREDICATE_LABEL};
+use ark_serialize::CanonicalSerialize;
 use effsc::hypercube::Ascending;
 
 use crate::error::WARPError;
@@ -113,8 +114,16 @@ impl<F: Field> BundledPESAT<F> for R1CS<F> {
         (self.m, self.n, self.k)
     }
 
+    // canonical encoding of the index: dimensions, then the sparse rows of A, B and C
     fn description(&self) -> Vec<u8> {
-        todo!()
+        let mut bytes = Vec::new();
+        [self.m, self.n, self.k, self.log_m, self.log_n]
+            .serialize_uncompressed(&mut bytes)
+            .expect("serializing into a Vec cannot fail");
+        self.p
+            .serialize_uncompressed(&mut bytes)
+            .expect("serializing into a Vec cannot fail");
+        bytes
     }
 
     fn constraints(&self) -> &Self::Constraints {
